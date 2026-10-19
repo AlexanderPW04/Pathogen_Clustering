@@ -100,6 +100,20 @@
     <p class="note">Genomic regions come first from metadata, then explicit FASTA descriptions. MAFFT aligns only samples with the same resolved pathogen and region. An unknown region is an error unless you explicitly confirm that every sequence is a complete genome of one pathogen.</p>
 
     <section>
+      <h2>System status</h2>
+      <p class="note">Check that this server can align two invented sequences with MAFFT and contact GeoNames for an approximate Tempe, Arizona place location. No upload is needed. Recent results are reused for five minutes.</p>
+      <form method="post" action="{{ url_for('system_status') }}">
+        <button type="submit">Check MAFFT &amp; GeoNames</button>
+      </form>
+      {% if system_status %}
+        <p><strong>MAFFT: {{ system_status.mafft.status }}</strong> — {{ system_status.mafft.message }}
+          {% if system_status.mafft.version %}Version: {{ system_status.mafft.version }}.{% endif %}</p>
+        <p><strong>GeoNames: {{ system_status.geonames.status }}</strong> — {{ system_status.geonames.message }}</p>
+        {% if status_cached %}<p class="note">Showing a recent cached check.</p>{% endif %}
+      {% endif %}
+    </section>
+
+    <section>
       <h2>Run analysis</h2>
       <form method="post" enctype="multipart/form-data">
         <fieldset>

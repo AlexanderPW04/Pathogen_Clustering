@@ -7,10 +7,58 @@ from unittest.mock import patch
 
 import pandas as pd
 
-from app import app, find_geography_unresolved_candidates
+from app import STATUS_CACHE, app, find_geography_unresolved_candidates
 
 
 class FlaskInterfaceTest(unittest.TestCase):
+    def test_system_button_runs_only_on_click_and_reuses_recent_result(self) -> None:
+        mafft_result = {"status": "Operational", "message": "MAFFT works.", "version": "v7.505"}
+        geonames_result = {"status": "Operational", "message": "GeoNames works."}
+        with patch.dict(STATUS_CACHE, {"checked_at": 0.0, "results": None}):
+            with patch("app.check_mafft", return_value=mafft_result) as mafft:
+                with patch("app.check_geonames", return_value=geonames_result) as geonames:
+                    with app.test_client() as client:
+                        home = client.get("/")
+                        client.get("/health")
+                        self.assertIn("Check MAFFT &amp; GeoNames", home.get_data(as_text=True))
+                        mafft.assert_not_called()
+                        geonames.assert_not_called()
+                        first = client.post("/system-status")
+                        second = client.post("/system-status")
+
+        self.assertEqual(first.status_code, 200)
+        self.assertIn("MAFFT: Operational", first.get_data(as_text=True))
+        self.assertIn("GeoNames: Operational", first.get_data(as_text=True))
+        self.assertIn("Version: v7.505", first.get_data(as_text=True))
+        self.assertIn("Showing a recent cached check", second.get_data(as_text=True))
+        mafft.assert_called_once()
+        geonames.assert_called_once()
+
+    def test_system_checks_are_independent(self) -> None:
+        with patch.dict(STATUS_CACHE, {"checked_at": 0.0, "results": None}):
+            with patch("app.check_mafft", side_effect=RuntimeError("private detail")):
+                with patch("app.check_geonames", return_value={"status": "Operational", "message": "Connected."}) as geonames:
+                    with patch.object(app.logger, "warning"):
+                        with app.test_client() as client:
+                            response = client.post("/system-status")
+        page = response.get_data(as_text=True)
+        self.assertIn("MAFFT: Check failed", page)
+        self.assertIn("GeoNames: Operational", page)
+        self.assertNotIn("private detail", page)
+        geonames.assert_called_once()
+
+    def test_system_cache_expires_after_five_minutes(self) -> None:
+        result = {"status": "Operational", "message": "Working."}
+        with patch.dict(STATUS_CACHE, {"checked_at": 0.0, "results": None}):
+            with patch("app.monotonic", side_effect=[1000.0, 1301.0]):
+                with patch("app.check_mafft", return_value=result) as mafft:
+                    with patch("app.check_geonames", return_value=result) as geonames:
+                        with app.test_client() as client:
+                            client.post("/system-status")
+                            client.post("/system-status")
+        self.assertEqual(mafft.call_count, 2)
+        self.assertEqual(geonames.call_count, 2)
+
     def test_health_check(self) -> None:
         with app.test_client() as client:
             response = client.get("/health")

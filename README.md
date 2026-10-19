@@ -55,6 +55,7 @@ validate_inputs.py              FASTA/metadata loading, matching, and validation
 genomic_regions.py              Simple explicit-region parsing and checks
 geocode_locations.py            Optional GeoNames coordinate lookup
 align_sequences.py              MAFFT alignment within comparable groups
+system_diagnostics.py           On-demand synthetic MAFFT check
 compare_genetic_distances.py    Pairwise genomic comparison
 add_temporal_geographic.py      Date and Haversine-distance enrichment
 detect_potential_clusters.py    Threshold filtering and DFS clustering
@@ -497,6 +498,38 @@ the backend calculations and CSV values retain their precision. The HTML
 performs no scientific calculations. Keep the terminal open; press `Ctrl+C`
 to stop the site.
 
+### Check MAFFT and GeoNames on the server
+
+Near the top of the website, click **Check MAFFT & GeoNames**. No FASTA or
+metadata upload is needed. This button is separate from an analysis run and
+from Render's lightweight `/health` endpoint. The checks do **not** run when
+someone merely opens the page.
+
+- MAFFT is located through the same cross-platform lookup used by the pipeline.
+  The diagnostic runs a real alignment of two short, invented sequences and
+  checks that both return at equal aligned lengths. It shows a version only
+  when MAFFT returns one clearly. Linux `mafft` and Windows `mafft.bat` are
+  supported.
+- GeoNames makes one secure, certificate-verified lookup of Tempe, Arizona
+  through the existing GeoNames integration and checks that valid coordinates
+  come back. The page never displays `GEONAMES_USERNAME`. A missing username,
+  connection problem, or API error gets a distinct readable status.
+
+Statuses are **Operational**, **Unavailable**, **Not configured**, or
+**Check failed**. The server reuses a recent result for five minutes to limit
+repeated MAFFT work and GeoNames requests. A successful status confirms these
+dependencies responded to this small test; it does not validate a user's
+dataset or prove an outbreak.
+
+To test locally, start the website with `python app.py`, open
+`http://127.0.0.1:5000`, and click the button. On Render, push the changed
+files to GitHub, wait for the Docker Web Service to redeploy, open its public
+`onrender.com` page, and click the same button. If GeoNames says **Not
+configured**, set `GEONAMES_USERNAME` in Render's Environment settings. If
+MAFFT is **Unavailable**, inspect the Docker build log for the Linux `mafft`
+package. `/health` should still simply return `OK` without running either
+diagnostic.
+
 **Run Example Analysis** on the webpage uses `examples/synthetic_sequences.fasta`
 and `examples/synthetic_metadata.csv`. These are invented records, not NCBI
 accessions, real specimens, or actual outbreaks. One synthetic sample has a
@@ -664,8 +697,9 @@ accessions, true unmatched and duplicate accessions, invalid sequences, metadata
 validation, optional genomic-region labels and contradictions, MAFFT grouping
 and output checks, GeoNames caching and fallback,
 genomic comparison, temporal/geographic enrichment, threshold logic, transitive
-clustering, complete backend runs, and a Flask dual-upload run. External
-program/network behavior is mocked; these tests do not install or run MAFFT.
+clustering, complete backend runs, a Flask dual-upload run, and the on-demand
+MAFFT/GeoNames status checks. External program/network behavior is mocked;
+these tests do not install or run MAFFT.
 
 ## Scientific and technical limitations
 

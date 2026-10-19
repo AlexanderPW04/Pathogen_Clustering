@@ -6,17 +6,24 @@ from math import isfinite
 from pathlib import Path
 from shutil import copyfile
 from tempfile import TemporaryDirectory
+from threading import Lock
+from time import monotonic
 
 import pandas as pd
 from flask import Flask, render_template, request
 
+from geocode_locations import check_geonames
 from run_pipeline import output_paths, region_assignment_path, run_pipeline
+from system_diagnostics import check_mafft
 from validate_inputs import FASTA_EXTENSIONS, METADATA_EXTENSIONS
 
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024  # 10 MB per request.
 EXAMPLE_FOLDER = Path(__file__).resolve().parent / "examples"
+STATUS_CACHE_SECONDS = 300
+STATUS_CACHE = {"checked_at": 0.0, "results": None}
+STATUS_LOCK = Lock()
 
 
 @app.route("/health")
@@ -38,6 +45,58 @@ def internal_error(error):
     """Keep unexpected internal details out of the public response."""
 
     return "The analysis could not be completed. Please check your files and try again.", 500
+
+
+def get_system_status():
+    """Run both checks at most once every five minutes per server process."""
+
+    with STATUS_LOCK:
+        now = monotonic()
+        if (
+            STATUS_CACHE["results"] is not None
+            and now - STATUS_CACHE["checked_at"] < STATUS_CACHE_SECONDS
+        ):
+            return STATUS_CACHE["results"], True
+
+        try:
+            mafft_status = check_mafft()
+        except Exception:
+            app.logger.warning("MAFFT diagnostic failed unexpectedly")
+            mafft_status = {
+                "status": "Check failed",
+                "message": "The MAFFT check could not finish.",
+            }
+
+        try:
+            geonames_status = check_geonames()
+        except Exception:
+            app.logger.warning("GeoNames diagnostic failed unexpectedly")
+            geonames_status = {
+                "status": "Check failed",
+                "message": "The GeoNames check could not finish.",
+            }
+
+        results = {"mafft": mafft_status, "geonames": geonames_status}
+        STATUS_CACHE["checked_at"] = now
+        STATUS_CACHE["results"] = results
+        return results, False
+
+
+@app.route("/system-status", methods=["POST"])
+def system_status():
+    """Check external dependencies only when the visitor presses the button."""
+
+    results, cached = get_system_status()
+    values = {
+        "max_p_distance": "0.05",
+        "max_days_apart": "14",
+        "max_km_apart": "50",
+        "genomic_region_mode": "automatic",
+        "confirm_complete_genomes": False,
+    }
+    return render_template(
+        "index.html", values=values, system_status=results, status_cached=cached
+    )
 
 
 def read_thresholds(values):

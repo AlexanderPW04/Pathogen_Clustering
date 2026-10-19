@@ -16,6 +16,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY app.py run_pipeline.py validate_inputs.py genomic_regions.py ./
 COPY geocode_locations.py align_sequences.py compare_genetic_distances.py ./
 COPY add_temporal_geographic.py detect_potential_clusters.py ./
+COPY system_diagnostics.py ./
 COPY templates/ ./templates/
 COPY examples/ ./examples/
 

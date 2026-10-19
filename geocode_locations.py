@@ -8,6 +8,9 @@ import pandas as pd
 import requests
 
 
+GEONAMES_URL = "https://secure.geonames.org/searchJSON"
+
+
 def is_state_only_location(location):
     """Recognize names like 'USA: ND' without treating them as collection sites."""
 
@@ -76,7 +79,7 @@ def fill_missing_coordinates(data):
         if cache_key not in cache:
             try:
                 response = requests.get(
-                    "https://secure.geonames.org/searchJSON",
+                    GEONAMES_URL,
                     params={"q": query, "maxRows": 1, "username": username},
                     timeout=8,
                     verify=True,
@@ -149,3 +152,53 @@ def fill_missing_coordinates(data):
             file=sys.stderr,
         )
     return samples
+
+
+def check_geonames():
+    """Make one short live lookup without revealing the configured username."""
+
+    username = os.getenv("GEONAMES_USERNAME", "").strip()
+    if not username:
+        return {
+            "status": "Not configured",
+            "message": "GEONAMES_USERNAME is not set on this server.",
+        }
+
+    try:
+        response = requests.get(
+            GEONAMES_URL,
+            params={"q": "Tempe, Arizona, USA", "maxRows": 1, "username": username},
+            timeout=4,
+            verify=True,
+        )
+        response.raise_for_status()
+    except requests.HTTPError:
+        return {"status": "Check failed", "message": "GeoNames returned an API error."}
+    except requests.RequestException:
+        return {"status": "Unavailable", "message": "Could not connect to GeoNames."}
+
+    try:
+        result = response.json()
+        if not isinstance(result, dict) or "status" in result:
+            return {"status": "Check failed", "message": "GeoNames rejected the lookup."}
+        place = result["geonames"][0]
+        latitude = float(place["lat"])
+        longitude = float(place["lng"])
+    except (ValueError, TypeError, KeyError, IndexError):
+        return {
+            "status": "Check failed",
+            "message": "GeoNames did not return valid coordinates.",
+        }
+
+    valid_latitude = math.isfinite(latitude) and -90 <= latitude <= 90
+    valid_longitude = math.isfinite(longitude) and -180 <= longitude <= 180
+    if not (valid_latitude and valid_longitude):
+        return {
+            "status": "Check failed",
+            "message": "GeoNames did not return valid coordinates.",
+        }
+
+    return {
+        "status": "Operational",
+        "message": "A Tempe, Arizona lookup returned valid approximate place coordinates.",
+    }

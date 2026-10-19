@@ -24,11 +24,31 @@ The following files and capabilities already existed before Sprint 3 work began:
 | `PYTHON_LINE_BY_LINE_GUIDE.md` | Beginner-friendly explanation of the six main Python files. |
 | `output/pdf/BMI461_Sprint2_Code_Review_Guide.md` and `.pdf` | Sprint 2 conceptual documentation. |
 
-The folder is not currently a Git repository, so this written baseline and the
-entries below are the change record. The existing folder name `sprint_2` does not
-make later work part of Sprint 2.
+The folder was not a Git repository when this written baseline was created.
+It is now versioned, and the entries below remain the human-readable change
+record. The existing folder name `sprint_2` does not make later work part of
+Sprint 2.
 
 ## Sprint 3 changes so far
+
+### October 19, 2026 — On-demand MAFFT and GeoNames status check
+
+- **Added files:** `system_diagnostics.py` runs a small real MAFFT alignment of
+  invented sequences. `tests/test_diagnostics.py` tests success and failure
+  responses without external calls.
+- **Changed files:** `geocode_locations.py` adds a separate one-request
+  GeoNames diagnostic using its existing secure URL and SSL checks; the
+  analysis geocoder still follows its original rules. `app.py` adds a
+  five-minute in-process cache and a click-only status route.
+  `templates/index.html` shows MAFFT and GeoNames statuses near the top.
+  `Dockerfile` includes the new module, while `README.md` and Flask tests
+  explain and verify local and hosted use.
+- **Scope:** No changes to genomic distances, alignment grouping, geographic
+  screening, thresholds, clusters, or wastewater analysis. `/health` remains
+  separate from the dependency checks.
+- **Verification:** All 87 automated tests passed with MAFFT and GeoNames
+  mocked for the new diagnostics. The deployed Render service has not been
+  updated or checked from this workspace.
 
 ### October 19, 2026 — Prepare the Sprint 2 website for Docker hosting
 
