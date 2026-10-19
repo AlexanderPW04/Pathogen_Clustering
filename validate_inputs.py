@@ -1,0 +1,770 @@
+"""Load, match, clean, and validate FASTA sequences and sample metadata."""
+
+import argparse
+import sys
+from pathlib import Path
+
+import pandas as pd
+from Bio import SeqIO
+
+from genomic_regions import fasta_region, metadata_region, regions_conflict
+
+
+# Required metadata after NCBI column names are standardized.
+REQUIRED_METADATA_COLUMNS = [
+    "Accession",
+    "Pathogen",
+    "Collection_Date",
+    "Location_Name",
+    "Host_Source",
+]
+
+# Coordinates are useful, but they are not required.
+OPTIONAL_METADATA_COLUMNS = ["Latitude", "Longitude"]
+
+# Complete metadata layout used in summaries and downstream analysis.
+METADATA_COLUMNS = [
+    "Accession",
+    "Pathogen",
+    "Gene_Segment",
+    "Collection_Date",
+    "Location_Name",
+    "Latitude",
+    "Longitude",
+    "Host_Source",
+]
+
+# Common column names in an NCBI Virus Results Table.
+METADATA_ALIASES = {
+    "accession": "Accession",
+    "pathogen": "Pathogen",
+    "organism_name": "Pathogen",
+    "gene_segment": "Gene_Segment",
+    "segment": "Segment",
+    "gene_name": "Gene_Name",
+    "gene": "Gene",
+    "region": "Region",
+    "collection_date": "Collection_Date",
+    "location_name": "Location_Name",
+    "geo_location": "Location_Name",
+    "latitude": "Latitude",
+    "longitude": "Longitude",
+    "host_source": "Host_Source",
+    "host": "Host_Source",
+}
+
+REGION_COLUMNS = ["Gene_Segment", "Segment", "Gene_Name", "Gene", "Region"]
+
+# Exact DataFrame layout expected by the later analysis stages.
+INTERNAL_COLUMNS = [
+    "Sample_ID",
+    "Pathogen",
+    "Gene_Segment",
+    "Gene_Segment_Source",
+    "Sequence",
+    "Collection_Date",
+    "Location_Name",
+    "Latitude",
+    "Longitude",
+    "Host_Source",
+    "Accession",
+]
+
+FASTA_EXTENSIONS = {".fasta", ".fa", ".fna"}
+METADATA_EXTENSIONS = {".xlsx", ".csv"}
+ALLOWED_SEQUENCE_CHARACTERS = set("ACGTN-")
+
+
+def blank_mask(series):
+    """Return True for missing values and strings containing only whitespace."""
+
+    text_values = series.astype("string")
+    empty_text = text_values.str.strip().eq("").fillna(True)
+    return series.isna() | empty_text
+
+
+def metadata_rows(mask):
+    """Convert a Boolean mask to row numbers from a metadata file."""
+
+    rows = []
+    for position, is_bad in enumerate(mask):
+        if is_bad:
+            # Add 2 because pandas starts at 0 and the file has a header row.
+            rows.append(str(position + 2))
+    return ", ".join(rows)
+
+
+def clean_sequence(sequence):
+    """Uppercase a sequence and remove whitespace without regular expressions."""
+
+    pieces = str(sequence).split()
+    return "".join(pieces).upper()
+
+
+def normalize_accession(accession):
+    """Remove one final numeric accession version for matching."""
+
+    if pd.isna(accession):
+        return ""
+
+    accession = str(accession).strip()
+    base, period, version = accession.rpartition(".")
+
+    if period and base and version.isdigit():
+        return base
+    return accession
+
+
+def standardize_metadata_columns(data):
+    """Clean header spacing/case and recognize NCBI and region aliases."""
+
+    columns_to_rename = {}
+    standardized_names = set()
+
+    for original_name in data.columns:
+        spaced_name = str(original_name).replace("_", " ").replace("-", " ")
+        normalized = "_".join(spaced_name.split()).casefold()
+        standard_name = METADATA_ALIASES.get(normalized, original_name)
+        if standard_name in standardized_names:
+            raise ValueError(f"Duplicate metadata columns for {standard_name}.")
+        standardized_names.add(standard_name)
+        columns_to_rename[original_name] = standard_name
+
+    return data.rename(columns=columns_to_rename)
+
+
+def load_metadata(file_path):
+    """Load metadata from CSV or the first worksheet of an XLSX file."""
+
+    file_path = Path(file_path)
+    extension = file_path.suffix.lower()
+
+    if extension == ".xlsx":
+        return pd.read_excel(
+            file_path, engine="openpyxl", dtype="string", keep_default_na=False
+        )
+    if extension == ".csv":
+        return pd.read_csv(file_path, dtype="string", keep_default_na=False)
+
+    raise ValueError("Metadata must be an .xlsx or .csv file.")
+
+
+def validate_metadata(data):
+    """Clean and validate metadata without deleting any rows."""
+
+    validated = data.copy()
+    validated = standardize_metadata_columns(validated)
+    errors = []
+
+    # Check the required headers.
+    missing_columns = []
+    for column in REQUIRED_METADATA_COLUMNS:
+        if column not in validated.columns:
+            missing_columns.append(column)
+
+    if missing_columns:
+        message = "Missing required metadata column(s): "
+        errors.append(message + ", ".join(missing_columns))
+
+    # Choose an explicit region from any supported metadata column, by priority.
+    region_columns = [column for column in REGION_COLUMNS if column in validated]
+    region_labels = []
+    region_sources = []
+    region_details = []
+
+    for row_number, (_, row) in enumerate(validated.iterrows(), start=2):
+        chosen = None
+        candidates = []
+        for column in region_columns:
+            value = row[column]
+            if pd.isna(value) or not str(value).strip():
+                continue
+            candidate = metadata_region(value, column)
+            for earlier in candidates:
+                if regions_conflict(earlier, candidate):
+                    errors.append(
+                        f"Conflicting metadata region values at row {row_number}: "
+                        f"{earlier['label']} versus {candidate['label']}."
+                    )
+            candidates.append(candidate)
+            if chosen is None:
+                chosen = candidate
+        region_labels.append(chosen["label"] if chosen else pd.NA)
+        region_sources.append("Metadata" if chosen else pd.NA)
+        region_details.append(candidates)
+
+    validated["Gene_Segment"] = pd.array(region_labels, dtype="string")
+    validated["Gene_Segment_Source"] = pd.array(region_sources, dtype="string")
+    validated["_Region_Details"] = region_details
+
+    # Count missing values for the printed summary.
+    missing_counts = {}
+    for column in METADATA_COLUMNS:
+        if column in validated.columns:
+            missing_counts[column] = int(blank_mask(validated[column]).sum())
+
+    # Clean and validate the text fields.
+    text_columns = [
+        "Accession",
+        "Pathogen",
+        "Location_Name",
+        "Host_Source",
+    ]
+
+    for column in text_columns:
+        if column not in validated.columns:
+            continue
+
+        validated[column] = validated[column].astype("string").str.strip()
+        missing_values = blank_mask(validated[column])
+
+        if missing_values.any():
+            row_text = metadata_rows(missing_values)
+            errors.append(f"Missing {column} at metadata row(s): {row_text}")
+
+    # Detect duplicate metadata accessions after removing numeric versions.
+    if "Accession" in validated.columns:
+        original_accessions = validated["Accession"]
+        normalized_accessions = original_accessions.map(normalize_accession)
+
+        duplicate_mask = normalized_accessions.duplicated(keep=False)
+        duplicate_mask = duplicate_mask & normalized_accessions.ne("")
+        duplicate_values = normalized_accessions[duplicate_mask].drop_duplicates()
+
+        for accession in duplicate_values:
+            matching_rows = normalized_accessions.eq(accession).fillna(False)
+            row_text = metadata_rows(matching_rows)
+            original_values = original_accessions[matching_rows].astype(str).tolist()
+            original_text = ", ".join(original_values)
+
+            errors.append(
+                "Duplicate metadata accession after version normalization "
+                f"{accession!r} at row(s): {row_text} "
+                f"(original values: {original_text})"
+            )
+
+    # Convert collection dates.
+    if "Collection_Date" in validated.columns:
+        original_dates = validated["Collection_Date"].copy()
+        missing_dates = blank_mask(original_dates)
+        converted_dates = pd.to_datetime(
+            original_dates,
+            errors="coerce",
+            format="mixed",
+        )
+        invalid_dates = ~missing_dates & converted_dates.isna()
+        validated["Collection_Date"] = converted_dates
+
+        if missing_dates.any():
+            row_text = metadata_rows(missing_dates)
+            errors.append(f"Missing Collection_Date at metadata row(s): {row_text}")
+
+        if invalid_dates.any():
+            row_text = metadata_rows(invalid_dates)
+            errors.append(f"Invalid Collection_Date at metadata row(s): {row_text}")
+
+    # Convert coordinates only when their columns are available.
+    coordinate_rules = {
+        "Latitude": (-90, 90),
+        "Longitude": (-180, 180),
+    }
+
+    for column, limits in coordinate_rules.items():
+        if column not in validated.columns:
+            continue
+
+        minimum, maximum = limits
+        original_values = validated[column].copy()
+        missing_values = blank_mask(original_values)
+        numeric_values = pd.to_numeric(original_values, errors="coerce")
+
+        nonnumeric_values = ~missing_values & numeric_values.isna()
+        out_of_range = numeric_values.notna() & ~numeric_values.between(
+            minimum,
+            maximum,
+        )
+        validated[column] = numeric_values
+
+        if nonnumeric_values.any():
+            row_text = metadata_rows(nonnumeric_values)
+            errors.append(f"Non-numeric {column} at metadata row(s): {row_text}")
+
+        if out_of_range.any():
+            row_text = metadata_rows(out_of_range)
+            errors.append(
+                f"{column} outside {minimum} to {maximum} "
+                f"at metadata row(s): {row_text}"
+            )
+
+    return validated, errors, missing_counts
+
+
+def load_and_validate_metadata(file_path):
+    """Load and validate one metadata file."""
+
+    metadata = load_metadata(file_path)
+    return validate_metadata(metadata)
+
+
+def load_fasta(file_path):
+    """Read FASTA record IDs and nucleotide sequences with Biopython."""
+
+    rows = []
+
+    with Path(file_path).open(encoding="utf-8") as fasta_file:
+        records = SeqIO.parse(fasta_file, "fasta")
+
+        for record_number, record in enumerate(records, start=1):
+            row = {
+                "Accession": str(record.id).strip(),
+                "Normalized_Accession": normalize_accession(record.id),
+                "Description": str(record.description),
+                "Sequence": clean_sequence(record.seq),
+                "Record_Number": record_number,
+            }
+            rows.append(row)
+
+    columns = [
+        "Accession",
+        "Normalized_Accession",
+        "Description",
+        "Sequence",
+        "Record_Number",
+    ]
+    return pd.DataFrame(rows, columns=columns)
+
+
+def match_fasta_to_metadata(
+    metadata, fasta_records, default_gene_segment=None, confirm_same_region=False,
+    complete_genomes=False,
+):
+    """Match FASTA records to metadata accessions and create analysis columns."""
+
+    errors = []
+    records = fasta_records.copy()
+
+    if records.empty:
+        errors.append("The FASTA file contains no sequence records.")
+
+    # Check for blank FASTA identifiers.
+    missing_accessions = blank_mask(records["Accession"])
+    if missing_accessions.any():
+        record_numbers = records.loc[missing_accessions, "Record_Number"]
+        record_text = ", ".join(record_numbers.astype(str))
+        errors.append("Missing FASTA accession in record(s): " + record_text)
+
+    # Check for duplicate FASTA identifiers after version normalization.
+    normalized_accessions = records["Normalized_Accession"]
+    duplicate_mask = normalized_accessions.duplicated(keep=False)
+    duplicate_mask = duplicate_mask & normalized_accessions.ne("")
+    duplicate_values = normalized_accessions[duplicate_mask].drop_duplicates()
+
+    for accession in duplicate_values:
+        matching_records = normalized_accessions.eq(accession)
+        record_numbers = records.loc[matching_records, "Record_Number"]
+        original_values = records.loc[matching_records, "Accession"]
+
+        record_text = ", ".join(record_numbers.astype(str))
+        original_text = ", ".join(original_values.astype(str))
+
+        errors.append(
+            "Duplicate FASTA accession after version normalization "
+            f"{accession!r} in record(s): {record_text} "
+            f"(original values: {original_text})"
+        )
+
+    # Validate every FASTA sequence.
+    for _, record in records.iterrows():
+        accession = record["Accession"]
+        sequence = record["Sequence"]
+        record_number = record["Record_Number"]
+
+        if sequence == "":
+            errors.append(
+                f"Missing sequence for FASTA accession {accession!r} "
+                f"in record {record_number}."
+            )
+            continue
+
+        invalid_characters = set(sequence) - ALLOWED_SEQUENCE_CHARACTERS
+        if invalid_characters:
+            character_text = "".join(sorted(invalid_characters))
+            errors.append(
+                f"Invalid sequence character(s) {character_text!r} for FASTA "
+                f"accession {accession!r} in record {record_number}. "
+                "Allowed characters are A, C, G, T, N, and -."
+            )
+
+    # Make dictionaries that connect normalized IDs to their original IDs.
+    metadata_accessions = {}
+    if "Accession" in metadata.columns:
+        for value in metadata["Accession"]:
+            if pd.isna(value) or str(value) == "":
+                continue
+            normalized = normalize_accession(value)
+            metadata_accessions[normalized] = str(value)
+
+    fasta_accessions = {}
+    for _, record in records.iterrows():
+        normalized = str(record["Normalized_Accession"])
+        if normalized != "":
+            fasta_accessions[normalized] = str(record["Accession"])
+
+    # Report IDs found in only one of the two input files.
+    metadata_without_fasta = []
+    for accession in metadata_accessions:
+        if accession not in fasta_accessions:
+            metadata_without_fasta.append(metadata_accessions[accession])
+    metadata_without_fasta.sort()
+
+    if metadata_without_fasta:
+        errors.append(
+            "Metadata accession(s) without a matching FASTA sequence: "
+            + ", ".join(metadata_without_fasta)
+        )
+
+    fasta_without_metadata = []
+    for accession in fasta_accessions:
+        if accession not in metadata_accessions:
+            fasta_without_metadata.append(fasta_accessions[accession])
+    fasta_without_metadata.sort()
+
+    if fasta_without_metadata:
+        errors.append(
+            "FASTA accession(s) without matching metadata: "
+            + ", ".join(fasta_without_metadata)
+        )
+
+    # Make lookup tables used to add FASTA information to metadata rows.
+    sequence_by_accession = {}
+    fasta_id_by_accession = {}
+    description_by_accession = {}
+
+    for _, record in records.iterrows():
+        accession = str(record["Normalized_Accession"])
+
+        if accession and accession not in sequence_by_accession:
+            sequence_by_accession[accession] = str(record["Sequence"])
+            fasta_id_by_accession[accession] = str(record["Accession"])
+            description_by_accession[accession] = str(record["Description"])
+
+    matched = metadata.copy()
+
+    if "Accession" in matched.columns:
+        normalized_metadata = matched["Accession"].map(normalize_accession)
+        matched["Sample_ID"] = normalized_metadata.map(fasta_id_by_accession)
+        matched["Sequence"] = normalized_metadata.map(sequence_by_accession)
+    else:
+        matched["Sample_ID"] = pd.Series(pd.NA, index=matched.index, dtype="string")
+        matched["Sequence"] = pd.Series(pd.NA, index=matched.index, dtype="string")
+
+    for column in INTERNAL_COLUMNS:
+        if column not in matched.columns:
+            matched[column] = pd.NA
+
+    # Resolve each region before MAFFT is allowed to group any sequences.
+    pathogen_count = 0
+    if "Pathogen" in matched:
+        pathogen_count = matched["Pathogen"].dropna().nunique()
+    if confirm_same_region and pathogen_count != 1:
+        errors.append("Same-region confirmation requires one pathogen only.")
+    default_info = None
+    if complete_genomes:
+        if pathogen_count != 1:
+            errors.append(
+                "Complete-genome mode requires all samples to have one pathogen."
+            )
+        default_info = metadata_region("Complete genome")
+    elif default_gene_segment and str(default_gene_segment).strip():
+        default_info = metadata_region(default_gene_segment)
+
+    for index, sample in matched.iterrows():
+        accession = sample.get("Accession")
+        accession_key = normalize_accession(accession)
+        description = description_by_accession.get(accession_key, "")
+        header_info = fasta_region(description)
+
+        if complete_genomes:
+            for metadata_info in sample.get("_Region_Details", []):
+                if not metadata_info["whole"]:
+                    errors.append(
+                        f"Complete-genome mode conflicts with metadata for "
+                        f"{accession}: {metadata_info['label']}."
+                    )
+            if header_info["label"] and not header_info["whole"]:
+                errors.append(
+                    f"Complete-genome mode conflicts with the FASTA header for "
+                    f"{accession}: {header_info['label']}."
+                )
+            for column in ("Nuc_Completeness", "Completeness"):
+                value = sample.get(column)
+                if pd.notna(value) and any(
+                    word in str(value).casefold() for word in ("partial", "incomplete")
+                ):
+                    errors.append(
+                        f"Complete-genome mode conflicts with {column}="
+                        f"{value} for {accession}."
+                    )
+            annotation = description.partition(" ")[2].casefold()
+            if not header_info["whole"] and (
+                "partial" in annotation
+                or "incomplete" in annotation
+                or "complete cds" in annotation
+            ):
+                errors.append(
+                    f"Complete-genome mode conflicts with the FASTA description "
+                    f"for {accession}: it describes a partial sequence or CDS."
+                )
+
+        if header_info["whole"] and (header_info["segment"] or header_info["genes"]):
+            errors.append(f"Contradictory FASTA region annotation for {accession}.")
+
+        existing = sample.get("Gene_Segment")
+        if (pd.notna(existing)
+                and str(existing).strip().casefold() == "unspecified_region"):
+            if header_info["label"]:
+                matched.at[index, "Gene_Segment"] = header_info["label"]
+                matched.at[index, "Gene_Segment_Source"] = "FASTA header"
+            elif confirm_same_region and pathogen_count == 1:
+                matched.at[index, "Gene_Segment"] = "Unspecified_Region"
+                matched.at[index, "Gene_Segment_Source"] = (
+                    "User-confirmed unspecified region"
+                )
+            else:
+                errors.append(
+                    "Unspecified_Region requires --confirm-same-region and "
+                    "one pathogen; it cannot be accepted from metadata alone."
+                )
+            continue
+
+        if pd.notna(existing) and str(existing).strip():
+            metadata_infos = sample.get("_Region_Details", [])
+            if not metadata_infos:
+                metadata_infos = [metadata_region(existing)]
+            for metadata_info in metadata_infos:
+                if header_info["label"] and regions_conflict(metadata_info, header_info):
+                    errors.append(
+                        f"Metadata and FASTA header disagree on the genomic region "
+                        f"for {accession}: {metadata_info['label']} versus "
+                        f"{header_info['label']}."
+                    )
+                    break
+            matched.at[index, "Gene_Segment_Source"] = "Metadata"
+        elif header_info["label"]:
+            matched.at[index, "Gene_Segment"] = header_info["label"]
+            matched.at[index, "Gene_Segment_Source"] = "FASTA header"
+        elif default_info:
+            if default_info["label"].casefold() == "unspecified_region":
+                if confirm_same_region and pathogen_count == 1:
+                    matched.at[index, "Gene_Segment"] = "Unspecified_Region"
+                    matched.at[index, "Gene_Segment_Source"] = (
+                        "User-confirmed unspecified region"
+                    )
+                else:
+                    errors.append(
+                        "Unspecified_Region requires --confirm-same-region and "
+                        "one pathogen; it cannot be used as an unconfirmed default."
+                    )
+            else:
+                matched.at[index, "Gene_Segment"] = default_info["label"]
+                matched.at[index, "Gene_Segment_Source"] = (
+                    "User-confirmed complete genome" if complete_genomes
+                    else "User override"
+                )
+        elif confirm_same_region and pathogen_count == 1:
+            matched.at[index, "Gene_Segment"] = "Unspecified_Region"
+            matched.at[index, "Gene_Segment_Source"] = (
+                "User-confirmed unspecified region"
+            )
+        else:
+            errors.append(
+                f"Cannot determine genomic region for {accession}. Add a "
+                "metadata region or explicit FASTA header annotation. "
+                "Select Complete genomes only if all sequences are truly "
+                "complete genomes of one pathogen."
+            )
+
+    # Even if metadata uses a vague common label, FASTA evidence must not
+    # reveal different segments or genes inside one MAFFT group.
+    for group_names, group in matched.groupby(["Pathogen", "Gene_Segment"]):
+        header_infos = []
+        for accession in group["Accession"]:
+            description = description_by_accession.get(normalize_accession(accession), "")
+            header_infos.append(fasta_region(description))
+        segments = {info["segment"] for info in header_infos if info["segment"]}
+        genes = [info["genes"] for info in header_infos if info["genes"]]
+        whole_count = sum(info["whole"] for info in header_infos)
+        different_genes = bool(genes) and not set.intersection(*genes)
+        if (len(segments) > 1 or different_genes
+                or (whole_count and whole_count != len(group)
+                    and (segments or genes))):
+            errors.append(
+                f"FASTA headers show different genomic regions within "
+                f"{group_names[0]} / {group_names[1]}; MAFFT will not align "
+                "this mixed group."
+            )
+
+    # Use the predictable column order required by later stages.
+    matched = matched[INTERNAL_COLUMNS]
+    matched.attrs["fasta_record_count"] = len(records)
+    return matched, errors
+
+
+def load_and_validate_inputs(
+    fasta_path, metadata_path, default_gene_segment=None, confirm_same_region=False,
+    complete_genomes=False,
+):
+    """Load both inputs and return the DataFrame used by analysis stages."""
+
+    metadata, metadata_errors, missing_counts = load_and_validate_metadata(
+        metadata_path
+    )
+    fasta_records = load_fasta(fasta_path)
+    matched, matching_errors = match_fasta_to_metadata(
+        metadata, fasta_records, default_gene_segment, confirm_same_region,
+        complete_genomes,
+    )
+
+    missing_counts["Sample_ID"] = int(blank_mask(matched["Sample_ID"]).sum())
+    missing_counts["Sequence"] = int(blank_mask(matched["Sequence"]).sum())
+    missing_counts["Gene_Segment"] = int(blank_mask(matched["Gene_Segment"]).sum())
+
+    all_errors = metadata_errors + matching_errors
+    return matched, all_errors, missing_counts
+
+
+def category_summary(data, column):
+    """Create a compact value-and-count summary for one text column."""
+
+    if column not in data.columns:
+        return "column not available"
+
+    available_values = ~blank_mask(data[column])
+    values = data.loc[available_values, column].astype("string").str.strip()
+    counts = values.value_counts().sort_index()
+
+    if counts.empty:
+        return "none"
+
+    entries = []
+    for value, count in counts.items():
+        entries.append(f"{value} ({count})")
+
+    if len(entries) > 10:
+        hidden_count = len(entries) - 10
+        entries = entries[:10]
+        entries.append(f"... and {hidden_count} more")
+
+    return ", ".join(entries)
+
+
+def print_summary(data, errors, missing_counts):
+    """Print a compact overview and every validation problem."""
+
+    print("\nDATASET SUMMARY")
+    print(f"FASTA records: {data.attrs.get('fasta_record_count', 'unknown')}")
+    print(f"Metadata rows: {len(data)}")
+    print(f"Matched sample rows: {data['Sequence'].notna().sum()}")
+    print(f"Pathogens represented: {category_summary(data, 'Pathogen')}")
+    print(f"Gene/segment groups: {category_summary(data, 'Gene_Segment')}")
+    print(f"Region label sources: {category_summary(data, 'Gene_Segment_Source')}")
+    for _, sample in data.head(10).iterrows():
+        print(
+            f"  {sample['Sample_ID']}: {sample['Gene_Segment']} "
+            f"({sample['Gene_Segment_Source']})"
+        )
+    if len(data) > 10:
+        print(f"  ... and {len(data) - 10} more samples")
+
+    valid_dates = data["Collection_Date"].dropna()
+    if valid_dates.empty:
+        date_range = "no valid dates"
+    else:
+        first_date = valid_dates.min().date().isoformat()
+        last_date = valid_dates.max().date().isoformat()
+        date_range = f"{first_date} to {last_date}"
+
+    print(f"Date range: {date_range}")
+    print(f"Hosts: {category_summary(data, 'Host_Source')}")
+    print(f"Locations: {category_summary(data, 'Location_Name')}")
+
+    print("Missing values:")
+    summary_columns = METADATA_COLUMNS + ["Sequence"]
+    for column in summary_columns:
+        if column in missing_counts:
+            print(f"  {column}: {missing_counts[column]}")
+        elif column in METADATA_COLUMNS:
+            print(f"  {column}: column absent")
+
+    print(f"Validation errors: {len(errors)}")
+    if errors:
+        for error in errors:
+            print(f"  - {error}")
+    else:
+        print("  None")
+
+
+def parse_arguments():
+    """Read FASTA and metadata paths from the command line."""
+
+    parser = argparse.ArgumentParser(
+        description="Validate and match FASTA sequences with XLSX or CSV metadata."
+    )
+    parser.add_argument("fasta_file", type=Path)
+    parser.add_argument("metadata_file", type=Path)
+    parser.add_argument("--default-gene-segment", help="Region for unannotated samples")
+    parser.add_argument(
+        "--confirm-same-region", action="store_true",
+        help="Confirm all sequences represent the same region (one pathogen only)",
+    )
+    return parser.parse_args()
+
+
+def main():
+    """Run the dual-input validator and return a process status code."""
+
+    arguments = parse_arguments()
+    fasta_path = arguments.fasta_file
+    metadata_path = arguments.metadata_file
+
+    if fasta_path.suffix.lower() not in FASTA_EXTENSIONS:
+        print("ERROR: FASTA must use .fasta, .fa, or .fna.", file=sys.stderr)
+        return 2
+
+    if metadata_path.suffix.lower() not in METADATA_EXTENSIONS:
+        print("ERROR: Metadata must use .xlsx or .csv.", file=sys.stderr)
+        return 2
+
+    if not fasta_path.is_file():
+        print(f"ERROR: FASTA file not found: {fasta_path}", file=sys.stderr)
+        return 2
+
+    if not metadata_path.is_file():
+        print(f"ERROR: Metadata file not found: {metadata_path}", file=sys.stderr)
+        return 2
+
+    try:
+        data, errors, missing_counts = load_and_validate_inputs(
+            fasta_path,
+            metadata_path,
+            arguments.default_gene_segment,
+            arguments.confirm_same_region,
+        )
+    except Exception as error:
+        print(f"ERROR: Could not read the input files: {error}", file=sys.stderr)
+        return 2
+
+    print(f"FASTA file: {fasta_path.resolve()}")
+    print(f"Metadata file: {metadata_path.resolve()}")
+    print_summary(data, errors, missing_counts)
+
+    if errors:
+        print("\nRESULT: FAILED validation. No metadata rows were deleted.")
+        return 1
+
+    print("\nRESULT: PASSED validation. No metadata rows were deleted.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

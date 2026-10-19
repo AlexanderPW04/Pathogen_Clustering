@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Outbreak Cluster Detector</title>
+  <style>
+    body {
+      background: #f3f5f7;
+      color: #1f2937;
+      font-family: Arial, sans-serif;
+      line-height: 1.5;
+      margin: 0;
+    }
+    main {
+      margin: 2rem auto;
+      max-width: 760px;
+      padding: 0 1rem;
+    }
+    section {
+      background: white;
+      border: 1px solid #d8dee6;
+      border-radius: 8px;
+      margin-bottom: 1rem;
+      padding: 1.25rem;
+    }
+    h1, h2, h3 { color: #173f5f; }
+    h1 { margin-bottom: 0.25rem; }
+    form { display: grid; gap: 1rem; }
+    fieldset {
+      border: 1px solid #c6d2dc;
+      border-radius: 6px;
+      display: grid;
+      gap: 0.5rem;
+      margin: 0;
+      padding: 1rem;
+    }
+    legend {
+      color: #173f5f;
+      font-size: 1.05rem;
+      font-weight: bold;
+      padding: 0 0.35rem;
+    }
+    label { display: grid; font-weight: bold; gap: 0.35rem; }
+    input, button {
+      box-sizing: border-box;
+      font: inherit;
+      padding: 0.65rem;
+      width: 100%;
+    }
+    input[type="checkbox"], input[type="radio"] { width: auto; }
+    button {
+      background: #1f5f8b;
+      border: 0;
+      border-radius: 4px;
+      color: white;
+      cursor: pointer;
+      font-weight: bold;
+    }
+    .error {
+      background: #fff1f1;
+      border-color: #cf5b5b;
+      color: #7f1d1d;
+      white-space: pre-wrap;
+    }
+    .cluster {
+      border-top: 1px solid #d8dee6;
+      margin-top: 1rem;
+      padding-top: 0.75rem;
+    }
+    .summary-grid {
+      display: grid;
+      gap: 0.5rem;
+      grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+    }
+    .summary-grid p {
+      background: #edf4f8;
+      border: 1px solid #d8dee6;
+      border-radius: 6px;
+      margin: 0;
+      padding: 0.75rem;
+    }
+    .candidate-details summary { cursor: pointer; font-weight: bold; }
+    .synthetic-note { background: #fff8e6; border-color: #e6c77a; }
+    .note { color: #52606d; }
+    .help {
+      color: #52606d;
+      display: block;
+      font-size: 0.9rem;
+      font-weight: normal;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Outbreak Cluster Detector</h1>
+    <p class="note">This prototype combines pathogen genomic similarity with collection date and geographic information to flag potential outbreak clusters. Results are screening signals and do not confirm transmission or an outbreak.</p>
+    <p class="note">MAFFT aligns sequences within each pathogen and gene/segment group before genetic distances are calculated.</p>
+    <p class="note">When metadata has a location name but no coordinates, GeoNames may estimate them. These place coordinates can be approximate. State-only names such as USA: ND are too coarse for the kilometer cutoff or same-location fallback; their precision is reported in the pairwise output.</p>
+    <p class="note">Genomic regions come first from metadata, then explicit FASTA descriptions. MAFFT aligns only samples with the same resolved pathogen and region. An unknown region is an error unless you explicitly confirm that every sequence is a complete genome of one pathogen.</p>
+
+    <section>
+      <h2>Run analysis</h2>
+      <form method="post" enctype="multipart/form-data">
+        <fieldset>
+          <legend>1. Genomic sequences</legend>
+          <label>
+            FASTA file (.fasta, .fa, or .fna)
+            <input type="file" name="fasta_file" accept=".fasta,.fa,.fna" required>
+          </label>
+          <span class="help">Upload nucleotide sequences downloaded from a genomic database such as NCBI Virus.</span>
+        </fieldset>
+
+        <fieldset>
+          <legend>2. Sample metadata</legend>
+          <label>
+            Metadata file (.xlsx or .csv)
+            <input type="file" name="metadata_file" accept=".xlsx,.csv" required>
+          </label>
+          <span class="help">Upload metadata containing accession, pathogen, collection date, location, and host/source. A gene/segment column is optional when FASTA descriptions identify the region.</span>
+        </fieldset>
+
+        <fieldset>
+          <legend>3. Genomic-region selection</legend>
+          <label>
+            <span><input type="radio" name="genomic_region_mode" value="automatic" {% if values.genomic_region_mode == 'automatic' %}checked{% endif %}> Automatic detection (default)</span>
+            <span class="help">Use metadata first, then FASTA annotations. Compatible pathogen/region groups are aligned separately with MAFFT. Missing or conflicting annotations stop the analysis.</span>
+          </label>
+          <label>
+            <span><input type="radio" name="genomic_region_mode" value="complete_genomes" {% if values.genomic_region_mode == 'complete_genomes' %}checked{% endif %}> Complete genomes</span>
+            <span class="help">Choose this only when all sequences are complete genomes of the same pathogen. Existing gene or segment annotations must not contradict that choice.</span>
+          </label>
+          <label>
+            <span><input type="checkbox" name="confirm_complete_genomes" {% if values.confirm_complete_genomes %}checked{% endif %}> I confirm all sequences are complete genomes of one pathogen</span>
+            <span class="help">Required when Complete genomes is selected; selecting it does not override conflicting annotations.</span>
+          </label>
+        </fieldset>
+
+        <label>
+          Maximum genetic p-distance
+          <input type="number" name="max_p_distance" min="0" step="any" value="{{ values.max_p_distance }}" required>
+          <span class="help">The largest allowed fraction of comparable nucleotide positions that differ.</span>
+        </label>
+        <label>
+          Maximum days between samples
+          <input type="number" name="max_days_apart" min="0" step="any" value="{{ values.max_days_apart }}" required>
+          <span class="help">The largest allowed difference between the two collection dates.</span>
+        </label>
+        <label>
+          Maximum geographic distance in kilometers
+          <input type="number" name="max_km_apart" min="0" step="any" value="{{ values.max_km_apart }}" required>
+          <span class="help">The largest allowed Haversine distance between two sample coordinates.</span>
+        </label>
+        <button type="submit">Run Analysis</button>
+        <button type="submit" name="run_example" value="1" formnovalidate>Run Example Analysis</button>
+      </form>
+      <p class="note">The example uses explicitly synthetic sequences and sample records, not NCBI records or real outbreaks. It uses your threshold settings and runs the same MAFFT-backed pipeline. One example record has a real place name but synthetic sample data and no coordinates so GeoNames can be demonstrated when configured.</p>
+      <p class="note">Thresholds are prototype settings, not universal biological outbreak definitions.</p>
+    </section>
+
+    {% if error %}
+      <section class="error">
+        <strong>Analysis could not be completed.</strong>
+        <div>{{ error }}</div>
+      </section>
+    {% endif %}
+
+    {% if notice %}
+      <section>
+        <p class="note">{{ notice }}</p>
+      </section>
+    {% endif %}
+
+    {% if analysis_complete %}
+      {% if is_synthetic_example %}
+        <section class="synthetic-note">
+          <h2>Synthetic example analysis</h2>
+          <p>These sequences and sample records are invented for demonstration. They are not NCBI records or real outbreak data.</p>
+        </section>
+      {% endif %}
+      <section>
+        <h2>Analysis summary</h2>
+        <p><strong>FASTA file:</strong> {{ input_names.fasta }}<br><strong>Metadata file:</strong> {{ input_names.metadata }}</p>
+        <div class="summary-grid">
+          <p><strong>Unique samples analyzed:</strong> {{ summary.unique_samples }}</p>
+          <p><strong>Pairwise comparisons:</strong> {{ summary.pairwise_comparisons }}</p>
+          <p><strong>Strict related pairs:</strong> {{ related_pair_count }}</p>
+          <p><strong>Potential clusters meeting all criteria:</strong> {{ clusters|length }}</p>
+          <p><strong>Genomic-temporal candidate pairs with unresolved geography:</strong> {{ candidates|length }}</p>
+          <p><strong>Unique samples represented in candidate pairs:</strong> {{ summary.candidate_unique_samples }}</p>
+        </div>
+        <p class="note">Candidate pairs are relationships among {{ summary.candidate_unique_samples }} of the {{ summary.unique_samples }} original samples, not additional samples.</p>
+        <p><strong>Sequences aligned by MAFFT:</strong> {{ summary.aligned_sequences }}<br>
+          <strong>Distinct locations resolved by GeoNames:</strong> {{ summary.geonames_resolved }}<br>
+          <strong>Distinct locations too coarse for distance comparison:</strong> {{ summary.coarse_locations }}<br>
+          <strong>Samples lacking sufficiently precise geographic metadata:</strong> {{ summary.insufficient_geography_samples }}<br>
+          <strong>Valid geographic-distance comparisons:</strong> {{ summary.valid_geographic_comparisons }}</p>
+      </section>
+      <section>
+        <h2>Potential clusters meeting all three screening criteria</h2>
+        <p><strong>Potential clusters:</strong> {{ clusters|length }}</p>
+        <p><strong>Related pairs:</strong> {{ related_pair_count }}</p>
+
+        {% if clusters %}
+          {% for cluster in clusters %}
+            <div class="cluster">
+              <h3>{{ cluster.cluster_id }}</h3>
+              <p><strong>Pathogen:</strong> {{ cluster.pathogen }}</p>
+              <p><strong>Gene/segment:</strong> {{ cluster.gene_segment }}</p>
+              <p><strong>Samples:</strong> {{ cluster.samples|join(', ') }}</p>
+              <p><strong>Region label sources:</strong><br>{{ cluster.sample_regions|join('; ') }}</p>
+            </div>
+          {% endfor %}
+        {% else %}
+          {% if candidates %}
+            <p>No pairs met all three screening criteria. Some pairs passed the genetic and date limits, but their geographic evidence is insufficient; see the separate candidate section below.</p>
+          {% else %}
+            <p>No potential clusters were detected with these threshold settings.</p>
+          {% endif %}
+        {% endif %}
+      </section>
+      <section>
+        <h2>Genomic-temporal candidates: geography unresolved</h2>
+        <p class="note">These pairs pass the genetic and date thresholds, but the available location data cannot establish whether they pass the geographic cutoff. They are not included in the strict potential clusters and are not confirmed outbreaks.</p>
+        <details class="candidate-details">
+          <summary>Show candidate pairs ({{ candidates|length }})</summary>
+          {% if candidates %}
+            {% for pair in candidates %}
+              <div class="cluster">
+                <strong>{{ pair.sample_1 }} – {{ pair.sample_2 }}</strong><br>
+                {{ pair.pathogen }} / {{ pair.gene_segment }}<br>
+                P-distance: {{ "%.6f"|format(pair.p_distance) }}; days apart: {{ pair.days_apart }}; geographic distance: unresolved
+              </div>
+            {% endfor %}
+          {% else %}
+            <p>No genomic-temporal candidate pairs have unresolved geography.</p>
+          {% endif %}
+        </details>
+      </section>
+    {% endif %}
+  </main>
+</body>
+</html>

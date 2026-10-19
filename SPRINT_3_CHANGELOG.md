@@ -1,0 +1,220 @@
+# Sprint 3 Change Log
+
+This file records work added **after the Sprint 2 prototype**. Use it as the source
+for a later Sprint 3 report or presentation. Add an entry whenever a Sprint 3
+change is completed. Do not list an existing Sprint 2 file as a new Sprint 3 file
+just because it is used again.
+
+## Starting point: Sprint 2 baseline (October 19, 2026)
+
+The following files and capabilities already existed before Sprint 3 work began:
+
+| Existing file or folder | What Sprint 2 already provided |
+|---|---|
+| `validate_inputs.py` | FASTA plus CSV/XLSX metadata loading, NCBI column aliases, accession matching, and validation. |
+| `compare_genetic_distances.py` | Pairwise comparison of aligned sequences within the same pathogen and gene/segment group. |
+| `add_temporal_geographic.py` | Days apart, Haversine kilometers when coordinates exist, and normalized location matching. |
+| `detect_potential_clusters.py` | Threshold filtering and connected-component detection for potential clusters. |
+| `run_pipeline.py` | One command that runs the four backend stages in order. |
+| `app.py` and `templates/index.html` | Local Flask upload form, threshold inputs, and cluster display. |
+| `requirements.txt` | pandas, openpyxl, Biopython, and Flask dependencies. |
+| `tests/` | Six test files covering input validation, all analysis stages, the pipeline, and Flask. The last reported Sprint 2 run passed 27 tests. |
+| `outputs/` | Sprint 2 demonstration inputs and generated results, including a 10-record NCBI-style example. |
+| `README.md` | Cross-platform setup and usage instructions. |
+| `PYTHON_LINE_BY_LINE_GUIDE.md` | Beginner-friendly explanation of the six main Python files. |
+| `output/pdf/BMI461_Sprint2_Code_Review_Guide.md` and `.pdf` | Sprint 2 conceptual documentation. |
+
+The folder is not currently a Git repository, so this written baseline and the
+entries below are the change record. The existing folder name `sprint_2` does not
+make later work part of Sprint 2.
+
+## Sprint 3 changes so far
+
+### October 19, 2026 — Prepare the Sprint 2 website for Docker hosting
+
+- **Added files:** `Dockerfile` installs Python 3.11, Linux MAFFT, Python
+  requirements, and runs the existing Flask app with Gunicorn. `.dockerignore`
+  and `.gitignore` keep local inputs, generated outputs, caches, and credential
+  files out of the image or new Git commits.
+- **Changed files:** `requirements.txt` adds Gunicorn. `app.py` limits uploads,
+  adds `/health`, and keeps internal errors off public response pages.
+  `templates/index.html` explains zero strict clusters when geography is
+  unresolved. `README.md` adds Windows-to-GitHub-to-Render Free instructions;
+  alignment and Flask tests cover Linux executable discovery, upload limits,
+  health checks, and error presentation.
+- **Verification:** All 74 automated tests passed. Docker CLI is present, but
+  its daemon is not running/reachable here (and the local Docker config denied
+  access), so no image build or Render deployment was verified.
+- **Scope:** Deployment preparation for the existing six-stage Sprint 2
+  website only. Scientific calculations, MAFFT grouping, GeoNames behavior,
+  and strict-versus-candidate result meanings are unchanged. No wastewater
+  analysis was added.
+
+### October 19, 2026 — Clearer website counts and candidate-pair inspection
+
+- **Added files:** None.
+- **Changed files:** `app.py` counts distinct sample IDs in the pipeline's
+  region-assignment output and in unresolved-geography candidate pairs.
+  `templates/index.html` highlights sample and pair counts, keeps the full
+  candidate list collapsed until selected, rounds displayed p-distances to
+  six decimals, and labels example-run results as synthetic. `README.md` and
+  `tests/test_app.py` explain and verify the presentation.
+- **Before:** Candidate pairs were all shown at once, and a count of 22 pairs
+  could be mistaken for 22 additional samples.
+- **After:** The NCBI-style test shows 10 unique samples, 45 pairwise
+  comparisons, zero strict related pairs/clusters, and 22 unresolved-geography
+  candidate pairs involving 9 of the original samples.
+- **Verification:** All 70 automated tests passed with MAFFT mocked where
+  needed. No pipeline calculations or CSV precision changed.
+- **Scope:** Website presentation only; no wastewater analysis.
+
+### October 19, 2026 — Clearer Flask choices and geography-aware results
+
+- **Added files:** `examples/synthetic_sequences.fasta` and
+  `examples/synthetic_metadata.csv` provide an explicitly invented demo,
+  including one name-only location and unequal sequence lengths for MAFFT.
+- **Changed files:** `templates/index.html` now offers automatic detection or
+  explicitly confirmed complete genomes, a Run Example Analysis button, a
+  compact run summary, and a separate unresolved-geography candidate section.
+  `app.py` handles those controls and reads the existing enriched CSV without
+  changing strict cluster outputs. `validate_inputs.py` checks the new
+  complete-genome assertion against metadata, FASTA, and pathogen identity.
+  `run_pipeline.py` passes that option through and optionally supplies run
+  counts to Flask. `README.md` and relevant tests were updated.
+- **Removed files:** None.
+- **Before:** The website had a free-text default region and a general
+  same-region checkbox. It showed only strict clusters, so state-only data
+  produced an empty result with little context.
+- **After:** Unknown regions are not guessed in automatic mode. A confirmed
+  complete-genome choice cannot override conflicting evidence. Pairs passing
+  genomic/time thresholds but lacking usable geography are shown separately
+  from all-criteria potential clusters. The synthetic demo uses the same
+  six-stage backend.
+- **Verification:** All 70 automated tests passed. The 10-record state-only
+  NCBI-style upload produced zero strict clusters and nonzero unresolved-
+  geography candidates with MAFFT mocked. The synthetic demo produced two
+  strict clusters in the mocked-alignment test. A real MAFFT run was not
+  possible here because `mafft` is not installed on `PATH`; the command-line
+  run stopped with the expected installation message.
+- **Scope:** No wastewater analysis, new scientific distance formula, or
+  change to the existing strict related-pair and cluster CSV meanings.
+
+### October 19, 2026 — Secure GeoNames endpoint and location precision
+
+- **Added files:** None.
+- **Changed files:** `geocode_locations.py` now calls the secure GeoNames URL
+  with SSL verification enabled and labels state/administrative locations as
+  too coarse. `add_temporal_geographic.py` keeps coordinates and sources in
+  its output but leaves kilometer distance and same-location status blank for
+  pairs involving coarse locations. `templates/index.html` and `README.md`
+  explain the limit; geocoding and temporal/geographic tests were extended.
+- **Removed files:** None.
+- **Before:** The geocoder used an older URL, and a state centroid or identical
+  state name could satisfy a local geographic cutoff.
+- **After:** Named places can still be geocoded and cached, while state-level
+  descriptions such as `USA: ND` cannot create a local-distance connection.
+  The enriched CSV reports each sample's `Geographic_Precision`.
+- **Verification:** All 57 automated tests passed. They check the secure URL,
+  SSL verification, caching, state-name handling, and exclusion from the 50 km
+  criterion. A live request was not run here because this shell has no GeoNames
+  username; the README gives a command to run with a configured account.
+- **Scope:** This corrects the inherited Sprint 2 backbone; it does not add
+  wastewater or other Sprint 3 scientific analysis.
+
+### October 19, 2026 — Optional genomic-region input and provenance
+
+- **Added files:** `genomic_regions.py` reads explicit segment, gene, and
+  whole-genome wording from metadata and FASTA descriptions without using
+  sequence length or regular expressions.
+- **Changed files:** `validate_inputs.py` now accepts flexible metadata headers,
+  makes `Gene_Segment` optional, checks metadata/FASTA disagreements, and records
+  each label's source. `run_pipeline.py` accepts a default or a same-region
+  confirmation and writes `*_region_assignments.csv` after success.
+  `compare_genetic_distances.py` accepts the same options when run alone.
+  `app.py` and `templates/index.html` add equivalent controls and show sources
+  beside clustered samples. `README.md` and input, pipeline, and Flask tests
+  were updated.
+- **Removed files:** None.
+- **Before:** An exactly spelled `Segment` mapped to required `Gene_Segment`,
+  but other spacing or capitalization did not. FASTA descriptions were ignored.
+- **After:** The project resolves each region from metadata, then the FASTA
+  header, then a user default, then explicit one-pathogen confirmation. It
+  rejects contradictory evidence and does not merge different segments for
+  MAFFT alignment.
+- **Verification:** The real `sequences.csv` and `sequences.fasta` matched all
+  10 records and resolved `Segment 4` from metadata. 53 automated tests cover
+  the requested cases, including separate MAFFT calls for mixed segments;
+  MAFFT itself remains unavailable locally, so that external call is mocked.
+- **Scope:** This is another update to the inherited Sprint 2 backbone. It does
+  not add Sprint 3 wastewater or SNV analysis.
+
+### October 19, 2026 — MAFFT and GeoNames added to the inherited backbone
+
+- **Added files:** `align_sequences.py` aligns each pathogen/gene group with the
+  external MAFFT program. `geocode_locations.py` optionally fills missing
+  coordinates from GeoNames and records their source. New alignment and
+  geocoding tests were added under `tests/`.
+- **Changed files:** `run_pipeline.py` now validates, geocodes, aligns, compares,
+  enriches, and clusters in that order. `compare_genetic_distances.py` uses
+  alignment when run directly. `add_temporal_geographic.py` includes coordinates
+  and their provenance in the enriched CSV. `app.py` and `templates/index.html` show
+  GeoNames warnings and short user guidance. `requirements.txt` adds `requests`.
+  Existing integration tests, `README.md`, and `PYTHON_LINE_BY_LINE_GUIDE.md`
+  were updated.
+- **Removed files:** None.
+- **Before (Sprint 2 baseline):** Comparable sequences had to arrive already
+  aligned; missing coordinates used only the named-location fallback.
+- **After (backbone update):** The pipeline invokes MAFFT separately for each
+  pathogen/gene group and can estimate missing coordinates from GeoNames when
+  `GEONAMES_USERNAME` is configured. Existing p-distance, temporal,
+  geographic-distance, threshold, and connected-component formulas remain.
+- **Why:** Accept unequal-length, unaligned sequences within a comparable
+  group, and make location metadata more useful when coordinates are absent.
+- **How it works:** MAFFT is found on `PATH` and called through `subprocess` on
+  a temporary FASTA for each group. GeoNames searches a location once per run,
+  returns approximate place coordinates when available, and labels them
+  `GeoNames`; complete original coordinates are labeled `Provided`.
+- **Verification:** 40 automated tests pass with Python 3.12 locally, including
+  both existing example datasets through the full pipeline with a mocked MAFFT
+  pass-through. The actual MAFFT executable is not installed on this laptop, so
+  a real run remains to be checked after installation. GeoNames network calls
+  are mocked in tests.
+- **Limits or next steps:** The user requested this as a Sprint 2 backbone
+  improvement, not as the Sprint 3 wastewater/SNV pipeline. No wastewater,
+  FASTQ, BWA, iVAR, PANGOLIN, or SNV analysis was added. This entry records the
+  post-baseline change for the future Sprint 3 report only.
+
+### October 19, 2026 — Start the Sprint 3 record
+
+- **Added:** `SPRINT_3_CHANGELOG.md` (this file).
+- **Changed existing files:** None.
+- **Removed files:** None.
+- **Behavior added or changed:** None yet. The application still has the Sprint 2
+  capabilities listed above.
+- **Reason:** Establish a clear boundary so future additions can be explained as
+  Sprint 3 work without accidentally presenting Sprint 2 features as new.
+- **Verification:** Checked the current project files and existing documentation.
+  No code was changed, so tests were not rerun for this entry.
+
+## Add each future change here
+
+Copy this small template for each completed Sprint 3 task, placing the newest
+entry above older entries:
+
+```markdown
+### YYYY-MM-DD — Short name of change
+
+- **Added files:** Names and purpose, or `None`.
+- **Changed files:** Names and exactly what changed, or `None`.
+- **Removed files:** Names and reason, or `None`.
+- **Before (Sprint 2):** What the project could do previously.
+- **After (Sprint 3):** What users can do now.
+- **Why:** The problem or requirement this change addresses.
+- **How it works:** A few plain-English sentences about the new code or data flow.
+- **Verification:** Tests, sample run, and observed result; note if not tested.
+- **Limits or next steps:** Any important unfinished work.
+```
+
+When a future change modifies an existing file, list that file under **Changed
+files** rather than **Added files**. Record documentation changes too, so the
+later Sprint 3 write-up can distinguish implementation from explanation.

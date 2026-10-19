@@ -1,0 +1,9 @@
+Accession,Pathogen,Gene_Segment,Collection_Date,Location_Name,Latitude,Longitude,Host_Source
+SYN_A,Synthetic example pathogen,Segment 1,2026-04-01,"Tempe, Arizona",33.4255,-111.94,Synthetic source
+SYN_B,Synthetic example pathogen,Segment 1,2026-04-03,"Tempe, Arizona",33.43,-111.93,Synthetic source
+SYN_C,Synthetic example pathogen,Segment 1,2026-04-04,"Tempe, Arizona",,,Synthetic source
+SYN_D,Synthetic example pathogen,Segment 1,2026-04-01,"Tucson, Arizona",32.22,-110.97,Synthetic source
+SYN_E,Synthetic example pathogen,Segment 1,2026-04-05,"Tucson, Arizona",32.23,-110.96,Synthetic source
+SYN_F,Synthetic example pathogen,Segment 1,2026-04-02,"Flagstaff, Arizona",35.2,-111.65,Synthetic source
+SYN_G,Synthetic example pathogen,Segment 1,2026-07-10,"Phoenix, Arizona",33.45,-112.07,Synthetic source
+SYN_H,Synthetic example pathogen,Segment 1,2026-04-03,"Yuma, Arizona",32.69,-114.62,Synthetic source
