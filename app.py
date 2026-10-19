@@ -1,21 +1,25 @@
 """Small Flask interface for the existing analysis pipeline."""
 
+from base64 import b64encode
 from contextlib import redirect_stderr
-from io import StringIO
+from io import BytesIO, StringIO
 from math import isfinite
 from pathlib import Path
+from secrets import token_urlsafe
 from shutil import copyfile
 from tempfile import TemporaryDirectory
 from threading import Lock
 from time import monotonic
 
 import pandas as pd
-from flask import Flask, render_template, request
+from flask import Flask, abort, render_template, request, send_file
 
 from geocode_locations import check_geonames
 from run_pipeline import output_paths, region_assignment_path, run_pipeline
 from system_diagnostics import check_mafft
 from validate_inputs import FASTA_EXTENSIONS, METADATA_EXTENSIONS
+from environmental_analysis import load_measurements, make_charts, summarize_measurements, table_records
+from wastewater.processed_snv import load_processed_snvs, summarize_snvs
 
 
 app = Flask(__name__)
@@ -24,6 +28,13 @@ EXAMPLE_FOLDER = Path(__file__).resolve().parent / "examples"
 STATUS_CACHE_SECONDS = 300
 STATUS_CACHE = {"checked_at": 0.0, "results": None}
 STATUS_LOCK = Lock()
+WASTEWATER_DOWNLOADS = {}  # Small, short-lived CSV downloads; no database.
+WASTEWATER_LOCK = Lock()
+WASTEWATER_DOWNLOAD_SECONDS = 600
+ENVIRONMENTAL_DOWNLOADS = {}  # Short-lived CSV files; no database or permanent upload storage.
+ENVIRONMENTAL_LOCK = Lock()
+ENVIRONMENTAL_DOWNLOAD_SECONDS = 600
+SYNTHETIC_ENVIRONMENTAL_FILE = EXAMPLE_FOLDER / "synthetic_environmental_measurements.csv"
 
 
 @app.route("/health")
@@ -37,7 +48,7 @@ def health():
 def upload_too_large(error):
     """Show a clear size-limit message instead of a server error page."""
 
-    return "Upload too large. The FASTA and metadata files must total less than 10 MB.", 413
+    return "Upload too large. Files in one request must total less than 10 MB.", 413
 
 
 @app.errorhandler(500)
@@ -96,6 +107,210 @@ def system_status():
     }
     return render_template(
         "index.html", values=values, system_status=results, status_cached=cached
+    )
+
+
+@app.route("/wastewater-data", methods=["GET", "POST"], endpoint="wastewater_data_page")
+@app.route("/environmental", methods=["GET", "POST"])
+def environmental_page():
+    """Analyze processed measurements without running the pathogen pipeline."""
+
+    error = None
+    result = None
+
+    if request.method == "POST":
+        use_example = request.form.get("run_example") == "yes"
+        upload = request.files.get("measurement_file")
+
+        if use_example:
+            if not SYNTHETIC_ENVIRONMENTAL_FILE.is_file():
+                error = "The bundled synthetic environmental example is missing."
+        elif upload is None or not upload.filename:
+            error = "Choose a measurement CSV or XLSX file."
+        elif Path(upload.filename).suffix.lower() not in METADATA_EXTENSIONS:
+            error = "Measurement files must use the .csv or .xlsx format."
+
+        if error is None:
+            try:
+                with TemporaryDirectory() as folder:
+                    if use_example:
+                        input_path = SYNTHETIC_ENVIRONMENTAL_FILE
+                        filename = "Synthetic example (invented data)"
+                    else:
+                        filename = Path(upload.filename).name
+                        input_path = Path(folder) / f"measurements{Path(filename).suffix.lower()}"
+                        upload.save(input_path)
+                        if input_path.stat().st_size > 3 * 1024 * 1024:
+                            raise ValueError("Measurement files must be under 3 MB for this class prototype.")
+
+                    data, metric = load_measurements(input_path)
+                    summary = summarize_measurements(data, metric)
+                    chart = b64encode(
+                        make_charts(data, metric, summary["tables"])
+                    ).decode("ascii")
+
+                    organized = data.copy()
+                    organized["Collection_Date"] = (
+                        organized["Collection_Date"].dt.strftime("%Y-%m-%d").fillna("")
+                    )
+                    csv_bytes = organized.to_csv(index=False).encode("utf-8")
+                    if len(csv_bytes) > 4 * 1024 * 1024:
+                        raise ValueError("The organized CSV is too large for this prototype (4 MB limit).")
+
+                    with ENVIRONMENTAL_LOCK:
+                        now = monotonic()
+                        expired = [
+                            key for key, item in ENVIRONMENTAL_DOWNLOADS.items()
+                            if now - item[0] > ENVIRONMENTAL_DOWNLOAD_SECONDS
+                        ]
+                        for key in expired:
+                            del ENVIRONMENTAL_DOWNLOADS[key]
+                        if len(ENVIRONMENTAL_DOWNLOADS) >= 4:
+                            oldest = min(
+                                ENVIRONMENTAL_DOWNLOADS,
+                                key=lambda key: ENVIRONMENTAL_DOWNLOADS[key][0],
+                            )
+                            del ENVIRONMENTAL_DOWNLOADS[oldest]
+                        download_id = token_urlsafe(16)
+                        ENVIRONMENTAL_DOWNLOADS[download_id] = (now, csv_bytes)
+
+                    tables = summary["tables"]
+                    preview = table_records(tables["measurements"].head(100))
+                    result = {
+                        "filename": filename,
+                        "metric": metric,
+                        "summary": summary["counts"],
+                        "tables": {
+                            "samples": table_records(tables["samples"]),
+                            "temporal_changes": table_records(tables["temporal_changes"]),
+                            "location_summary": table_records(tables["location_summary"]),
+                            "location_counts": table_records(tables["location_counts"]),
+                            "date_counts": table_records(tables["date_counts"]),
+                            "missing_data": table_records(tables["missing_data"]),
+                            "quality_summary": table_records(tables["quality_summary"]),
+                        },
+                        "measurement_columns": list(organized.columns),
+                        "preview": preview,
+                        "chart": chart,
+                        "download_id": download_id,
+                    }
+            except ValueError as exc:
+                error = str(exc)
+            except Exception:
+                app.logger.exception("Environmental analysis failed")
+                error = "Could not analyze this measurement file. Check that it is a valid CSV or XLSX workbook."
+
+    wastewater_view = request.endpoint == "wastewater_data_page"
+    return render_template(
+        "environmental.html", error=error, result=result,
+        page_title="Wastewater Data Analysis" if wastewater_view else "Environmental Data Analysis",
+        download_endpoint="wastewater_data_download" if wastewater_view else "environmental_download",
+    )
+
+
+@app.route("/wastewater-data/download/<download_id>", endpoint="wastewater_data_download")
+@app.route("/environmental/download/<download_id>")
+def environmental_download(download_id):
+    """Return the recent organized CSV while its short-lived download is available."""
+
+    with ENVIRONMENTAL_LOCK:
+        item = ENVIRONMENTAL_DOWNLOADS.get(download_id)
+        if item is None or monotonic() - item[0] > ENVIRONMENTAL_DOWNLOAD_SECONDS:
+            abort(404)
+        csv_bytes = item[1]
+    return send_file(
+        BytesIO(csv_bytes),
+        mimetype="text/csv",
+        as_attachment=True,
+        download_name=(
+            "wastewater_measurements_organized.csv"
+            if request.endpoint == "wastewater_data_download"
+            else "environmental_measurements_organized.csv"
+        ),
+    )
+
+
+@app.route("/wastewater", methods=["GET", "POST"])
+def wastewater_page():
+    """Show processed wastewater SNVs without using the Sprint 2 pipeline."""
+
+    error = None
+    result = None
+    if request.method == "POST":
+        snv_upload = request.files.get("snv_file")
+        metadata_upload = request.files.get("sample_metadata")
+        if not snv_upload or not snv_upload.filename:
+            error = "Choose a processed SNV .xlsx or .csv file."
+        elif Path(snv_upload.filename).suffix.lower() not in {".xlsx", ".csv"}:
+            error = "Processed SNV data must be an .xlsx or .csv file."
+        elif metadata_upload and metadata_upload.filename and Path(metadata_upload.filename).suffix.lower() not in {".xlsx", ".csv"}:
+            error = "Optional sample metadata must be an .xlsx or .csv file."
+
+        if error is None:
+            try:
+                with TemporaryDirectory() as folder:
+                    snv_path = Path(folder) / f"snvs{Path(snv_upload.filename).suffix.lower()}"
+                    snv_upload.save(snv_path)
+                    metadata_path = None
+                    if metadata_upload and metadata_upload.filename:
+                        metadata_path = Path(folder) / f"sample_metadata{Path(metadata_upload.filename).suffix.lower()}"
+                        metadata_upload.save(metadata_path)
+                    if snv_path.stat().st_size > 3 * 1024 * 1024:
+                        raise ValueError("Processed SNV files must be under 3 MB for this class prototype.")
+                    if metadata_path and metadata_path.stat().st_size > 1024 * 1024:
+                        raise ValueError("Optional wastewater metadata files must be under 1 MB.")
+
+                    data, warnings = load_processed_snvs(snv_path, metadata_path)
+                    summary = summarize_snvs(data)
+                    display = data.copy()
+                    display["Collection_Date"] = display["Collection_Date"].dt.strftime("%Y-%m-%d").fillna("")
+                    csv_bytes = display.to_csv(index=False).encode("utf-8")
+                    if len(csv_bytes) > 4 * 1024 * 1024:
+                        raise ValueError("The standardized CSV is too large for this prototype (4 MB limit).")
+                    with WASTEWATER_LOCK:
+                        now = monotonic()
+                        expired = [key for key, item in WASTEWATER_DOWNLOADS.items() if now - item[0] > WASTEWATER_DOWNLOAD_SECONDS]
+                        for key in expired:
+                            del WASTEWATER_DOWNLOADS[key]
+                        if len(WASTEWATER_DOWNLOADS) >= 4:
+                            oldest = min(WASTEWATER_DOWNLOADS, key=lambda key: WASTEWATER_DOWNLOADS[key][0])
+                            del WASTEWATER_DOWNLOADS[oldest]
+                        download_id = token_urlsafe(16)
+                        WASTEWATER_DOWNLOADS[download_id] = (now, csv_bytes)
+
+                    preview = display.head(100).copy()
+                    preview["Read_Depth"] = preview["Read_Depth"].astype(object).where(preview["Read_Depth"].notna(), "")
+                    result = {
+                        "filename": Path(snv_upload.filename).name,
+                        "metadata_filename": Path(metadata_upload.filename).name if metadata_path else None,
+                        "summary": summary,
+                        "warnings": warnings,
+                        "preview": preview.to_dict("records"),
+                        "download_id": download_id,
+                    }
+            except ValueError as exc:
+                error = str(exc)
+            except Exception:
+                app.logger.exception("Wastewater analysis failed")
+                error = "Could not read the processed SNV file. Check that it is a valid CSV or XLSX workbook."
+
+    return render_template("wastewater.html", error=error, result=result)
+
+
+@app.route("/wastewater/download/<download_id>")
+def wastewater_download(download_id):
+    """Download a recent standardized CSV; the uploaded files are already gone."""
+
+    with WASTEWATER_LOCK:
+        item = WASTEWATER_DOWNLOADS.get(download_id)
+        if item is None or monotonic() - item[0] > WASTEWATER_DOWNLOAD_SECONDS:
+            abort(404)
+        csv_bytes = item[1]
+    return send_file(
+        BytesIO(csv_bytes),
+        mimetype="text/csv",
+        as_attachment=True,
+        download_name="wastewater_standardized_snvs.csv",
     )
 
 

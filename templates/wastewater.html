@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Wastewater Surveillance</title>
+  <style>
+    body { background: #f3f5f7; color: #1f2937; font-family: Arial, sans-serif; line-height: 1.5; margin: 0; }
+    main { margin: 2rem auto; max-width: 960px; padding: 0 1rem; }
+    section { background: white; border: 1px solid #d8dee6; border-radius: 8px; margin-bottom: 1rem; padding: 1.25rem; }
+    h1, h2 { color: #173f5f; }
+    form { display: grid; gap: 1rem; }
+    label { display: grid; font-weight: bold; gap: 0.35rem; }
+    input, button { box-sizing: border-box; font: inherit; padding: 0.65rem; width: 100%; }
+    button, .download { background: #1f5f8b; border: 0; border-radius: 4px; color: white; cursor: pointer; font-weight: bold; padding: 0.7rem; text-decoration: none; }
+    .note { color: #52606d; }
+    .error { background: #fff1f1; border-color: #cf5b5b; color: #7f1d1d; }
+    .scroll { overflow-x: auto; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { border-bottom: 1px solid #d8dee6; padding: 0.4rem; text-align: left; }
+    th { background: #edf4f8; }
+    .metrics { display: grid; gap: 0.5rem; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
+    .metrics p { background: #edf4f8; margin: 0; padding: 0.75rem; }
+  </style>
+</head>
+<body>
+  <main>
+    <p><a href="{{ url_for('index') }}">← Individual-genome cluster analysis</a></p>
+    <h1>Wastewater Surveillance</h1>
+    <p>This mode summarizes observed SNVs in pooled wastewater samples. It is population genomic surveillance, not outbreak confirmation or individual-genome lineage assignment. A mutation missing from a table is <strong>not</strong> confirmed absent when coverage is unknown.</p>
+
+    <section>
+      <h2>Upload processed SNV calls</h2>
+      <p class="note">Upload Fontenele et al. (2021) Supplementary Table 2 (<code>mmc2.xlsx</code>) directly, or use the documented standardized CSV/XLSX columns. The paper's reference genome is NC_045512.2; that label is assigned only to the recognized published table. This page does not run MAFFT or the Sprint 2 clustering pipeline.</p>
+      <form method="post" enctype="multipart/form-data">
+        <label>Processed SNV table (.xlsx or .csv)
+          <input type="file" name="snv_file" accept=".xlsx,.csv" required>
+        </label>
+        <label>Optional sample metadata (.xlsx or .csv)
+          <input type="file" name="sample_metadata" accept=".xlsx,.csv">
+        </label>
+        <p class="note">Metadata joins on Sample_ID and can supply Collection_Date and Location_Name when those are missing in the SNV table. The published table already includes dates and locations. Upload limit for this mode: 3 MB for the SNV file.</p>
+        <button type="submit">Analyze Wastewater SNVs</button>
+      </form>
+    </section>
+
+    {% if error %}<section class="error"><strong>Analysis could not be completed.</strong> {{ error }}</section>{% endif %}
+
+    {% if result %}
+      <section>
+        <h2>Observed SNV summary</h2>
+        <p><strong>SNV file:</strong> {{ result.filename }}<br><strong>Metadata file:</strong> {{ result.metadata_filename or 'None; using dates and locations in the SNV table where present' }}</p>
+        <div class="metrics">
+          <p><strong>Unique samples:</strong> {{ result.summary.samples }}</p>
+          <p><strong>SNV records:</strong> {{ result.summary.records }}</p>
+          <p><strong>Unique reference/position/alternative SNVs:</strong> {{ result.summary.unique_snvs }}</p>
+          <p><strong>Collection dates:</strong> {{ result.summary.date_start or 'Unavailable' }} to {{ result.summary.date_end or 'Unavailable' }}</p>
+        </div>
+        <p><strong>Sampling locations:</strong> {{ result.summary.locations|join(', ') if result.summary.locations else 'Unavailable' }}</p>
+        <p><strong>Alternative allele frequency:</strong> min {{ '%.6f'|format(result.summary.frequency_min) }}, median {{ '%.6f'|format(result.summary.frequency_median) }}, max {{ '%.6f'|format(result.summary.frequency_max) }}<br>
+          <strong>Read depth:</strong> {{ result.summary.depth_count }} records with a value; min {{ result.summary.depth_min if result.summary.depth_min is not none else 'Unavailable' }}, median {{ result.summary.depth_median if result.summary.depth_median is not none else 'Unavailable' }}, max {{ result.summary.depth_max if result.summary.depth_max is not none else 'Unavailable' }}</p>
+        <p><a class="download" href="{{ url_for('wastewater_download', download_id=result.download_id) }}">Download all standardized SNV rows (CSV)</a></p>
+        <p class="note">The download link lasts 10 minutes. Uploaded files are deleted after each analysis; no raw files are stored in a database.</p>
+        {% for warning in result.warnings %}<p class="note"><strong>Data-quality note:</strong> {{ warning }}</p>{% endfor %}
+      </section>
+
+      <section>
+        <h2>Most frequently observed SNVs</h2>
+        <p class="note">Ranked by the number of distinct wastewater samples with a reported call. Duplicate rows do not add another sample.</p>
+        <div class="scroll"><table><thead><tr><th>Reference</th><th>Position</th><th>Ref</th><th>Alt</th><th>Samples observed</th><th>Records</th></tr></thead><tbody>
+          {% for snv in result.summary.top_snvs %}
+            <tr><td>{{ snv.Reference_Genome }}</td><td>{{ snv.Position }}</td><td>{{ snv.Ref }}</td><td>{{ snv.Alt }}</td><td>{{ snv.Samples_Observed }}</td><td>{{ snv.Records }}</td></tr>
+          {% endfor %}
+        </tbody></table></div>
+      </section>
+
+      <section>
+        <h2>Samples</h2>
+        <div class="scroll"><table><thead><tr><th>Sample ID</th><th>Collection date</th><th>Location</th><th>SNV records</th><th>Distinct SNVs</th></tr></thead><tbody>
+          {% for sample in result.summary.sample_table %}
+            <tr><td>{{ sample.Sample_ID }}</td><td>{{ sample.Collection_Date or 'Unavailable' }}</td><td>{{ sample.Location_Name or 'Unavailable' }}</td><td>{{ sample.SNV_Records }}</td><td>{{ sample.Distinct_SNVs }}</td></tr>
+          {% endfor %}
+        </tbody></table></div>
+      </section>
+
+      <section>
+        <h2>Per-sample SNV records (first {{ result.preview|length }})</h2>
+        <p class="note">The webpage previews up to 100 rows to stay responsive on free hosting. Download the CSV above to inspect every record.</p>
+        <div class="scroll"><table><thead><tr><th>Sample ID</th><th>Reference</th><th>Position</th><th>Ref</th><th>Alt</th><th>Alt frequency</th><th>Read depth</th><th>Date</th><th>Location</th></tr></thead><tbody>
+          {% for row in result.preview %}
+            <tr><td>{{ row.Sample_ID }}</td><td>{{ row.Reference_Genome }}</td><td>{{ row.Position }}</td><td>{{ row.Ref }}</td><td>{{ row.Alt }}</td><td>{{ '%.6f'|format(row.Alt_Frequency) }}</td><td>{{ row.Read_Depth if row.Read_Depth else '' }}</td><td>{{ row.Collection_Date }}</td><td>{{ row.Location_Name }}</td></tr>
+          {% endfor %}
+        </tbody></table></div>
+      </section>
+    {% endif %}
+  </main>
+</body>
+</html>

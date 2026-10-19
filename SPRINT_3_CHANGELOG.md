@@ -31,6 +31,85 @@ Sprint 2.
 
 ## Sprint 3 changes so far
 
+### October 19, 2026 — Wastewater Data Analysis for processed feature tables
+
+- **Changed files:** `app.py` exposes `/wastewater-data` and its organized CSV
+  download using the existing environmental-measurement module and template.
+  `templates/index.html` links to the requested page. Earlier draft routes and
+  files are retained. `environmental_analysis.py` now accepts missing optional
+  dates, locations, frequencies, and coverage, and counts every listed feature.
+  `templates/environmental.html` displays availability messages, sample/date/
+  location counts, and descriptive charts. README and focused tests document
+  and verify this first table-summary addition. `.dockerignore` keeps its
+  bundled synthetic CSV available in the Docker image.
+- **Missing values:** Supplied zeros remain zero. Missing numerical values
+  remain blank in tables and CSV downloads, and all-missing dated measurements
+  remain missing in summaries and plots. Frequency and coverage are never
+  derived from counts.
+- **Scope:** Descriptive pandas operations on already processed tables only.
+  Sprint 2 validation, alignment, geocoding, genetic comparison, temporal/
+  geographic rules, and cluster detection are unchanged.
+- **Verification:** All 110 automated tests passed on Python 3.11.9, including
+  uploads in both formats, missing measurements, supplied zeros, summary
+  calculations, PNG charts, temporary downloads, and Sprint 2 regressions.
+  Hosted deployment was not performed during this change.
+
+### October 19, 2026 — Processed wastewater SNV surveillance mode
+
+- **Added files:** `wastewater/__init__.py` and `wastewater/processed_snv.py`
+  load, validate, and summarize processed calls separately from individual
+  genomes. `templates/wastewater.html` presents the upload and results page.
+  `tests/test_wastewater.py` covers published-column mapping, validation,
+  metadata joins, counts, the webpage, and CSV download.
+- **Changed files:** `app.py` adds `/wastewater` and a brief in-memory CSV
+  download. `templates/index.html` links to the new mode. `Dockerfile`
+  includes the new Python package. `README.md` documents the exact published
+  columns, mapping, scientific limits, and local/hosted usage.
+- **Before (Sprint 2):** The site screened comparable individual pathogen
+  sequences for potential outbreak clusters. Pooled wastewater SNV calls were
+  not an accepted input.
+- **After (Sprint 3):** A separate page accepts Fontenele et al. Supplementary
+  Table 2 or standardized processed SNV calls and summarizes observed variants.
+  It retains and reports repeated keys instead of treating a missing call as
+  confirmed mutation absence.
+- **Source:** Fontenele et al. (2021), Water Research, Supplementary Table 2
+  (`mmc2.xlsx`), read directly from the publisher's published file. Table 3
+  (`mmc3.xlsx`) is a novel-SNV subset without the full frequency/depth fields.
+- **Scope:** No FASTQ processing, BWA, iVar, Freyja, lineage assignment, or
+  wastewater clustering. Existing Sprint 2 calculations and routes remain.
+- **Verification:** The published workbook loaded as 7,973 retained records
+  across 52 samples, with three repeated keys reported. Seven focused loader
+  tests pass; full Flask/regression tests could not run in this workspace
+  because the test interpreter lacks Flask/Biopython and dependency
+  installation was not approved. They remain to be run locally or in Docker.
+
+### October 19, 2026 — Environmental processed-measurement exploration
+
+- **Added files:** `environmental_analysis.py` loads and validates processed
+  CSV/XLSX measurements and builds sample, time, location, missing-data, and
+  quality summaries. `templates/environmental.html` provides a separate upload,
+  example, chart, and results page. `examples/synthetic_environmental_measurements.csv`
+  contains clearly labeled invented data. `tests/test_environmental_analysis.py`
+  covers file formats, validation, summaries, charts, and the Flask download.
+- **Changed files:** `app.py` adds `/environmental` and its short-lived
+  organized-CSV download. `templates/index.html` links to the separate mode.
+  `requirements.txt` adds Matplotlib for descriptive plots, and `Dockerfile`
+  includes the analysis module. `README.md` describes the schema, safeguards,
+  synthetic example, and local/hosted usage.
+- **Before:** The Sprint 2 pathogen pipeline handled FASTA plus metadata, while
+  environmental processed measurements had no dedicated analysis page.
+- **After:** Visitors can explore sample-level processed measurements by
+  feature, collection date, and location, including missing-data and quality
+  summaries. Results are descriptive only and do not establish a diagnosis,
+  transmission, or outbreak.
+- **Scope:** No raw reads, sequence alignment, Sprint 2 calculation changes,
+  statistical significance testing, or diagnostic/outbreak classification.
+- **Verification:** All 105 automated tests passed, including CSV and XLSX
+  loading, validation, summaries, chart generation, Flask results, CSV download,
+  and the existing Sprint 2 and other Sprint 3 regression tests. The tests use
+  the installed Python 3.11 environment; hosted Render deployment was not
+  performed from this workspace.
+
 ### October 19, 2026 — On-demand MAFFT and GeoNames status check
 
 - **Added files:** `system_diagnostics.py` runs a small real MAFFT alignment of
