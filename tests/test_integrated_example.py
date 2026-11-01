@@ -168,5 +168,35 @@ class IntegratedExampleTest(unittest.TestCase):
         self.assertEqual(len(result["population"]["coordinates"]), 8)
 
 
+class CommandLineTest(unittest.TestCase):
+    def test_command_line_example_writes_tables_and_figures(self):
+        from run_integrated_analysis import main
+
+        fake = make_fake_mafft(design.REFERENCE)
+        with tempfile.TemporaryDirectory() as folder:
+            with patch.dict(os.environ, {"GEONAMES_USERNAME": ""}):
+                with patch("align_sequences.shutil.which", return_value="mafft"):
+                    with patch("align_sequences.subprocess.run", side_effect=fake):
+                        with contextlib.redirect_stdout(io.StringIO()), \
+                                contextlib.redirect_stderr(io.StringIO()):
+                            status = main(["--example", "--output-folder", folder])
+            written = {path.name for path in Path(folder).iterdir()}
+            comparison = pd.read_csv(Path(folder) / "cross_source_comparison.csv")
+        self.assertEqual(status, 0)
+        for name in ["cross_source_comparison.csv", "provenance.csv", "pcoa.png",
+                     "pooled_variants_with_qc.csv",
+                     "synthetic_individual_metadata_region_assignments.csv"]:
+            self.assertIn(name, written)
+        self.assertEqual(len(comparison), len(design.EXPECTED_CATEGORIES))
+
+    def test_command_line_rejects_missing_inputs(self):
+        from run_integrated_analysis import main
+
+        with tempfile.TemporaryDirectory() as folder:
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(main(["--output-folder", folder]), 2)
+                self.assertEqual(main(["--fasta", "missing.fasta", "--output-folder", folder]), 2)
+
+
 if __name__ == "__main__":
     unittest.main()
