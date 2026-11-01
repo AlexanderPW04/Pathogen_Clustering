@@ -21,13 +21,59 @@ REQUIRED_COLUMNS = [
 ]
 OUTPUT_COLUMNS = REQUIRED_COLUMNS + ["Collection_Date", "Location_Name"]
 
+# Annotation columns published with Supplementary Table 2. They are kept
+# exactly as published under a "Published_" name so they are never confused
+# with values calculated by this application.
+PUBLISHED_ANNOTATIONS = {
+    "REF_CODON": "Published_Ref_Codon",
+    "REF_AA": "Published_Ref_AA",
+    "ALT_CODON": "Published_Alt_Codon",
+    "ALT_AA": "Published_Alt_AA",
+    "BIN": "Published_Bin",
+    "GLOBAL_FREQUENCY": "Published_Global_Frequency",
+    "USA_FREQUENCY": "Published_USA_Frequency",
+    "Sy/Ns": "Published_Syn_NonSyn",
+    "Annotation": "Published_Annotation",
+    "Novel SNVs based on Global frequency": "Published_Novel_Global",
+    "Identified in clinical derived-genomes after June 17th":
+        "Published_In_Clinical_After_2020_06_17",
+}
+
+# Columns written by `ivar variants`; a SAMPLE (or Sample_ID) column must be
+# added when several samples are combined into one file.
+IVAR_COLUMNS = {
+    "SAMPLE": "Sample_ID",
+    "REGION": "Reference_Genome",
+    "POS": "Position",
+    "REF": "Ref",
+    "ALT": "Alt",
+    "ALT_FREQ": "Alt_Frequency",
+    "TOTAL_DP": "Read_Depth",
+    "ALT_DP": "Alt_Depth",
+    "PVAL": "Source_Fisher_P",
+    "PASS": "Source_Caller_Pass",
+    "ALT_QUAL": "Source_Alt_Mean_Quality",
+    "GFF_FEATURE": "Source_Gene_Feature",
+    "REF_CODON": "Source_Ref_Codon",
+    "REF_AA": "Source_Ref_AA",
+    "ALT_CODON": "Source_Alt_Codon",
+    "ALT_AA": "Source_Alt_AA",
+}
+IVAR_REQUIRED = {"REGION", "POS", "REF", "ALT", "ALT_FREQ", "TOTAL_DP"}
+
+PAPER_FORMAT = "Fontenele et al. (2021) Supplementary Table 2"
+IVAR_FORMAT = "iVar variants TSV"
+STANDARD_FORMAT = "Standardized processed SNV table"
+
 
 def read_table(path):
-    """Read a CSV or Excel table without losing numeric-looking sample IDs."""
+    """Read a CSV, TSV, or Excel table without losing numeric-looking sample IDs."""
 
     path = Path(path)
     if path.suffix.lower() == ".csv":
         return pd.read_csv(path, dtype=str, keep_default_na=False)
+    if path.suffix.lower() == ".tsv":
+        return pd.read_csv(path, sep="\t", dtype=str, keep_default_na=False)
     if path.suffix.lower() == ".xlsx":
         # The paper's workbook has a descriptive first row, then its headers.
         first_rows = pd.read_excel(path, header=None, nrows=2, dtype=str)
@@ -41,7 +87,7 @@ def read_table(path):
             and "SARS-CoV-2" in description
         )
         return data
-    raise ValueError("Use a processed SNV .xlsx or .csv file.")
+    raise ValueError("Use a processed SNV .xlsx, .csv, or .tsv file.")
 
 
 def load_processed_snvs(path, metadata_path=None):
@@ -54,14 +100,38 @@ def load_processed_snvs(path, metadata_path=None):
         and set(PAPER_COLUMNS).issubset(data.columns)
         and {"STATE", "LOCATION"}.issubset(data.columns)
     )
+    is_ivar = (
+        not published
+        and IVAR_REQUIRED.issubset(data.columns)
+        and ("SAMPLE" in data.columns or "Sample_ID" in data.columns)
+    )
     warnings = []
 
     if published:
+        input_format = PAPER_FORMAT
         data = data.rename(columns=PAPER_COLUMNS)
+        data = data.rename(columns=PUBLISHED_ANNOTATIONS)
         data["Reference_Genome"] = "NC_045512.2"
         data["Location_Name"] = data["STATE"].astype(str).str.strip() + ": " + data["LOCATION"].astype(str).str.strip()
         dates = pd.to_datetime(data["Collection_Date"], format="%d_%b_%Y", errors="coerce")
+    elif is_ivar:
+        input_format = IVAR_FORMAT
+        data = data.rename(columns=IVAR_COLUMNS)
+        # iVar also reports insertions (+bases) and deletions (-bases). They are
+        # kept out of the SNV analysis and counted visibly instead.
+        indels = data["Alt"].astype(str).str.strip().str[:1].isin(["+", "-"])
+        if indels.any():
+            warnings.append(
+                f"{int(indels.sum())} iVar insertion/deletion record(s) were set aside; "
+                "only single-nucleotide variants are analyzed."
+            )
+            data = data.loc[~indels].copy()
+        for column in ["Collection_Date", "Location_Name"]:
+            if column not in data:
+                data[column] = ""
+        dates = pd.to_datetime(data["Collection_Date"].replace("", pd.NA), errors="coerce")
     else:
+        input_format = STANDARD_FORMAT
         missing = sorted(set(REQUIRED_COLUMNS) - set(data.columns))
         if missing:
             raise ValueError("Missing processed SNV column(s): " + ", ".join(missing))
@@ -152,6 +222,18 @@ def load_processed_snvs(path, metadata_path=None):
     if depth_missing:
         warnings.append(f"{depth_missing} record(s) have no usable read depth.")
 
+    alt_depths = None
+    if "Alt_Depth" in data:
+        raw_alt = data["Alt_Depth"].fillna("").astype(str).str.strip()
+        alt_depths = pd.to_numeric(raw_alt.replace("", pd.NA), errors="coerce")
+        bad_alt = (raw_alt.ne("") & alt_depths.isna()) | (
+            alt_depths.notna() & (alt_depths.lt(0) | alt_depths.ne(alt_depths.round()))
+        )
+        if bad_alt.any():
+            errors.append(f"{bad_alt.sum()} alternate read count value(s) are not whole numbers.")
+        elif (alt_depths.notna() & depths.notna() & alt_depths.gt(depths)).any():
+            errors.append("Some alternate read counts are larger than the total read depth.")
+
     if errors:
         raise ValueError("Processed SNV validation failed: " + " ".join(errors))
 
@@ -178,7 +260,19 @@ def load_processed_snvs(path, metadata_path=None):
     if missing_locations:
         warnings.append(f"{missing_locations} record(s) lack a location.")
 
-    return data[OUTPUT_COLUMNS].copy(), warnings
+    # Keep source-provided extras: alternate read counts and any column whose
+    # name starts with Published_ (paper annotations) or Source_ (caller output).
+    extra_columns = []
+    if alt_depths is not None:
+        data["Alt_Depth"] = alt_depths.astype("Int64")
+        extra_columns.append("Alt_Depth")
+    for name in data.columns:
+        if name.startswith(("Published_", "Source_")) and name not in extra_columns:
+            extra_columns.append(name)
+
+    result = data[OUTPUT_COLUMNS + extra_columns].copy()
+    result.attrs["input_format"] = input_format
+    return result, warnings
 
 
 def summarize_snvs(data):
