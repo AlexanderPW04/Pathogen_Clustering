@@ -3,101 +3,65 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Outbreak Cluster Detector</title>
+  <title>Integrated Genomic Surveillance</title>
   <style>
-    body {
-      background: #f3f5f7;
-      color: #1f2937;
-      font-family: Arial, sans-serif;
-      line-height: 1.5;
-      margin: 0;
+    :root {
+      --page: #f3f5f7;
+      --surface: #ffffff;
+      --surface-alt: #edf4f8;
+      --border: #d8dee6;
+      --ink: #1f2937;
+      --ink-muted: #52606d;
+      --heading: #173f5f;
+      --accent: #1f5f8b;
+      --warn-bg: #fff8e6;
+      --warn-border: #e6c77a;
+      --error-bg: #fff1f1;
+      --error-border: #cf5b5b;
+      --error-ink: #7f1d1d;
     }
-    main {
-      margin: 2rem auto;
-      max-width: 760px;
-      padding: 0 1rem;
-    }
-    section {
-      background: white;
-      border: 1px solid #d8dee6;
-      border-radius: 8px;
-      margin-bottom: 1rem;
-      padding: 1.25rem;
-    }
-    h1, h2, h3 { color: #173f5f; }
+    body { background: var(--page); color: var(--ink); font-family: Arial, sans-serif; line-height: 1.5; margin: 0; }
+    main { margin: 1.5rem auto; max-width: 1100px; padding: 0 1rem; }
+    section { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 1rem; padding: 1.25rem; overflow-wrap: anywhere; }
+    h1, h2, h3 { color: var(--heading); }
     h1 { margin-bottom: 0.25rem; }
     form { display: grid; gap: 1rem; }
-    fieldset {
-      border: 1px solid #c6d2dc;
-      border-radius: 6px;
-      display: grid;
-      gap: 0.5rem;
-      margin: 0;
-      padding: 1rem;
-    }
-    legend {
-      color: #173f5f;
-      font-size: 1.05rem;
-      font-weight: bold;
-      padding: 0 0.35rem;
-    }
+    fieldset { border: 1px solid #c6d2dc; border-radius: 6px; display: grid; gap: 0.5rem; margin: 0; padding: 1rem; }
+    legend { color: var(--heading); font-size: 1.05rem; font-weight: bold; padding: 0 0.35rem; }
     label { display: grid; font-weight: bold; gap: 0.35rem; }
-    input, button {
-      box-sizing: border-box;
-      font: inherit;
-      padding: 0.65rem;
-      width: 100%;
-    }
+    input, button { box-sizing: border-box; font: inherit; padding: 0.65rem; width: 100%; }
     input[type="checkbox"], input[type="radio"] { width: auto; }
-    button {
-      background: #1f5f8b;
-      border: 0;
-      border-radius: 4px;
-      color: white;
-      cursor: pointer;
-      font-weight: bold;
-    }
-    .error {
-      background: #fff1f1;
-      border-color: #cf5b5b;
-      color: #7f1d1d;
-      white-space: pre-wrap;
-    }
-    .cluster {
-      border-top: 1px solid #d8dee6;
-      margin-top: 1rem;
-      padding-top: 0.75rem;
-    }
-    .summary-grid {
-      display: grid;
-      gap: 0.5rem;
-      grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
-    }
-    .summary-grid p {
-      background: #edf4f8;
-      border: 1px solid #d8dee6;
-      border-radius: 6px;
-      margin: 0;
-      padding: 0.75rem;
-    }
-    .candidate-details summary { cursor: pointer; font-weight: bold; }
-    .synthetic-note { background: #fff8e6; border-color: #e6c77a; }
-    .note { color: #52606d; }
-    .help {
-      color: #52606d;
-      display: block;
-      font-size: 0.9rem;
-      font-weight: normal;
-    }
+    button { background: var(--accent); border: 0; border-radius: 4px; color: white; cursor: pointer; font-weight: bold; }
+    .button-row { display: grid; gap: 0.5rem; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+    .two-columns { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+    .error { background: var(--error-bg); border-color: var(--error-border); color: var(--error-ink); white-space: pre-wrap; }
+    .cluster { border-top: 1px solid var(--border); margin-top: 1rem; padding-top: 0.75rem; }
+    .summary-grid { display: grid; gap: 0.5rem; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); }
+    .summary-grid p { background: var(--surface-alt); border: 1px solid var(--border); border-radius: 6px; margin: 0; padding: 0.75rem; }
+    .candidate-details summary, details summary { cursor: pointer; font-weight: bold; }
+    .synthetic-note { background: var(--warn-bg); border-color: var(--warn-border); }
+    .note { color: var(--ink-muted); }
+    .help { color: var(--ink-muted); display: block; font-size: 0.9rem; font-weight: normal; }
+    nav.sections { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; display: flex; flex-wrap: wrap; gap: 0.25rem 1rem; margin-bottom: 1rem; padding: 0.6rem 1rem; position: sticky; top: 0; z-index: 2; }
+    nav.sections a { color: var(--accent); font-weight: bold; text-decoration: none; }
+    figure { margin: 1rem 0; }
+    figure img { border: 1px solid var(--border); border-radius: 6px; height: auto; max-width: 100%; }
+    figcaption { color: var(--ink-muted); font-size: 0.9rem; }
+    .scroll { overflow-x: auto; overflow-wrap: normal; }
+    .scroll th, .scroll td { min-width: 5.5rem; }
+    table { border-collapse: collapse; font-size: 0.85rem; width: 100%; }
+    th, td { border-bottom: 1px solid var(--border); padding: 0.35rem; text-align: left; vertical-align: top; }
+    th { background: var(--surface-alt); }
+    .notes li { color: var(--ink-muted); }
+    .unavailable { background: var(--surface-alt); border-left: 4px solid var(--ink-muted); padding: 0.5rem 0.75rem; }
+    .downloads { columns: 2 260px; }
   </style>
 </head>
 <body>
   <main>
-    <h1>Outbreak Cluster Detector</h1>
-    <p><a href="{{ url_for('wastewater_data_page') }}">Wastewater Data Analysis</a></p>
-    <p><a href="{{ url_for('wastewater_page') }}">Wastewater Surveillance (processed SNV analysis)</a></p>
-    <p class="note">This prototype combines pathogen genomic similarity with collection date and geographic information to flag potential outbreak clusters. Results are screening signals and do not confirm transmission or an outbreak.</p>
-    <p class="note">MAFFT aligns sequences within each pathogen and gene/segment group before genetic distances are calculated.</p>
+    <h1>Integrated Genomic Surveillance</h1>
+    <p class="note">This prototype combines two kinds of genomic evidence: individual (consensus) sequences and pooled samples such as wastewater. Both are placed on the same reference-genome positions whenever the reference is verified, so variants can be compared across sources, over time, and among locations. Results are screening signals; they do not confirm transmission, an outbreak, or the lineage of a mixed sample.</p>
+    <p class="note">MAFFT aligns sequences within each pathogen and gene/segment group before genetic distances are calculated. With a reference FASTA, each sequence is also aligned to the reference so its differences receive true 1-based reference positions.</p>
     <p class="note">When metadata has a location name but no coordinates, GeoNames may estimate them. These place coordinates can be approximate. State-only names such as USA: ND are too coarse for the kilometer cutoff or same-location fallback; their precision is reported in the pairwise output.</p>
     <p class="note">Genomic regions come first from metadata, then explicit FASTA descriptions. MAFFT aligns only samples with the same resolved pathogen and region. An unknown region is an error unless you explicitly confirm that every sequence is a complete genome of one pathogen.</p>
 
@@ -117,60 +81,100 @@
 
     <section>
       <h2>Run analysis</h2>
+      <p class="note">Upload individual sequences, pooled-sample results, or both. Cross-source comparison runs only when both are present and share a verified reference. All files in one request must total less than 10 MB; larger processed datasets can be analyzed with <code>run_integrated_analysis.py</code> on your own computer.</p>
       <form method="post" enctype="multipart/form-data">
-        <fieldset>
-          <legend>1. Genomic sequences</legend>
-          <label>
-            FASTA file (.fasta, .fa, or .fna)
-            <input type="file" name="fasta_file" accept=".fasta,.fa,.fna" required>
-          </label>
-          <span class="help">Upload nucleotide sequences downloaded from a genomic database such as NCBI Virus.</span>
-        </fieldset>
+        <div class="two-columns">
+          <fieldset>
+            <legend>1. Individual sequences (optional)</legend>
+            <label>FASTA file (.fasta, .fa, or .fna)
+              <input type="file" name="fasta_file" accept=".fasta,.fa,.fna">
+            </label>
+            <span class="help">Nucleotide (consensus) sequences, for example from NCBI Virus. N, gaps, and IUPAC ambiguity codes are kept as uncallable positions.</span>
+            <label>Metadata file (.xlsx or .csv)
+              <input type="file" name="metadata_file" accept=".xlsx,.csv">
+            </label>
+            <span class="help">Accession, pathogen, collection date, location, and host/source. A gene/segment column is optional when FASTA descriptions identify the region.</span>
+            <label>
+              <span><input type="radio" name="genomic_region_mode" value="automatic" {% if values.genomic_region_mode == 'automatic' %}checked{% endif %}> Automatic detection (default)</span>
+              <span class="help">Use metadata first, then FASTA annotations. Missing or conflicting annotations stop the analysis.</span>
+            </label>
+            <label>
+              <span><input type="radio" name="genomic_region_mode" value="complete_genomes" {% if values.genomic_region_mode == 'complete_genomes' %}checked{% endif %}> Complete genomes</span>
+              <span class="help">Only when all sequences are complete genomes of the same pathogen.</span>
+            </label>
+            <label>
+              <span><input type="checkbox" name="confirm_complete_genomes" {% if values.confirm_complete_genomes %}checked{% endif %}> I confirm all sequences are complete genomes of one pathogen</span>
+              <span class="help">Required when Complete genomes is selected; it does not override conflicting annotations.</span>
+            </label>
+          </fieldset>
 
-        <fieldset>
-          <legend>2. Sample metadata</legend>
-          <label>
-            Metadata file (.xlsx or .csv)
-            <input type="file" name="metadata_file" accept=".xlsx,.csv" required>
-          </label>
-          <span class="help">Upload metadata containing accession, pathogen, collection date, location, and host/source. A gene/segment column is optional when FASTA descriptions identify the region.</span>
-        </fieldset>
+          <fieldset>
+            <legend>2. Shared reference genome (optional)</legend>
+            <label>Reference FASTA with exactly one sequence
+              <input type="file" name="reference_file" accept=".fasta,.fa,.fna">
+            </label>
+            <span class="help">Needed for reference-based variants from individual sequences and for cross-source comparison. Its identifier (for example NC_045512.2) must match the pooled table's reference; different labels are never assumed to be the same genome.</span>
+          </fieldset>
 
-        <fieldset>
-          <legend>3. Genomic-region selection</legend>
-          <label>
-            <span><input type="radio" name="genomic_region_mode" value="automatic" {% if values.genomic_region_mode == 'automatic' %}checked{% endif %}> Automatic detection (default)</span>
-            <span class="help">Use metadata first, then FASTA annotations. Compatible pathogen/region groups are aligned separately with MAFFT. Missing or conflicting annotations stop the analysis.</span>
-          </label>
-          <label>
-            <span><input type="radio" name="genomic_region_mode" value="complete_genomes" {% if values.genomic_region_mode == 'complete_genomes' %}checked{% endif %}> Complete genomes</span>
-            <span class="help">Choose this only when all sequences are complete genomes of the same pathogen. Existing gene or segment annotations must not contradict that choice.</span>
-          </label>
-          <label>
-            <span><input type="checkbox" name="confirm_complete_genomes" {% if values.confirm_complete_genomes %}checked{% endif %}> I confirm all sequences are complete genomes of one pathogen</span>
-            <span class="help">Required when Complete genomes is selected; selecting it does not override conflicting annotations.</span>
-          </label>
-        </fieldset>
+          <fieldset>
+            <legend>3. Pooled samples (optional)</legend>
+            <label>Processed SNV table (.csv, .tsv, or .xlsx)
+              <input type="file" name="snv_file" accept=".csv,.tsv,.xlsx">
+            </label>
+            <span class="help">Fontenele et al. (2021) Supplementary Table 2 (<code>mmc2.xlsx</code>), combined iVar variants output with a SAMPLE column, or the standardized columns Sample_ID, Reference_Genome, Position, Ref, Alt, Alt_Frequency, Read_Depth.</span>
+            <label>Pooled-sample metadata (optional)
+              <input type="file" name="pooled_metadata_file" accept=".csv,.tsv,.xlsx">
+            </label>
+            <span class="help">Sample_ID with Collection_Date, Location_Name, Genome_Coverage_Percent (at 10x), Mean_Depth, Latitude, Longitude.</span>
+            <label>Per-position depth or A/C/G/T counts (optional)
+              <input type="file" name="position_file" accept=".csv,.tsv,.xlsx">
+            </label>
+            <span class="help">Sample_ID, Reference_ID, Position, and Depth or A/C/G/T counts. Shows whether unreported positions were covered; A/C/G/T counts enable the paper's Yue–Clayton PCoA.</span>
+            <label>Masked problematic sites (optional)
+              <input type="file" name="masked_sites_file" accept=".csv,.tsv,.xlsx">
+            </label>
+            <label>Documented variant profiles (optional)
+              <input type="file" name="signature_file" accept=".csv,.tsv,.xlsx">
+            </label>
+            <span class="help">Signature_Name, Reference_ID, Position, Ref, Alt, Source. Compared as profile overlap only, never as a lineage call.</span>
+          </fieldset>
 
-        <label>
-          Maximum genetic p-distance
-          <input type="number" name="max_p_distance" min="0" step="any" value="{{ values.max_p_distance }}" required>
-          <span class="help">The largest allowed fraction of comparable nucleotide positions that differ.</span>
-        </label>
-        <label>
-          Maximum days between samples
-          <input type="number" name="max_days_apart" min="0" step="any" value="{{ values.max_days_apart }}" required>
-          <span class="help">The largest allowed difference between the two collection dates.</span>
-        </label>
-        <label>
-          Maximum geographic distance in kilometers
-          <input type="number" name="max_km_apart" min="0" step="any" value="{{ values.max_km_apart }}" required>
-          <span class="help">The largest allowed Haversine distance between two sample coordinates.</span>
-        </label>
-        <button type="submit">Run Analysis</button>
-        <button type="submit" name="run_example" value="1" formnovalidate>Run Example Analysis</button>
+          <fieldset>
+            <legend>4. Settings</legend>
+            <label>Maximum genetic p-distance
+              <input type="number" name="max_p_distance" min="0" step="any" value="{{ values.max_p_distance }}" required>
+              <span class="help">The largest allowed fraction of comparable nucleotide positions that differ.</span>
+            </label>
+            <label>Maximum days between samples
+              <input type="number" name="max_days_apart" min="0" step="any" value="{{ values.max_days_apart }}" required>
+              <span class="help">The largest allowed difference between the two collection dates.</span>
+            </label>
+            <label>Maximum geographic distance in kilometers
+              <input type="number" name="max_km_apart" min="0" step="any" value="{{ values.max_km_apart }}" required>
+              <span class="help">The largest allowed Haversine distance between two sample coordinates.</span>
+            </label>
+            <label>Cross-source date window in days
+              <input type="number" name="date_window_days" min="0" step="any" value="{{ values.date_window_days }}" required>
+              <span class="help">Counts individual/pooled observations of a shared variant collected this close together.</span>
+            </label>
+            <label>
+              <span><input type="radio" name="qc_mode" value="paper" {% if values.qc_mode == 'paper' %}checked{% endif %}> Paper-reproduction quality control (default)</span>
+              <span class="help">Fontenele et al. settings where data allow: &gt;90% genome coverage at 10x, depth ≥ 20, Fisher p &lt; 0.05, no frequency cut-off. Failures are excluded from analyses.</span>
+            </label>
+            <label>
+              <span><input type="radio" name="qc_mode" value="exploratory" {% if values.qc_mode == 'exploratory' %}checked{% endif %}> Exploratory</span>
+              <span class="help">The same checks are flagged but nothing is excluded.</span>
+            </label>
+          </fieldset>
+        </div>
+        <div class="button-row">
+          <button type="submit">Run Analysis</button>
+          <button type="submit" name="run_example" value="1" formnovalidate>Run Example Analysis</button>
+          <button type="submit" name="run_integrated_example" value="1" formnovalidate>Run Integrated Example</button>
+        </div>
       </form>
-      <p class="note">The example uses explicitly synthetic sequences and sample records, not NCBI records or real outbreaks. It uses your threshold settings and runs the same MAFFT-backed pipeline. One example record has a real place name but synthetic sample data and no coordinates so GeoNames can be demonstrated when configured.</p>
+      <p class="note">Run Example Analysis uses explicitly synthetic sequences and sample records, not NCBI records or real outbreaks, with your threshold settings and the same MAFFT-backed pipeline. One example record has a real place name but synthetic sample data and no coordinates so GeoNames can be demonstrated when configured.</p>
+      <p class="note">Run Integrated Example uses an invented reference, invented individual sequences, and invented pooled samples designed with known answers. It is entirely synthetic.</p>
       <p class="note">Thresholds are prototype settings, not universal biological outbreak definitions.</p>
     </section>
 
@@ -187,73 +191,253 @@
       </section>
     {% endif %}
 
-    {% if analysis_complete %}
+    {% if integrated_error %}
+      <section class="error">
+        <strong>The integrated (reference-based) analysis could not be completed.</strong>
+        <div>{{ integrated_error }}</div>
+      </section>
+    {% endif %}
+
+    {% macro show_figure(item) %}
+      <figure>
+        <img src="{{ item.data_uri }}" alt="{{ item.title }}">
+        <figcaption><strong>{{ item.title }}.</strong> {{ item.caption }}
+          <a href="{{ url_for('result_download', download_id=item.download_id, filename=item.filename) }}">Download PNG</a></figcaption>
+      </figure>
+    {% endmacro %}
+
+    {% macro show_table(table) %}
+      <h3>{{ table.title }}</h3>
+      {% if table.rows %}
+        <div class="scroll"><table>
+          <thead><tr>{% for column in table.columns %}<th>{{ column|replace('_', ' ') }}</th>{% endfor %}</tr></thead>
+          <tbody>{% for row in table.rows %}<tr>{% for value in row %}<td>{{ value }}</td>{% endfor %}</tr>{% endfor %}</tbody>
+        </table></div>
+        {% if table.total > table.shown %}<p class="note">Showing {{ table.shown }} of {{ table.total }} rows; download the CSV for all rows.</p>{% endif %}
+      {% else %}<p class="note">No rows.</p>{% endif %}
+    {% endmacro %}
+
+    {% macro show_notes(items) %}
+      {% if items %}<ul class="notes">{% for item in items %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
+    {% endmacro %}
+
+    {% if analysis_complete or dashboard %}
       {% if is_synthetic_example %}
         <section class="synthetic-note">
           <h2>Synthetic example analysis</h2>
           <p>These sequences and sample records are invented for demonstration. They are not NCBI records or real outbreak data.</p>
         </section>
       {% endif %}
-      <section>
-        <h2>Analysis summary</h2>
-        <p><strong>FASTA file:</strong> {{ input_names.fasta }}<br><strong>Metadata file:</strong> {{ input_names.metadata }}</p>
-        <div class="summary-grid">
-          <p><strong>Unique samples analyzed:</strong> {{ summary.unique_samples }}</p>
-          <p><strong>Pairwise comparisons:</strong> {{ summary.pairwise_comparisons }}</p>
-          <p><strong>Strict related pairs:</strong> {{ related_pair_count }}</p>
-          <p><strong>Potential clusters meeting all criteria:</strong> {{ clusters|length }}</p>
-          <p><strong>Genomic-temporal candidate pairs with unresolved geography:</strong> {{ candidates|length }}</p>
-          <p><strong>Unique samples represented in candidate pairs:</strong> {{ summary.candidate_unique_samples }}</p>
-        </div>
-        <p class="note">Candidate pairs are relationships among {{ summary.candidate_unique_samples }} of the {{ summary.unique_samples }} original samples, not additional samples.</p>
-        <p><strong>Sequences aligned by MAFFT:</strong> {{ summary.aligned_sequences }}<br>
-          <strong>Distinct locations resolved by GeoNames:</strong> {{ summary.geonames_resolved }}<br>
-          <strong>Distinct locations too coarse for distance comparison:</strong> {{ summary.coarse_locations }}<br>
-          <strong>Samples lacking sufficiently precise geographic metadata:</strong> {{ summary.insufficient_geography_samples }}<br>
-          <strong>Valid geographic-distance comparisons:</strong> {{ summary.valid_geographic_comparisons }}</p>
-      </section>
-      <section>
-        <h2>Potential clusters meeting all three screening criteria</h2>
-        <p><strong>Potential clusters:</strong> {{ clusters|length }}</p>
-        <p><strong>Related pairs:</strong> {{ related_pair_count }}</p>
+      {% if is_integrated_example %}
+        <section class="synthetic-note">
+          <h2>SYNTHETIC integrated example</h2>
+          <p>Every reference base, sequence, pooled sample, site, date, read count, and frequency below is invented to demonstrate the integrated workflow. None of it is real surveillance data.</p>
+        </section>
+      {% endif %}
 
-        {% if clusters %}
-          {% for cluster in clusters %}
-            <div class="cluster">
-              <h3>{{ cluster.cluster_id }}</h3>
-              <p><strong>Pathogen:</strong> {{ cluster.pathogen }}</p>
-              <p><strong>Gene/segment:</strong> {{ cluster.gene_segment }}</p>
-              <p><strong>Samples:</strong> {{ cluster.samples|join(', ') }}</p>
-              <p><strong>Region label sources:</strong><br>{{ cluster.sample_regions|join('; ') }}</p>
-            </div>
-          {% endfor %}
-        {% else %}
-          {% if candidates %}
-            <p>No pairs met all three screening criteria. Some pairs passed the genetic and date limits, but their geographic evidence is insufficient; see the separate candidate section below.</p>
-          {% else %}
-            <p>No potential clusters were detected with these threshold settings.</p>
+      <nav class="sections" aria-label="Dashboard sections">
+        <a href="#overview">1. Overview</a>
+        <a href="#quality">2. Sequencing quality</a>
+        <a href="#variation">3. Genomic variation</a>
+        <a href="#temporal">4. Temporal patterns</a>
+        <a href="#population">5. Population structure</a>
+        <a href="#geography">6. Geographic context</a>
+        <a href="#cross-source">7. Cross-source evidence</a>
+        <a href="#relationships">8. Individual sequence relationships</a>
+        <a href="#provenance">Provenance &amp; downloads</a>
+      </nav>
+
+      <section id="overview">
+        <h2>1. Overview</h2>
+        {% if input_names and dashboard %}
+          <p>{% for key, name in input_names.items() %}<strong>{{ input_labels.get(key, key) }}:</strong> {{ name }}<br>{% endfor %}</p>
+        {% endif %}
+        {% if analysis_complete %}
+          <h3>Analysis summary</h3>
+          <p><strong>FASTA file:</strong> {{ input_names.fasta }}<br><strong>Metadata file:</strong> {{ input_names.metadata }}</p>
+          <div class="summary-grid">
+            <p><strong>Unique samples analyzed:</strong> {{ summary.unique_samples }}</p>
+            <p><strong>Pairwise comparisons:</strong> {{ summary.pairwise_comparisons }}</p>
+            <p><strong>Strict related pairs:</strong> {{ related_pair_count }}</p>
+            <p><strong>Potential clusters meeting all criteria:</strong> {{ clusters|length }}</p>
+            <p><strong>Genomic-temporal candidate pairs with unresolved geography:</strong> {{ candidates|length }}</p>
+            <p><strong>Unique samples represented in candidate pairs:</strong> {{ summary.candidate_unique_samples }}</p>
+          </div>
+          <p class="note">Candidate pairs are relationships among {{ summary.candidate_unique_samples }} of the {{ summary.unique_samples }} original samples, not additional samples.</p>
+          <p><strong>Sequences aligned by MAFFT:</strong> {{ summary.aligned_sequences }}<br>
+            <strong>Distinct locations resolved by GeoNames:</strong> {{ summary.geonames_resolved }}<br>
+            <strong>Distinct locations too coarse for distance comparison:</strong> {{ summary.coarse_locations }}<br>
+            <strong>Samples lacking sufficiently precise geographic metadata:</strong> {{ summary.insufficient_geography_samples }}<br>
+            <strong>Valid geographic-distance comparisons:</strong> {{ summary.valid_geographic_comparisons }}</p>
+        {% endif %}
+        {% if dashboard %}
+          {% set s = dashboard.summary %}
+          <h3>Integrated evidence summary</h3>
+          <div class="summary-grid">
+            <p><strong>Genomic reference:</strong> {{ s.reference or 'None supplied' }}</p>
+            {% if s.individual_samples is defined %}<p><strong>Individual sequences:</strong> {{ s.individual_samples }}{% if s.individual_mapped is defined %} ({{ s.individual_mapped }} mapped to the reference){% endif %}</p>{% endif %}
+            {% if s.individual_variants is defined %}<p><strong>Distinct variants in individual sequences:</strong> {{ s.individual_variants }}</p>{% endif %}
+            {% if s.pooled_samples is defined %}<p><strong>Pooled samples:</strong> {{ s.pooled_samples }} ({{ s.pooled_samples_included }} kept after QC)</p>
+            <p><strong>Pooled variant records:</strong> {{ s.pooled_records }} ({{ s.pooled_records_included }} kept; {{ s.pooled_variants }} distinct)</p>
+            <p><strong>Pooled samples with known genome coverage:</strong> {{ s.pooled_coverage_known }} of {{ s.pooled_samples }}</p>{% endif %}
+            {% if s.shared_variants is defined %}<p><strong>Variants observed in both sources:</strong> {{ s.shared_variants }}</p>{% endif %}
+            {% if s.date_start is defined %}<p><strong>Collection dates:</strong> {{ s.date_start }} to {{ s.date_end }}</p>{% endif %}
+            {% if s.population_method is defined %}<p><strong>Population structure:</strong> {{ s.population_method }}</p>{% endif %}
+          </div>
+          {% if s.category_counts is defined %}
+            <p class="note">Cross-source categories: {% for name, count in s.category_counts.items() %}{{ name }} ({{ count }}){% if not loop.last %}; {% endif %}{% endfor %}.</p>
           {% endif %}
+        {% elif analysis_complete %}
+          <p class="unavailable">Add a reference FASTA to give individual sequences reference-based variant profiles, and a pooled SNV table to analyze pooled samples and compare the two sources.</p>
         {% endif %}
       </section>
-      <section>
-        <h2>Genomic-temporal candidates: geography unresolved</h2>
-        <p class="note">These pairs pass the genetic and date thresholds, but the available location data cannot establish whether they pass the geographic cutoff. They are not included in the strict potential clusters and are not confirmed outbreaks.</p>
-        <details class="candidate-details">
-          <summary>Show candidate pairs ({{ candidates|length }})</summary>
-          {% if candidates %}
-            {% for pair in candidates %}
+
+      <section id="quality">
+        <h2>2. Sequencing quality</h2>
+        <p class="note">Question: how much of each sample can be trusted, and which of the paper's quality steps could actually be reproduced from these files?</p>
+        {% if dashboard %}
+          {% for item in dashboard.quality.figures %}{{ show_figure(item) }}{% endfor %}
+          {% if dashboard.regression %}
+            <p class="note">Depth regression: n = {{ dashboard.regression.n }}, slope = {{ '%.4f'|format(dashboard.regression.slope) }}, R² = {{ '%.3f'|format(dashboard.regression.r_squared) }}, permutation p = {{ '%.3f'|format(dashboard.regression.permutation_p) }}.{% if dashboard.regression.small_sample %} Fewer than 10 samples: descriptive only.{% endif %}</p>
+          {% endif %}
+          {% for table in dashboard.quality.tables %}{{ show_table(table) }}{% endfor %}
+          {{ show_notes(dashboard.notes.quality) }}
+          {{ show_notes(dashboard.notes.figures) }}
+        {% else %}
+          <p class="unavailable">Quality summaries need a reference FASTA or a pooled SNV table.</p>
+        {% endif %}
+      </section>
+
+      <section id="variation">
+        <h2>3. Genomic variation</h2>
+        <p class="note">Question: which reference positions vary, in how many samples, and in which annotated regions?</p>
+        {% if dashboard %}
+          {% for item in dashboard.variation.figures %}{{ show_figure(item) }}{% endfor %}
+          {% for table in dashboard.variation.tables %}{{ show_table(table) }}{% endfor %}
+          {{ show_notes(dashboard.notes.variation) }}
+          <p class="note">A published novelty flag is shown only when it comes from the source table. A variant absent from an uploaded comparison set is never labeled newly discovered.</p>
+        {% else %}
+          <p class="unavailable">Reference-based variation needs a reference FASTA or a pooled SNV table.</p>
+        {% endif %}
+      </section>
+
+      <section id="temporal">
+        <h2>4. Temporal patterns</h2>
+        <p class="note">Question: how do reported variant frequencies change across collection dates and sites? Lines connect sample-level observations; they are not estimates of community prevalence.</p>
+        {% if dashboard and dashboard.temporal.tables %}
+          {% for item in dashboard.temporal.figures %}{{ show_figure(item) }}{% endfor %}
+          {% for table in dashboard.temporal.tables %}{{ show_table(table) }}{% endfor %}
+          {{ show_notes(dashboard.notes.temporal) }}
+        {% else %}
+          <p class="unavailable">Temporal frequency analysis needs a pooled SNV table with collection dates.</p>
+        {% endif %}
+      </section>
+
+      <section id="population">
+        <h2>5. Population structure</h2>
+        <p class="note">Question: do pooled samples group by place or time? The paper used Yue–Clayton dissimilarities of A/C/G/T frequencies summed over all reference positions, followed by principal coordinates analysis (PCoA).</p>
+        {% if dashboard and dashboard.population %}
+          {% set p = dashboard.population %}
+          {% if p.available %}
+            <p><strong>Method:</strong> {{ p.method }}</p>
+            {% for item in p.figures %}{{ show_figure(item) }}{% endfor %}
+            {% if p.eigen %}<p class="note">Axis 1 explains {{ '%.1f'|format(p.eigen.axis_1) }}% and axis 2 {{ '%.1f'|format(p.eigen.axis_2) }}% of the positive eigenvalues; {{ p.eigen.negative }} negative eigenvalue(s).</p>{% endif %}
+            {% for table in p.tables %}{{ show_table(table) }}{% endfor %}
+          {% else %}
+            <p class="unavailable">{{ p.message }}</p>
+          {% endif %}
+          {{ show_notes(dashboard.notes.population) }}
+        {% else %}
+          <p class="unavailable">Population structure needs a pooled SNV table; the paper's exact PCoA also needs per-position A/C/G/T counts.</p>
+        {% endif %}
+      </section>
+
+      <section id="geography">
+        <h2>6. Geographic context</h2>
+        <p class="note">Question: where were samples collected, and how precisely is that known?</p>
+        {% if dashboard %}
+          {% for table in dashboard.geography.tables %}{{ show_table(table) }}{% endfor %}
+          {{ show_notes(dashboard.notes.geography) }}
+        {% elif analysis_complete %}
+          <p class="note">Location precision for individual sequences is summarized in the overview and in the downloadable pairwise CSV.</p>
+        {% endif %}
+      </section>
+
+      <section id="cross-source">
+        <h2>7. Cross-source evidence</h2>
+        <p class="note">Question: which reference-based variants appear in both individual sequences and pooled samples? "Not detected" is never treated as confirmed absence; positions without adequate coverage stay unresolved.</p>
+        {% if dashboard and dashboard.cross_source %}
+          {% for item in dashboard.cross_source.figures %}{{ show_figure(item) }}{% endfor %}
+          {% for table in dashboard.cross_source.tables %}{{ show_table(table) }}{% endfor %}
+          <p class="note">Short-read pooled data cannot show which mutations occur together in one genome, so profile overlap does not establish that a lineage was present.</p>
+        {% else %}
+          <p class="unavailable">Cross-source comparison needs individual sequences, a reference FASTA, and a pooled SNV table on the same verified reference.</p>
+        {% endif %}
+        {% if dashboard %}{{ show_notes(dashboard.notes.cross_source) }}{% endif %}
+      </section>
+
+      <section id="relationships">
+        <h2>8. Individual sequence relationships</h2>
+        {% if analysis_complete %}
+          <h3>Potential clusters meeting all three screening criteria</h3>
+          <p><strong>Potential clusters:</strong> {{ clusters|length }}</p>
+          <p><strong>Related pairs:</strong> {{ related_pair_count }}</p>
+
+          {% if clusters %}
+            {% for cluster in clusters %}
               <div class="cluster">
-                <strong>{{ pair.sample_1 }} – {{ pair.sample_2 }}</strong><br>
-                {{ pair.pathogen }} / {{ pair.gene_segment }}<br>
-                P-distance: {{ "%.6f"|format(pair.p_distance) }}; days apart: {{ pair.days_apart }}; geographic distance: unresolved
+                <h3>{{ cluster.cluster_id }}</h3>
+                <p><strong>Pathogen:</strong> {{ cluster.pathogen }}</p>
+                <p><strong>Gene/segment:</strong> {{ cluster.gene_segment }}</p>
+                <p><strong>Samples:</strong> {{ cluster.samples|join(', ') }}</p>
+                <p><strong>Region label sources:</strong><br>{{ cluster.sample_regions|join('; ') }}</p>
               </div>
             {% endfor %}
           {% else %}
-            <p>No genomic-temporal candidate pairs have unresolved geography.</p>
+            {% if candidates %}
+              <p>No pairs met all three screening criteria. Some pairs passed the genetic and date limits, but their geographic evidence is insufficient; see the separate candidate section below.</p>
+            {% else %}
+              <p>No potential clusters were detected with these threshold settings.</p>
+            {% endif %}
           {% endif %}
-        </details>
+
+          <h3>Genomic-temporal candidates: geography unresolved</h3>
+          <p class="note">These pairs pass the genetic and date thresholds, but the available location data cannot establish whether they pass the geographic cutoff. They are not included in the strict potential clusters and are not confirmed outbreaks.</p>
+          <details class="candidate-details">
+            <summary>Show candidate pairs ({{ candidates|length }})</summary>
+            {% if candidates %}
+              {% for pair in candidates %}
+                <div class="cluster">
+                  <strong>{{ pair.sample_1 }} – {{ pair.sample_2 }}</strong><br>
+                  {{ pair.pathogen }} / {{ pair.gene_segment }}<br>
+                  P-distance: {{ "%.6f"|format(pair.p_distance) }}; days apart: {{ pair.days_apart }}; geographic distance: unresolved
+                </div>
+              {% endfor %}
+            {% else %}
+              <p>No genomic-temporal candidate pairs have unresolved geography.</p>
+            {% endif %}
+          </details>
+        {% else %}
+          <p class="unavailable">Upload individual FASTA sequences and metadata to compare sequences with MAFFT, p-distance, dates, and locations.</p>
+        {% endif %}
+      </section>
+
+      <section id="provenance">
+        <h2>Provenance and downloads</h2>
+        {% if dashboard and dashboard.provenance %}
+          <details><summary>Show the provenance record</summary>{{ show_table(dashboard.provenance) }}</details>
+        {% endif %}
+        {% if downloads %}
+          <p class="note">Files are kept in this server's memory for 10 minutes; uploads were deleted after the analysis.</p>
+          <ul class="downloads">
+            {% for name in downloads %}<li><a href="{{ url_for('result_download', download_id=download_id, filename=name) }}">{{ name }}</a></li>{% endfor %}
+          </ul>
+          {% if skipped_downloads %}<p class="note">Too large for the hosted download: {{ skipped_downloads|join(', ') }}. Use run_integrated_analysis.py locally.</p>{% endif %}
+        {% endif %}
       </section>
     {% endif %}
+
+    <p class="note">Earlier single-source Sprint 3 pages remain available for comparison: <a href="{{ url_for('wastewater_page') }}">Wastewater Surveillance (processed SNV summary)</a> and <a href="{{ url_for('wastewater_data_page') }}">Wastewater Data Analysis (processed measurement tables)</a>.</p>
   </main>
 </body>
 </html>

@@ -1,4 +1,10 @@
-"""Small Flask interface for the existing analysis pipeline."""
+"""Flask interface: one dashboard for individual and pooled genomic evidence.
+
+The page runs the original Sprint 2 sequence-relationship pipeline when
+FASTA + metadata are uploaded, and the reference-based integrated analysis
+(genomics.integrated_analysis) when a reference FASTA and/or a pooled SNV
+table is supplied. The earlier Sprint 3 single-source pages remain available.
+"""
 
 from base64 import b64encode
 from contextlib import redirect_stderr
@@ -19,6 +25,8 @@ from run_pipeline import output_paths, region_assignment_path, run_pipeline
 from system_diagnostics import check_mafft
 from validate_inputs import FASTA_EXTENSIONS, METADATA_EXTENSIONS
 from environmental_analysis import load_measurements, make_charts, summarize_measurements, table_records
+from genomics.integrated_analysis import run_integrated_analysis
+from integrated_view import build_dashboard, download_files
 from wastewater.processed_snv import load_processed_snvs, summarize_snvs
 
 
@@ -35,6 +43,55 @@ ENVIRONMENTAL_DOWNLOADS = {}  # Short-lived CSV files; no database or permanent 
 ENVIRONMENTAL_LOCK = Lock()
 ENVIRONMENTAL_DOWNLOAD_SECONDS = 600
 SYNTHETIC_ENVIRONMENTAL_FILE = EXAMPLE_FOLDER / "synthetic_environmental_measurements.csv"
+
+# The paired, explicitly synthetic individual + pooled demonstration.
+INTEGRATED_FOLDER = EXAMPLE_FOLDER / "integrated"
+INTEGRATED_EXAMPLE_FILES = {
+    "fasta": "synthetic_individual_sequences.fasta",
+    "metadata": "synthetic_individual_metadata.csv",
+    "reference": "synthetic_reference.fasta",
+    "snv": "synthetic_pooled_snvs.csv",
+    "positions": "synthetic_pooled_base_counts.csv",
+    "signatures": "synthetic_variant_signatures.csv",
+}
+TABLE_EXTENSIONS = {".csv", ".tsv", ".xlsx"}
+# (form field, input key, allowed extensions, readable name)
+OPTIONAL_UPLOADS = [
+    ("reference_file", "reference", FASTA_EXTENSIONS, "reference FASTA"),
+    ("snv_file", "snv", TABLE_EXTENSIONS, "pooled SNV table"),
+    ("pooled_metadata_file", "pooled_metadata", TABLE_EXTENSIONS, "pooled-sample metadata"),
+    ("position_file", "positions", TABLE_EXTENSIONS, "per-position depth table"),
+    ("masked_sites_file", "masked_sites", TABLE_EXTENSIONS, "masked-site list"),
+    ("signature_file", "signatures", TABLE_EXTENSIONS, "variant-profile table"),
+]
+INPUT_LABELS = {
+    "fasta": "Individual sequences (FASTA)",
+    "metadata": "Individual metadata",
+    "reference": "Reference FASTA",
+    "snv": "Pooled SNV table",
+    "pooled_metadata": "Pooled-sample metadata",
+    "positions": "Per-position depth/base counts",
+    "masked_sites": "Masked-site list",
+    "signatures": "Variant profiles",
+}
+RESULT_DOWNLOADS = {}  # Short-lived integrated-result files; no database.
+RESULT_LOCK = Lock()
+RESULT_DOWNLOAD_SECONDS = 600
+RESULT_DOWNLOAD_LIMIT = 4
+
+
+def default_values(form):
+    """Form values with the prototype defaults."""
+
+    return {
+        "max_p_distance": form.get("max_p_distance", "0.05"),
+        "max_days_apart": form.get("max_days_apart", "14"),
+        "max_km_apart": form.get("max_km_apart", "50"),
+        "genomic_region_mode": form.get("genomic_region_mode", "automatic"),
+        "confirm_complete_genomes": form.get("confirm_complete_genomes") == "on",
+        "qc_mode": form.get("qc_mode", "paper"),
+        "date_window_days": form.get("date_window_days", "14"),
+    }
 
 
 @app.route("/health")
@@ -98,13 +155,7 @@ def system_status():
     """Check external dependencies only when the visitor presses the button."""
 
     results, cached = get_system_status()
-    values = {
-        "max_p_distance": "0.05",
-        "max_days_apart": "14",
-        "max_km_apart": "50",
-        "genomic_region_mode": "automatic",
-        "confirm_complete_genomes": False,
-    }
+    values = default_values({})
     return render_template(
         "index.html", values=values, system_status=results, status_cached=cached
     )
@@ -384,40 +435,206 @@ def find_geography_unresolved_candidates(pairs, thresholds):
     return candidates
 
 
+def read_date_window(values):
+    """Read the cross-source date window as a non-negative number of days."""
+
+    try:
+        days = float(values["date_window_days"])
+    except ValueError:
+        days = -1
+    if days < 0 or not isfinite(days):
+        return None, "The cross-source date window must be a non-negative number of days."
+    return days, None
+
+
+def store_result_files(files):
+    """Keep a few recent result files in memory for ten minutes; no database."""
+
+    with RESULT_LOCK:
+        now = monotonic()
+        expired = [
+            key for key, item in RESULT_DOWNLOADS.items()
+            if now - item[0] > RESULT_DOWNLOAD_SECONDS
+        ]
+        for key in expired:
+            del RESULT_DOWNLOADS[key]
+        while len(RESULT_DOWNLOADS) >= RESULT_DOWNLOAD_LIMIT:
+            oldest = min(RESULT_DOWNLOADS, key=lambda key: RESULT_DOWNLOADS[key][0])
+            del RESULT_DOWNLOADS[oldest]
+        download_id = token_urlsafe(16)
+        RESULT_DOWNLOADS[download_id] = (now, files)
+    return download_id
+
+
+@app.route("/results/<download_id>/<filename>")
+def result_download(download_id, filename):
+    """Download one table or figure from a recent integrated analysis."""
+
+    with RESULT_LOCK:
+        item = RESULT_DOWNLOADS.get(download_id)
+        if (item is None or monotonic() - item[0] > RESULT_DOWNLOAD_SECONDS
+                or filename not in item[1]):
+            abort(404)
+        content, mimetype = item[1][filename]
+    return send_file(BytesIO(content), mimetype=mimetype, as_attachment=True,
+                     download_name=filename)
+
+
+def run_relationship_analysis(fasta_path, metadata_path, thresholds, complete_genomes,
+                              temporary_folder):
+    """Run the original Sprint 2 pipeline and read its results for the page."""
+
+    outcome = {
+        "error": None, "notice": None, "complete": False, "clusters": [],
+        "related_pair_count": 0, "candidates": [], "summary": {}, "analysis_data": {},
+        "files": {},
+    }
+    summary = outcome["summary"]
+
+    # Capture backend errors so they can be shown on the webpage.
+    pipeline_errors = StringIO()
+    with redirect_stderr(pipeline_errors):
+        status = run_pipeline(
+            fasta_path,
+            metadata_path,
+            thresholds[0],
+            thresholds[1],
+            thresholds[2],
+            complete_genomes=complete_genomes,
+            run_summary=summary,
+            analysis_data=outcome["analysis_data"],
+        )
+
+    if status != 0:
+        error = pipeline_errors.getvalue().strip()
+        error = error.replace(str(temporary_folder), "[temporary upload]")
+        if "Traceback" in error:
+            error = "The analysis could not be completed. Please check your files."
+        if not error:
+            error = "The analysis pipeline could not complete."
+        outcome["error"] = error
+        return outcome
+
+    outcome["notice"] = pipeline_errors.getvalue().strip() or None
+    output_files = output_paths(metadata_path)
+    related_path = output_files[2]
+    membership_path = output_files[3]
+    enriched_path = output_files[1]
+
+    try:
+        related_pairs = pd.read_csv(related_path)
+        enriched_pairs = pd.read_csv(
+            enriched_path,
+            dtype={"Sample_ID_1": "string", "Sample_ID_2": "string"},
+        )
+        membership = pd.read_csv(membership_path, dtype={"Sample_ID": "string"})
+        assignments = pd.read_csv(
+            region_assignment_path(metadata_path),
+            dtype={"Sample_ID": "string"},
+        )
+    except Exception:
+        app.logger.exception("Could not read pipeline results")
+        outcome["error"] = "Could not read the analysis results. Please try again."
+        return outcome
+
+    outcome["related_pair_count"] = len(related_pairs)
+    clusters = make_cluster_list(membership)
+    candidates = find_geography_unresolved_candidates(enriched_pairs, thresholds)
+    candidate_sample_ids = set()
+    for pair in candidates:
+        candidate_sample_ids.add(pair["sample_1"])
+        candidate_sample_ids.add(pair["sample_2"])
+
+    summary["unique_samples"] = int(assignments["Sample_ID"].nunique())
+    summary["pairwise_comparisons"] = len(enriched_pairs)
+    summary["candidate_unique_samples"] = len(candidate_sample_ids)
+    summary["valid_geographic_comparisons"] = int(enriched_pairs["Km_Apart"].notna().sum())
+    region_by_sample = assignments.set_index("Sample_ID")
+    for cluster in clusters:
+        cluster["sample_regions"] = []
+        for sample_id in cluster["samples"]:
+            region = region_by_sample.loc[sample_id]
+            cluster["sample_regions"].append(
+                f"{sample_id}: {region['Gene_Segment']} "
+                f"({region['Gene_Segment_Source']})"
+            )
+
+    outcome["clusters"] = clusters
+    outcome["candidates"] = candidates
+    for path in list(output_files) + [region_assignment_path(metadata_path)]:
+        outcome["files"][f"sequence_relationships_{path.name}"] = path.read_bytes()
+    outcome["complete"] = True
+    return outcome
+
+
+def save_inputs(folder, use_example, use_integrated, fasta_upload, metadata_upload, uploads):
+    """Copy example files or save uploads; return (paths, display names)."""
+
+    paths = {}
+    names = {}
+    if use_example:
+        for key, name in [("fasta", "synthetic_sequences.fasta"),
+                          ("metadata", "synthetic_metadata.csv")]:
+            paths[key] = folder / name
+            copyfile(EXAMPLE_FOLDER / name, paths[key])
+            names[key] = name
+        return paths, names
+    if use_integrated:
+        for key, name in INTEGRATED_EXAMPLE_FILES.items():
+            paths[key] = folder / name
+            copyfile(INTEGRATED_FOLDER / name, paths[key])
+            names[key] = name
+        return paths, names
+
+    if fasta_upload is not None and fasta_upload.filename:
+        names["fasta"] = Path(fasta_upload.filename).name
+        names["metadata"] = Path(metadata_upload.filename).name
+        paths["fasta"] = folder / f"sequences{Path(names['fasta']).suffix.lower()}"
+        paths["metadata"] = folder / f"metadata{Path(names['metadata']).suffix.lower()}"
+        fasta_upload.save(paths["fasta"])
+        metadata_upload.save(paths["metadata"])
+    for key, upload in uploads.items():
+        names[key] = Path(upload.filename).name
+        paths[key] = folder / f"{key}{Path(names[key]).suffix.lower()}"
+        upload.save(paths[key])
+    return paths, names
+
+
 @app.route("/", methods=["GET", "POST"])
 def index():
-    """Show the upload form and process it when the user submits it."""
+    """Show the unified dashboard and run the requested analysis."""
 
-    error = None
-    notice = None
-    analysis_complete = False
-    clusters = []
-    related_pair_count = 0
-    candidates = []
-    summary = {}
-    input_names = None
-    is_synthetic_example = False
-
-    values = {
-        "max_p_distance": request.form.get("max_p_distance", "0.05"),
-        "max_days_apart": request.form.get("max_days_apart", "14"),
-        "max_km_apart": request.form.get("max_km_apart", "50"),
-        "genomic_region_mode": request.form.get("genomic_region_mode", "automatic"),
-        "confirm_complete_genomes": request.form.get("confirm_complete_genomes") == "on",
+    values = default_values(request.form)
+    page = {
+        "error": None, "notice": None, "analysis_complete": False, "clusters": [],
+        "related_pair_count": 0, "candidates": [], "summary": {}, "input_names": None,
+        "is_synthetic_example": False, "is_integrated_example": False, "dashboard": None,
+        "integrated_error": None, "download_id": None, "downloads": [],
+        "skipped_downloads": [],
     }
 
     if request.method == "POST":
         use_example = "run_example" in request.form
-        if use_example:
-            is_synthetic_example = True
+        use_integrated = "run_integrated_example" in request.form
+        page["is_synthetic_example"] = use_example
+        page["is_integrated_example"] = use_integrated
+        uploads = {}
+        fasta_upload = None
+        metadata_upload = None
+        if use_example or use_integrated:
             values["genomic_region_mode"] = "automatic"
-            fasta_upload = None
-            metadata_upload = None
         else:
             fasta_upload = request.files.get("fasta_file")
             metadata_upload = request.files.get("metadata_file")
+            for field, key, _, _ in OPTIONAL_UPLOADS:
+                upload = request.files.get(field)
+                if upload is not None and upload.filename:
+                    uploads[key] = upload
+        has_fasta = fasta_upload is not None and fasta_upload.filename != ""
+        has_metadata = metadata_upload is not None and metadata_upload.filename != ""
 
-        # Check both uploaded filenames before saving anything.
+        # Check every filename before saving anything.
+        error = None
         if values["genomic_region_mode"] not in {"automatic", "complete_genomes"}:
             error = "Choose Automatic detection or Complete genomes."
         elif (
@@ -430,129 +647,108 @@ def index():
             for name in ("synthetic_sequences.fasta", "synthetic_metadata.csv")
         ):
             error = "The bundled synthetic example files are missing."
-        elif not use_example and (fasta_upload is None or fasta_upload.filename == ""):
+        elif use_integrated and not all(
+            (INTEGRATED_FOLDER / name).is_file() for name in INTEGRATED_EXAMPLE_FILES.values()
+        ):
+            error = "The bundled synthetic integrated example files are missing."
+        elif not (use_example or use_integrated) and not (has_fasta or has_metadata or "snv" in uploads):
+            error = ("Please choose a FASTA sequence file with its metadata, a pooled SNV "
+                     "table, or both.")
+        elif has_metadata and not has_fasta:
             error = "Please choose a FASTA sequence file."
-        elif not use_example and Path(fasta_upload.filename).suffix.lower() not in FASTA_EXTENSIONS:
+        elif has_fasta and Path(fasta_upload.filename).suffix.lower() not in FASTA_EXTENSIONS:
             error = "The sequence file must use .fasta, .fa, or .fna."
-        elif not use_example and (metadata_upload is None or metadata_upload.filename == ""):
+        elif has_fasta and not has_metadata:
             error = "Please choose a metadata file."
-        elif not use_example and Path(metadata_upload.filename).suffix.lower() not in METADATA_EXTENSIONS:
+        elif has_metadata and Path(metadata_upload.filename).suffix.lower() not in METADATA_EXTENSIONS:
             error = "The metadata file must use .xlsx or .csv."
 
+        if error is None:
+            for _, key, extensions, label in OPTIONAL_UPLOADS:
+                if key in uploads and Path(uploads[key].filename).suffix.lower() not in extensions:
+                    error = f"The {label} must use " + ", ".join(sorted(extensions)) + "."
+                    break
+        if error is None and "snv" not in uploads and any(
+            key in uploads for key in ("pooled_metadata", "positions", "masked_sites")
+        ):
+            error = "Pooled-sample metadata, position, and masked-site files need a pooled SNV table."
+
         thresholds = None
+        date_window = None
         if error is None:
             thresholds, error = read_thresholds(values)
+        if error is None:
+            date_window, error = read_date_window(values)
+        if error is None and values["qc_mode"] not in {"paper", "exploratory"}:
+            error = "Choose the paper-reproduction or exploratory quality-control mode."
 
         if error is None:
             # Every request gets its own folder, which is deleted automatically.
             with TemporaryDirectory() as temporary_folder:
-                if use_example:
-                    fasta_name = "synthetic_sequences.fasta"
-                    metadata_name = "synthetic_metadata.csv"
-                    fasta_path = Path(temporary_folder) / fasta_name
-                    metadata_path = Path(temporary_folder) / metadata_name
-                    copyfile(EXAMPLE_FOLDER / fasta_name, fasta_path)
-                    copyfile(EXAMPLE_FOLDER / metadata_name, metadata_path)
-                else:
-                    fasta_name = Path(fasta_upload.filename).name
-                    metadata_name = Path(metadata_upload.filename).name
-                    fasta_path = Path(temporary_folder) / f"sequences{Path(fasta_name).suffix.lower()}"
-                    metadata_path = Path(temporary_folder) / f"metadata{Path(metadata_name).suffix.lower()}"
-                    fasta_upload.save(fasta_path)
-                    metadata_upload.save(metadata_path)
+                folder = Path(temporary_folder)
+                paths, names = save_inputs(folder, use_example, use_integrated,
+                                           fasta_upload, metadata_upload, uploads)
+                page["input_names"] = names
 
-                input_names = {"fasta": fasta_name, "metadata": metadata_name}
-
-                # Capture backend errors so they can be shown on the webpage.
-                pipeline_errors = StringIO()
-                with redirect_stderr(pipeline_errors):
-                    status = run_pipeline(
-                        fasta_path,
-                        metadata_path,
-                        thresholds[0],
-                        thresholds[1],
-                        thresholds[2],
-                        complete_genomes=(
-                            values["genomic_region_mode"] == "complete_genomes"
-                        ),
-                        run_summary=summary,
+                relationship = None
+                if "fasta" in paths:
+                    relationship = run_relationship_analysis(
+                        paths["fasta"], paths["metadata"], thresholds,
+                        values["genomic_region_mode"] == "complete_genomes", temporary_folder,
                     )
+                    page["error"] = relationship["error"]
+                    page["notice"] = relationship["notice"]
+                    page["analysis_complete"] = relationship["complete"]
+                    page["clusters"] = relationship["clusters"]
+                    page["related_pair_count"] = relationship["related_pair_count"]
+                    page["candidates"] = relationship["candidates"]
+                    page["summary"] = relationship["summary"]
 
-                if status != 0:
-                    error = pipeline_errors.getvalue().strip()
-                    error = error.replace(str(temporary_folder), "[temporary upload]")
-                    if "Traceback" in error:
-                        error = "The analysis could not be completed. Please check your files."
-                    if not error:
-                        error = "The analysis pipeline could not complete."
-                else:
-                    notice = pipeline_errors.getvalue().strip() or None
-                    output_files = output_paths(metadata_path)
-                    related_path = output_files[2]
-                    membership_path = output_files[3]
-                    enriched_path = output_files[1]
-
+                relationship_files = relationship["files"] if relationship else {}
+                if "reference" in paths or "snv" in paths:
+                    individual_data = None
+                    mafft_path = None
+                    if relationship and relationship["complete"] and "reference" in paths:
+                        individual_data = relationship["analysis_data"].get("samples")
+                        mafft_path = relationship["analysis_data"].get("mafft_path")
                     try:
-                        related_pairs = pd.read_csv(related_path)
-                        enriched_pairs = pd.read_csv(
-                            enriched_path,
-                            dtype={"Sample_ID_1": "string", "Sample_ID_2": "string"},
+                        result = run_integrated_analysis(
+                            individual_data=individual_data,
+                            mafft_path=mafft_path,
+                            reference_path=paths.get("reference"),
+                            snv_path=paths.get("snv"),
+                            pooled_metadata_path=paths.get("pooled_metadata"),
+                            position_path=paths.get("positions"),
+                            masked_sites_path=paths.get("masked_sites"),
+                            signature_path=paths.get("signatures"),
+                            settings={"qc_mode": values["qc_mode"],
+                                      "date_window_days": date_window},
+                            input_labels=names,
                         )
-                        membership = pd.read_csv(
-                            membership_path, dtype={"Sample_ID": "string"}
-                        )
-                        assignments = pd.read_csv(
-                            region_assignment_path(metadata_path),
-                            dtype={"Sample_ID": "string"},
-                        )
+                    except (ValueError, RuntimeError) as problem:
+                        page["integrated_error"] = str(problem).replace(
+                            str(temporary_folder), "[temporary upload]")
                     except Exception:
-                        app.logger.exception("Could not read pipeline results")
-                        error = "Could not read the analysis results. Please try again."
+                        app.logger.exception("Integrated analysis failed")
+                        page["integrated_error"] = (
+                            "The integrated analysis could not be completed. Check the "
+                            "reference and pooled-sample files."
+                        )
                     else:
-                        related_pair_count = len(related_pairs)
-                        clusters = make_cluster_list(membership)
-                        candidates = find_geography_unresolved_candidates(
-                            enriched_pairs, thresholds
-                        )
-                        candidate_sample_ids = set()
-                        for pair in candidates:
-                            candidate_sample_ids.add(pair["sample_1"])
-                            candidate_sample_ids.add(pair["sample_2"])
+                        files, skipped = download_files(result, relationship_files)
+                        page["download_id"] = store_result_files(files)
+                        page["dashboard"] = build_dashboard(result, page["download_id"])
+                        page["downloads"] = sorted(files)
+                        page["skipped_downloads"] = skipped
+                elif relationship_files:
+                    files = {name: (content, "text/csv") for name, content in relationship_files.items()}
+                    page["download_id"] = store_result_files(files)
+                    page["downloads"] = sorted(files)
 
-                        summary["unique_samples"] = int(
-                            assignments["Sample_ID"].nunique()
-                        )
-                        summary["pairwise_comparisons"] = len(enriched_pairs)
-                        summary["candidate_unique_samples"] = len(
-                            candidate_sample_ids
-                        )
-                        summary["valid_geographic_comparisons"] = int(
-                            enriched_pairs["Km_Apart"].notna().sum()
-                        )
-                        region_by_sample = assignments.set_index("Sample_ID")
-                        for cluster in clusters:
-                            cluster["sample_regions"] = []
-                            for sample_id in cluster["samples"]:
-                                region = region_by_sample.loc[sample_id]
-                                cluster["sample_regions"].append(
-                                    f"{sample_id}: {region['Gene_Segment']} "
-                                    f"({region['Gene_Segment_Source']})"
-                                )
-                        analysis_complete = True
+        if error is not None:
+            page["error"] = error
 
-    return render_template(
-        "index.html",
-        error=error,
-        notice=notice,
-        analysis_complete=analysis_complete,
-        clusters=clusters,
-        related_pair_count=related_pair_count,
-        candidates=candidates,
-        summary=summary,
-        input_names=input_names,
-        is_synthetic_example=is_synthetic_example,
-        values=values,
-    )
+    return render_template("index.html", values=values, input_labels=INPUT_LABELS, **page)
 
 
 if __name__ == "__main__":

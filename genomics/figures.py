@@ -352,7 +352,7 @@ def cross_source_figure(counts):
     axis.set_yticklabels(labels, fontsize=7)
     axis.set_xlabel("Distinct reference-based variants")
     axis.xaxis.get_major_locator().set_params(integer=True)
-    axis.set_title("Cross-source evidence for each variant (not detected is not absence)", fontsize=10)
+    axis.set_title("Cross-source evidence for each variant", fontsize=10)
     return to_png(figure)
 
 
@@ -399,19 +399,22 @@ def quality_figure(pooled_samples, individual_samples, coverage_threshold):
         axis = axes[index]
         index += 1
         style_axis(axis)
-        data = pooled_samples.sort_values("Sample_ID")
-        known = data["Genome_Coverage_Percent"].notna()
-        axis.bar(np.arange(len(data))[known], data.loc[known, "Genome_Coverage_Percent"],
-                 color=CATEGORICAL[0], width=0.7)
-        for position in np.arange(len(data))[~known.to_numpy()]:
-            axis.text(position, 2, "unknown", rotation=90, ha="center", va="bottom", fontsize=6,
-                      color=MUTED_TEXT)
+        data = pooled_samples.sort_values("Sample_ID").reset_index(drop=True)
+        for position, row in data.iterrows():
+            value = row["Genome_Coverage_Percent"]
+            if pd.isna(value):
+                axis.text(position, 2, "unknown", rotation=90, ha="center", va="bottom",
+                          fontsize=6, color=MUTED_TEXT)
+                continue
+            included = bool(row.get("Analysis_Included", True))
+            axis.bar(position, value, width=0.7, color=CATEGORICAL[0], alpha=1.0 if included else 0.35,
+                     hatch=None if included else "///", edgecolor=SURFACE if included else MUTED_TEXT)
         axis.axhline(coverage_threshold, color=TEXT, linestyle="--", linewidth=1)
-        axis.text(len(data) - 0.5, coverage_threshold + 1, f">{coverage_threshold:.0f}% paper threshold",
-                  ha="right", va="bottom", fontsize=7, color=TEXT)
+        axis.text(-0.4, 102, f"dashed line: >{coverage_threshold:.0f}% paper threshold; hatched = excluded",
+                  ha="left", va="bottom", fontsize=7, color=TEXT)
         axis.set_xticks(range(len(data)))
         axis.set_xticklabels(data["Sample_ID"], rotation=60, ha="right", fontsize=7)
-        axis.set_ylim(0, 105)
+        axis.set_ylim(0, 112)
         axis.set_ylabel("Genome positions at >= 10x (%)")
         axis.set_title("Pooled samples: genome coverage", fontsize=9)
     if individual_samples is not None and not individual_samples.empty:

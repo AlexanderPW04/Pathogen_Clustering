@@ -339,9 +339,46 @@ def run_integrated_analysis(individual_data=None, mafft_path=None, reference_pat
                        individual["samples"] if individual else None,
                        settings["min_genome_coverage_percent"]))
 
+    geography = geographic_summary(individual_data, pooled["samples"] if pooled else None)
+    result["tables"]["geographic_context.csv"] = geography
+    note("geography", "Locations are context, not proof of transmission. State-only names and "
+                      "sewershed site labels are never treated as precise collection points, and "
+                      "pooled site labels are not geocoded.")
+
     result["summary"] = build_summary(result, individual_data)
     result["tables"]["provenance.csv"] = provenance(result, settings, labels, mafft_path)
     return result
+
+
+def geographic_summary(individual_data, pooled_samples):
+    """Group samples by documented location with their geographic precision."""
+
+    rows = []
+    sources = []
+    if individual_data is not None:
+        sources.append(("Individual sequence", individual_data))
+    if pooled_samples is not None:
+        sources.append(("Pooled sample", pooled_samples))
+    for sample_type, data in sources:
+        for location, group in data.groupby("Location_Name", dropna=False, sort=True):
+            precision = group.get("Geographic_Precision", pd.Series(dtype=str)).astype(str)
+            has_point = group["Latitude"].notna() & group["Longitude"].notna()
+            usable = has_point & ~precision.str.contains("too coarse") & ~precision.str.contains("no coordinates")
+            dates = group["Collection_Date"].dropna()
+            rows.append({
+                "Location_Name": location if pd.notna(location) and str(location) else "(no location)",
+                "Sample_Type": sample_type,
+                "Samples": len(group),
+                "Geographic_Precision": "; ".join(sorted(set(precision))),
+                "Samples_With_Coordinates": int(has_point.sum()),
+                "Usable_For_Kilometer_Screening": int(usable.sum()),
+                "First_Date": dates.min() if not dates.empty else pd.NaT,
+                "Last_Date": dates.max() if not dates.empty else pd.NaT,
+            })
+    return pd.DataFrame(rows, columns=[
+        "Location_Name", "Sample_Type", "Samples", "Geographic_Precision",
+        "Samples_With_Coordinates", "Usable_For_Kilometer_Screening", "First_Date", "Last_Date",
+    ])
 
 
 def build_summary(result, individual_data):
