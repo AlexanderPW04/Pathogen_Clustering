@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 
 from genomics.pooled_observations import pooled_position_status
-from genomics.unified_schema import VARIANT_OBSERVED
+from genomics.unified_schema import EXCLUDED_BY_QC, VARIANT_OBSERVED
 
 
 MATRIX_COLUMNS = [
@@ -29,6 +29,9 @@ def observation_matrix(variants, samples, depth_lookup, minimum_depth):
     included = variants[variants["Analysis_Included"]]
     if included.empty:
         return pd.DataFrame(columns=MATRIX_COLUMNS)
+    # A call that exists but failed QC is neither a measurement nor a non-detection.
+    excluded = set(zip(variants.loc[~variants["Analysis_Included"], "Sample_ID"],
+                       variants.loc[~variants["Analysis_Included"], "Variant_Key"]))
 
     # Repeated sample/variant rows (for example one position listed under two
     # annotations) keep their first reported frequency.
@@ -54,6 +57,8 @@ def observation_matrix(variants, samples, depth_lookup, minimum_depth):
             if key in reported:
                 status = VARIANT_OBSERVED
                 frequency, depth = reported[key]
+            elif key in excluded:
+                status, frequency, depth = EXCLUDED_BY_QC, np.nan, None
             else:
                 status, depth = pooled_position_status(
                     depth_lookup, sample["Sample_ID"], variant["Reference_ID"],
@@ -91,7 +96,8 @@ def frequency_trends(matrix):
 
     columns = [
         "Variant_Key", "Location_Name", "Samples", "Reported", "Adequate_Depth_Not_Reported",
-        "Low_Or_No_Coverage", "Coverage_Unknown", "First_Reported_Date", "Last_Reported_Date",
+        "Low_Or_No_Coverage", "Coverage_Unknown", "Excluded_By_QC", "First_Reported_Date",
+        "Last_Reported_Date",
         "First_Reported_Frequency", "Last_Reported_Frequency", "Change_In_Reported_Frequency",
         "Slope_Per_Week",
     ]
@@ -113,6 +119,7 @@ def frequency_trends(matrix):
                 (status_text.str.startswith("Low") | status_text.str.startswith("Not covered")).sum()
             ),
             "Coverage_Unknown": int(status_text.eq("Coverage unknown").sum()),
+            "Excluded_By_QC": int(status_text.eq(EXCLUDED_BY_QC).sum()),
             "First_Reported_Date": pd.NaT,
             "Last_Reported_Date": pd.NaT,
             "First_Reported_Frequency": np.nan,

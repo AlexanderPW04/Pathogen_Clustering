@@ -1,0 +1,6 @@
+Accession,Pathogen,Gene_Segment,Collection_Date,Location_Name,Latitude,Longitude,Host_Source
+IND_A,Synthetic respiratory virus,Complete genome,2026-03-02,"Tempe, Arizona",33.4255,-111.94,Synthetic individual specimen
+IND_B,Synthetic respiratory virus,Complete genome,2026-03-09,"Tempe, Arizona",33.43,-111.93,Synthetic individual specimen
+IND_C,Synthetic respiratory virus,Complete genome,2026-03-20,"Phoenix, Arizona",33.4484,-112.074,Synthetic individual specimen
+IND_D,Synthetic respiratory virus,Complete genome,2026-03-23,USA: AZ,,,Synthetic individual specimen
+IND_E,Synthetic unrelated virus,Complete genome,2026-03-25,"Tucson, Arizona",32.2226,-110.9747,Synthetic individual specimen

@@ -163,23 +163,28 @@ def population_structure(samples, variants, position_table=None, minimum_samples
     result = {"method": None, "available": False, "message": "", "pcoa": None,
               "coordinates": None, "distances": None, "diversity": None}
 
-    references = sorted({
-        reference for value in included["Reference_ID"] for reference in str(value).split("; ")
-    })
+    # Positions from different references cannot share one matrix, so only the
+    # reference used by the most samples is analyzed; the others are named.
+    single_reference = included[~included["Reference_ID"].astype(str).str.contains("; ")]
+    reference_counts = single_reference["Reference_ID"].value_counts()
+    if reference_counts.empty:
+        result["message"] = "No pooled sample has variant records on a single reference."
+        return result
+    reference_id = reference_counts.index[0]
+    left_out = sorted(set(included["Sample_ID"]) - set(
+        single_reference.loc[single_reference["Reference_ID"].eq(reference_id), "Sample_ID"]
+    ))
+    included = included[included["Reference_ID"].eq(reference_id)]
+    result["reference_id"] = reference_id
+    result["left_out"] = left_out
+
     if len(included) < minimum_samples:
         result["message"] = (
             f"Population structure needs at least {minimum_samples} pooled samples that "
-            f"passed quality control; {len(included)} are available."
-        )
-        return result
-    if len(references) != 1:
-        result["message"] = (
-            "Pooled samples use more than one reference genome, so their positions "
-            "cannot be placed in one dissimilarity matrix."
+            f"passed quality control on one reference; {len(included)} are available."
         )
         return result
 
-    reference_id = references[0]
     sample_ids = list(included["Sample_ID"])
     has_counts = position_table is not None and position_table.attrs.get("has_base_counts", False)
     counted = set()
@@ -218,6 +223,11 @@ def population_structure(samples, variants, position_table=None, minimum_samples
             "is not evidence of absence, so sequencing depth can drive these distances."
         )
 
+    if left_out:
+        result["message"] += (
+            f" Left out because they use a different reference than {reference_id}: "
+            + ", ".join(left_out) + "."
+        )
     pcoa = principal_coordinates(distances)
     result["available"] = True
     result["pcoa"] = pcoa

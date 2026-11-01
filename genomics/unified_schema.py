@@ -73,6 +73,7 @@ COVERED_NOT_DETECTED = "Adequate depth; variant not reported"  # pooled only
 LOW_COVERAGE = "Low coverage"
 NOT_COVERED = "Not covered or not callable"
 COVERAGE_UNKNOWN = "Coverage unknown"
+EXCLUDED_BY_QC = "Reported but excluded by QC"  # pooled only
 
 
 def variant_key(reference_id, position, ref, alt):

@@ -23,6 +23,7 @@ Two modes are available:
 import pandas as pd
 
 from genomics.pooled_observations import read_any_table, standard_name
+from genomics.references import reference_base, references_compatible
 
 
 PAPER_SETTINGS = {
@@ -90,8 +91,24 @@ def coverage_check(percent, minimum):
     return f"Fail ({percent:.1f}% genome coverage, not > {minimum:.0f}%)"
 
 
+def reference_check(row, reference, registry):
+    """Data-integrity check (not a paper step): does Ref match the reference?"""
+
+    if reference is None:
+        return "Not checked (no reference supplied)"
+    ok, _ = references_compatible(row["Reference_ID"], reference["Reference_ID"], registry)
+    if not ok:
+        return "Not checked (record uses a different reference)"
+    position = int(row["Position"])
+    if position > reference["Length"]:
+        return "Fail (position beyond the reference)"
+    if reference_base(reference, position) != row["Ref"]:
+        return "Fail (Ref base does not match the reference)"
+    return PASS
+
+
 def apply_pooled_quality_control(variants, samples, mode=PAPER_MODE, masked_sites=None,
-                                 settings=None):
+                                 settings=None, reference=None, registry=None):
     """Return (variants, samples, method_report) with quality columns added."""
 
     if mode not in {PAPER_MODE, EXPLORATORY_MODE}:
@@ -111,7 +128,9 @@ def apply_pooled_quality_control(variants, samples, mode=PAPER_MODE, masked_site
     depth_results = []
     fisher_results = []
     mask_results = []
+    reference_results = []
     for row in variants.to_dict("records"):
+        reference_results.append(reference_check(row, reference, registry))
         depth_results.append(depth_check(row["Read_Depth"], settings["min_variant_depth"]))
         fisher_results.append(fisher_check(row, settings["max_fisher_p"]))
         if masked_sites is None:
@@ -127,9 +146,10 @@ def apply_pooled_quality_control(variants, samples, mode=PAPER_MODE, masked_site
     variants["QC_Base_Quality"] = "Not verifiable from processed records"
     variants["QC_Min_Frequency"] = "No cut-off (as in the paper)"
     variants["QC_Sample_Coverage"] = variants["Sample_ID"].map(coverage_by_sample)
+    variants["QC_Reference_Base"] = reference_results
 
     check_columns = ["QC_Variant_Depth", "QC_Fisher_Test", "QC_Masked_Site",
-                     "QC_Sample_Coverage"]
+                     "QC_Sample_Coverage", "QC_Reference_Base"]
     statuses = []
     included = []
     for row in variants[check_columns].to_dict("records"):
@@ -221,6 +241,12 @@ def method_report(variants, samples, masked_sites, settings, mode):
          "Detail": ("Positions in the uploaded list were checked." if masked_sites is not None
                     else "The historical site list is not bundled and was not supplied."),
          },
+        {"Step": "Reference base agreement",
+         "Paper_Setting": "Not a paper step (data-integrity check added here)",
+         "Status": ("Checked against the supplied reference"
+                    if not variants["QC_Reference_Base"].str.startswith("Not checked").all()
+                    else "Not checked"),
+         "Detail": "A Ref base that disagrees with the reference suggests a different coordinate system."},
         {"Step": "Quality-control mode",
          "Paper_Setting": "-",
          "Status": "Paper reproduction preset" if mode == PAPER_MODE else "Exploratory",

@@ -51,8 +51,14 @@ def run_pipeline(
     confirm_same_region=False,
     complete_genomes=False,
     run_summary=None,
+    analysis_data=None,
 ):
-    """Run the backend stages and stop when a stage reports a problem."""
+    """Run the backend stages and stop when a stage reports a problem.
+
+    When `analysis_data` is a dictionary, it receives the validated and
+    geocoded sample table and the MAFFT path, so the integrated analysis can
+    reuse them without repeating GeoNames requests.
+    """
 
     output_files = output_paths(metadata_path)
     genomic_path = output_files[0]
@@ -162,6 +168,9 @@ def run_pipeline(
             coarse_locations=len(coarse_locations),
             insufficient_geography_samples=int((coarse | missing_coordinates).sum()),
         )
+    if analysis_data is not None:
+        analysis_data["samples"] = data
+        analysis_data["mafft_path"] = mafft_path
     return 0
 
 
