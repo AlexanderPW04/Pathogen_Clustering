@@ -31,6 +31,20 @@ Sprint 2.
 
 ## Sprint 3 changes so far
 
+### October 19, 2026 — Complete local setup README refresh
+
+- **Changed files:** `README.md` now begins with Windows setup and repeat-run
+  commands, with PowerShell and macOS/Linux alternatives. It documents all
+  current pages, inputs, optional MAFFT/GeoNames setup, diagnostics, downloads,
+  local troubleshooting, and optional Docker/Render hosting. The AI tools
+  acknowledgment remains at the end.
+- **Accuracy updates:** The test count is 110 on Python 3.11.9. Full-suite
+  regression fixtures excluded from GitHub are listed separately from the
+  portable measurement-page tests. Stale deployment and Python-version claims
+  were removed.
+- **Verification:** All five documented local GET pages returned HTTP 200
+  through the Flask test client on Python 3.11. No analysis logic changed.
+
 ### October 19, 2026 — Wastewater Data Analysis for processed feature tables
 
 - **Changed files:** `app.py` exposes `/wastewater-data` and its organized CSV
