@@ -1,0 +1,11 @@
+Accession,Organism_Name,Segment,Geo_Location,Host,Collection_Date
+NCBI001,Example virus,Region 1,Phoenix Midtown,Human,2026-02-01
+NCBI002,Example virus,Region 1,Phoenix Midtown,Human,2026-02-03
+NCBI003,Example virus,Region 1,Phoenix Midtown,Environmental,2026-02-06
+NCBI004,Example virus,Region 1,Tucson Central,Animal,2026-03-10
+NCBI005,Example virus,Region 1,Tucson Central,Animal,2026-03-12
+NCBI006,Example virus,Region 1,Flagstaff,Environmental,2026-02-02
+NCBI007,Example virus,Region 1,Yuma,Human,2026-03-11
+NCBI008,Example virus,Region 1,New York,Human,2025-01-01
+NCBI009,Example virus,Region 1,Seattle,Human,2026-03-11
+NCBI010,Example virus,Region 1,Denver,Environmental,2026-04-01

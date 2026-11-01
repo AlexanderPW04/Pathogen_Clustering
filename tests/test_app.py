@@ -357,15 +357,31 @@ class FlaskInterfaceTest(unittest.TestCase):
         self.assertIn("Potential clusters:</strong> 2", page)
         self.assertIn("Synthetic example analysis", page)
 
-    def test_state_only_ncbi_upload_keeps_strict_and_candidate_results_separate(self) -> None:
-        project = Path(__file__).resolve().parents[1]
+    def test_state_only_ncbi_style_upload_keeps_strict_and_candidate_results_separate(self) -> None:
+        # Generated NCBI-style records with state-only locations. The original
+        # real-NCBI version of this check is in test_optional_real_ncbi_data.py.
+        reference = "ACGTACGTACGTACGTACGT"
+        one_change = "ACGTACGTACGTACGTACGA"  # 1 of 20 positions differs.
+        fasta_text = (
+            f">SYNNCBI1.1 |Synthetic virus segment 4 gene\n{reference}\n"
+            f">SYNNCBI2.1 |Synthetic virus segment 4 gene\n{reference}\n"
+            f">SYNNCBI3.1 |Synthetic virus segment 4 gene\n{one_change}\n"
+            f">SYNNCBI4.1 |Synthetic virus segment 4 gene\n{reference}\n"
+        )
+        metadata = pd.DataFrame(
+            {
+                "Accession": ["SYNNCBI1", "SYNNCBI2", "SYNNCBI3", "SYNNCBI4"],
+                "Organism_Name": ["Synthetic virus"] * 4,
+                "Segment": ["4"] * 4,
+                "Geo_Location": ["USA: UT", "USA: UT", "USA: MN", "USA: NY"],
+                "Host": ["Synthetic host"] * 4,
+                "Collection_Date": ["2026-07-29", "2026-07-30", "2026-08-05", "2026-12-01"],
+            }
+        )
         form_data = {
-            "fasta_file": (
-                io.BytesIO((project / "sequences.fasta").read_bytes()),
-                "sequences.fasta",
-            ),
+            "fasta_file": (io.BytesIO(fasta_text.encode("utf-8")), "sequences.fasta"),
             "metadata_file": (
-                io.BytesIO((project / "sequences.csv").read_bytes()),
+                io.BytesIO(metadata.to_csv(index=False).encode("utf-8")),
                 "sequences.csv",
             ),
             "max_p_distance": "0.05",
@@ -386,23 +402,21 @@ class FlaskInterfaceTest(unittest.TestCase):
                         )
 
         page = response.get_data(as_text=True)
+        # Pairs 1-2, 1-3, and 2-3 pass genetics and dates; all lack usable geography.
         self.assertIn("Potential clusters:</strong> 0", page)
         self.assertIn("their geographic evidence is insufficient", page)
-        self.assertIn("Unique samples analyzed:</strong> 10", page)
-        self.assertIn("Pairwise comparisons:</strong> 45", page)
+        self.assertIn("Unique samples analyzed:</strong> 4", page)
+        self.assertIn("Pairwise comparisons:</strong> 6", page)
         self.assertIn("Strict related pairs:</strong> 0", page)
-        self.assertIn("Genomic-temporal candidate pairs with unresolved geography:</strong> 22", page)
-        self.assertIn("Unique samples represented in candidate pairs:</strong> 9", page)
-        self.assertIn("Candidate pairs are relationships among 9 of the 10 original samples", page)
-        self.assertIn("Show candidate pairs (22)", page)
+        self.assertIn("Genomic-temporal candidate pairs with unresolved geography:</strong> 3", page)
+        self.assertIn("Unique samples represented in candidate pairs:</strong> 3", page)
+        self.assertIn("Candidate pairs are relationships among 3 of the 4 original samples", page)
+        self.assertIn("Show candidate pairs (3)", page)
         self.assertIn('<details class="candidate-details">', page)
-        self.assertIn("P-distance: 0.001174", page)
+        self.assertIn("P-distance: 0.050000", page)
         self.assertNotIn("Synthetic example analysis", page)
-        self.assertIn("Distinct locations too coarse for distance comparison:</strong>", page)
-        self.assertNotIn(
-            "candidate pairs with unresolved geography:</strong> 0", page
-        )
-
+        self.assertIn("Distinct locations too coarse for distance comparison:</strong> 3", page)
+        self.assertIn("Samples lacking sufficiently precise geographic metadata:</strong> 4", page)
 
 if __name__ == "__main__":
     unittest.main()
