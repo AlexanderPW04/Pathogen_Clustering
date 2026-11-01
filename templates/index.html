@@ -94,6 +94,8 @@
 <body>
   <main>
     <h1>Outbreak Cluster Detector</h1>
+    <p><a href="{{ url_for('wastewater_data_page') }}">Wastewater Data Analysis</a></p>
+    <p><a href="{{ url_for('wastewater_page') }}">Wastewater Surveillance (processed SNV analysis)</a></p>
     <p class="note">This prototype combines pathogen genomic similarity with collection date and geographic information to flag potential outbreak clusters. Results are screening signals and do not confirm transmission or an outbreak.</p>
     <p class="note">MAFFT aligns sequences within each pathogen and gene/segment group before genetic distances are calculated.</p>
     <p class="note">When metadata has a location name but no coordinates, GeoNames may estimate them. These place coordinates can be approximate. State-only names such as USA: ND are too coarse for the kilometer cutoff or same-location fallback; their precision is reported in the pairwise output.</p>

@@ -1,6 +1,6 @@
-# Disease-Agnostic Genomic Epidemiology Prototype
+# Genomic, Wastewater, and Environmental Data Prototype
 
-This BMI 461 Sprint project is a Python prototype for screening pathogen
+The original BMI 461 Sprint 2 mode is a Python prototype for screening pathogen
 samples for **potential outbreak clusters**. It combines nucleotide-sequence
 similarity with collection dates and locations, then presents cluster membership
 through either command-line CSV outputs or a small Flask webpage. The webpage
@@ -10,7 +10,171 @@ can run locally or on a Render Docker web service.
 > outbreak or proof of direct transmission. Thresholds must be selected for the
 > pathogen, genomic region, sampling design, and public-health question.
 
-## Current input workflow
+Sprint 3 adds a **separate processed-wastewater-SNV mode** at `/wastewater`.
+It summarizes variants observed in pooled samples. It does not run MAFFT,
+individual-genome p-distance, outbreak clustering, or lineage assignment.
+Sprint 3 also has a separate **Environmental Data Analysis** mode at
+`/environmental` for exploring already processed measurements. The Sprint 2
+page remains at `/` and its pathogen pipeline is unchanged.
+
+The **Wastewater Data Analysis** page at `/wastewater-data` accepts a single
+processed genomic-measurement table. This is the first general table-summary
+addition: sample and feature counts, supplied frequencies, date and location
+summaries, basic charts, and an organized CSV download. It reuses the existing
+environmental measurement code; `/environmental` and the earlier `/wastewater`
+SNV draft remain available.
+
+## Sprint 3: processed wastewater SNVs
+
+The first supported real-data source is [Fontenele et al. (2021), Supplementary
+Table 2](https://ars.els-cdn.com/content/image/1-s2.0-S0043135421009040-mmc2.xlsx)
+(`mmc2.xlsx`). Download it from the [published article's supplementary
+materials](https://pmc.ncbi.nlm.nih.gov/articles/PMC8464352/) and upload it on
+the Wastewater Surveillance page. This project does **not** bundle or silently
+replace the published workbook. The separate `mmc3.xlsx` is a novel-SNV and
+clinical-comparison subset, not the full per-sample call table; it lacks the
+per-call frequency and read-depth columns needed here.
+
+The published `mmc2.xlsx` has a prose description in row 1, its headers in
+row 2, and 7,973 data rows from 52 wastewater samples. Its exact headers are
+`SAMPLE`, `COLLECTION_DATE`, `STATE`, `LOCATION`, `POSITION`, `REF`, `ALT`,
+`ALT_FREQ`, `TOTAL_DP`, `REF_CODON`, `REF_AA`, `ALT_CODON`, `ALT_AA`, `BIN`,
+`GLOBAL_FREQUENCY`, `USA_FREQUENCY`, `Sy/Ns`, `Annotation`,
+`Novel SNVs based on Global frequency`, and
+`Identified in clinical derived-genomes after June 17th`. The first nine
+fields provide the initial processed-SNV analysis; the other fields remain
+research context in the original downloaded file.
+
+| Published column | Standardized output | Meaning |
+|---|---|---|
+| `SAMPLE` | `Sample_ID` | Wastewater sample identifier, kept as text (for example `253` or `Jac_96`) |
+| Paper's methods, not an Excel column | `Reference_Genome = NC_045512.2` | Reference identity for this recognized paper table only; its methods also name MN908947 |
+| `POSITION` | `Position` | Reference-genome nucleotide position |
+| `REF` | `Ref` | Reference nucleotide, uppercased |
+| `ALT` | `Alt` | Alternative nucleotide, uppercased |
+| `ALT_FREQ` | `Alt_Frequency` | Fraction from 0 to 1, **not** a percent |
+| `TOTAL_DP` | `Read_Depth` | Total reads at that position |
+| `COLLECTION_DATE` | `Collection_Date` | Date parsed from the source's `9_Jun_2020` style |
+| `STATE` + `LOCATION` | `Location_Name` | Combined descriptive label such as `AZ: TP01`; site codes are not exact coordinates |
+
+Other processed SNV `.csv` or `.xlsx` files can use a simple header row with
+`Sample_ID,Reference_Genome,Position,Ref,Alt,Alt_Frequency,Read_Depth`.
+`Collection_Date` (prefer `YYYY-MM-DD`) and `Location_Name` may be in the same
+table. An optional second CSV/XLSX with `Sample_ID`, `Collection_Date`, and
+`Location_Name` can supply missing sample metadata. The join requires a unique
+metadata `Sample_ID` for every SNV sample and rejects conflicting dates or
+locations. A missing depth value is reported, not changed to zero; invalid
+positions, alleles, frequencies, nonnumeric supplied depths, or unmatched
+metadata stop the analysis. Repeated sample/reference/position/allele rows
+are reported and retained. The original paper file has three such repeated
+keys, including one position listed under two annotations. Counts of samples
+observing an SNV use distinct sample IDs, so these rows do not inflate that
+count.
+
+The page shows sample count, call count, unique reference/position/alternative
+SNVs, date range, locations, frequency and depth summaries, most frequently
+observed SNVs, per-sample counts, and a 100-row SNV preview. The full
+standardized CSV is downloadable for ten minutes after analysis. Missing calls
+are **unknown**, not confirmed mutation absences: a call table alone does not
+prove sufficient coverage at unlisted positions. The page does not infer a
+lineage or an outbreak. Uploaded files are deleted after analysis; the small
+download is held briefly in the single web process. The global distinct-SNV
+count on this page uses one reference/position/ref/alt key across all samples;
+it is not the paper's site-specific "unique SNV" calculation.
+
+Run the existing site locally with `python app.py`, then open
+<http://127.0.0.1:5000/wastewater>. On the hosted Render service, add
+`/wastewater` to its public URL and upload the same published workbook. The
+existing Docker image includes the new `wastewater/` package and template;
+no additional Python package, MAFFT step, GeoNames account, or server setting
+is required for this processed-SNV mode. It is sized for a small class dataset:
+the SNV upload is limited to 3 MB, the downloadable standardized CSV to 4 MB,
+and only 100 detailed rows are rendered on the page. For broader wastewater
+work, coverage matrices, raw FASTQ mapping, BWA, iVar, Freyja, and validated
+lineage deconvolution remain future stages.
+
+## Wastewater Data Analysis: processed measurements
+
+The `/wastewater-data` page (also available under the earlier `/environmental`
+name) accepts a processed-measurements CSV or XLSX. Use one row per
+sample and feature, with columns for:
+
+| Standard field | Accepted examples | Notes |
+|---|---|---|
+| `Sample_ID` | `Sample`, `Sample ID` | Required; identifies the collected sample. |
+| `Collection_Date` | `Date` | Optional; use YYYY-MM-DD or Excel dates. Missing dates are counted and excluded from date comparisons. |
+| `Location_Name` | `Location`, `Site`, `Sampling Location` | Optional; blank locations are counted and excluded from location comparisons. |
+| `Feature_ID` | `Feature`, `Feature Identifier` | Required; the measured feature name or identifier. |
+| `Frequency` | `Feature Frequency`, `Alt_Frequency`, `ALT_FREQ` | Optional fraction from 0 to 1. Percentages are not converted automatically. |
+| `Measurement_Value` | `Measurement`, `Value` | Optional numerical measurement. If Frequency has usable values it is summarized first; otherwise Measurement_Value is used. |
+| `Coverage` | `Coverage Depth` | Optional supplied coverage value; retained separately from frequency. |
+| `Read_Depth` | `Depth` | Optional supplied read depth; retained separately from coverage and frequency. |
+| `Quality` | `Quality Flag`, `Quality Score`, `Quality Information` | Optional; retained and summarized as provided. |
+| `Unit` | `Units` | Optional; different units for the same feature are rejected until values are converted. |
+
+Header capitalization and spacing differences are standardized. Sample ID and
+feature ID must be present, and a sample cannot have conflicting date or
+location values. Invalid dates or nonnumeric measurements are reported rather
+than silently removed. A repeated sample/feature row is rejected because this
+simple version expects one processed value per sample and feature. Use feature
+IDs that distinguish the reference, organism, or assay when these matter.
+Missing date, location, measurement, or quality values remain blank in the
+organized CSV and visible in the missing-data or quality tables. A supplied
+zero is retained, while missing measurements stay missing.
+
+Tables containing only Sample_ID and Feature_ID still work. The page explains
+when frequency or coverage information is unavailable and never derives them
+from feature counts. Feature counts count listed entries; they do not infer
+presence or absence for unlisted features.
+
+The results show all unique samples and listed features, feature counts per
+sample, sample/feature counts over dates and by location, and mean measurement
+changes within each feature and location. Available values alone contribute
+to means and ranges. A missing dated value stays blank and breaks a plotted
+line; the first date has no previous-date change. Location labels use the
+existing spacing/capitalization normalization and are not converted into
+sampling-distance claims.
+
+Charts show feature counts for the first 20 samples, sample counts over dates,
+and numerical trends/location means for up to three features. The tables retain
+the other features. The organized CSV contains every validated row, with a
+100-row preview on the webpage. Summaries are descriptive comparisons rather
+than statistical tests. The download is held temporarily for up to ten minutes
+in the existing small memory cache, and the uploaded file is deleted after its
+request ends. No sequence alignment or external analysis software runs here.
+
+### Run locally or on the hosted website
+
+After installing project packages with `python -m pip install -r requirements.txt`,
+start the existing Flask app:
+
+```console
+python app.py
+```
+
+Open <http://127.0.0.1:5000> and select **Wastewater Data Analysis** near
+the top of the Sprint 2 page. Upload a CSV/XLSX or select **Run Synthetic
+Example**. The bundled example at
+`examples/synthetic_environmental_measurements.csv` contains invented sample
+IDs, locations, dates, frequencies, and quality labels; it is clearly marked as
+synthetic in the interface. On the hosted Render website, open `/wastewater-data`
+after the updated Docker image has deployed. The Dockerfile installs the
+Matplotlib plotting dependency; visitors only need a browser.
+
+For a minimal CSV, start with:
+
+```csv
+Sample_ID,Feature_ID,Collection_Date,Location_Name,Frequency,Coverage
+W1,feature_alpha,2026-01-01,North site,0.10,100
+W2,feature_alpha,2026-01-08,North site,0.15,
+W3,feature_beta,2026-01-08,South site,,
+```
+
+Run `python -m unittest discover -s tests -v` to check CSV/XLSX uploads,
+missing values, descriptive summaries, charts, downloads, and the existing
+Sprint 2 regression tests.
+
+## Sprint 2 individual-genome input workflow
 
 The program uses two source files, similar to a sequence-plus-results-table
 download from NCBI Virus:
@@ -63,6 +227,11 @@ requirements.txt                Third-party Python dependencies
 PYTHON_LINE_BY_LINE_GUIDE.md     Historical pre-MAFFT line-by-line explanation
 SPRINT_3_CHANGELOG.md           Changes made after the Sprint 2 baseline
 templates/index.html            Flask/Jinja webpage template
+templates/wastewater.html       Separate wastewater upload and results page
+wastewater/                    Processed-SNV loader, validation, and summaries
+environmental_analysis.py       Processed environmental-data loading and summaries
+templates/environmental.html    Environmental upload, charts, and results page
+examples/synthetic_environmental_measurements.csv  Invented classroom demo data
 examples/                       Bundled, explicitly synthetic demo inputs
 tests/                          Unit and integration tests
 outputs/                        Demonstration data and generated results
@@ -109,6 +278,7 @@ The packages in `requirements.txt` are:
 | `Flask>=3.0,<4.0` | Local webpage |
 | `requests>=2.31,<3.0` | Optional GeoNames web-service calls |
 | `gunicorn>=22.0,<24.0` | Production web server inside Docker (not used by Windows `python app.py`) |
+| `matplotlib>=3.8,<4.0` | Small environmental time-trend and location charts |
 
 MAFFT is **not** a pip package in this project. Python starts the separately
 installed program using `subprocess`.
@@ -698,8 +868,11 @@ validation, optional genomic-region labels and contradictions, MAFFT grouping
 and output checks, GeoNames caching and fallback,
 genomic comparison, temporal/geographic enrichment, threshold logic, transitive
 clustering, complete backend runs, a Flask dual-upload run, and the on-demand
-MAFFT/GeoNames status checks. External program/network behavior is mocked;
-these tests do not install or run MAFFT.
+MAFFT/GeoNames status checks. They also cover environmental CSV/XLSX loading,
+field validation, missing-data summaries, charts, the synthetic example, Flask
+uploads, and the organized CSV download. The latest full suite completed with
+105 passing tests. External program/network behavior is mocked; these tests do
+not install or run MAFFT.
 
 ## Scientific and technical limitations
 

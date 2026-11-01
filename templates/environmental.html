@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ page_title }}</title>
+  <style>
+    body { background: #f3f5f7; color: #1f2937; font-family: Arial, sans-serif; line-height: 1.5; margin: 0; }
+    main { margin: 2rem auto; max-width: 1050px; padding: 0 1rem; }
+    section { background: white; border: 1px solid #d8dee6; border-radius: 8px; margin-bottom: 1rem; padding: 1.25rem; }
+    h1, h2 { color: #173f5f; }
+    form { display: grid; gap: 1rem; }
+    label { display: grid; font-weight: bold; gap: 0.35rem; }
+    input, button { box-sizing: border-box; font: inherit; padding: 0.65rem; }
+    input { max-width: 100%; }
+    button, .download { background: #1f5f8b; border: 0; border-radius: 4px; color: white; cursor: pointer; font-weight: bold; padding: 0.7rem; text-decoration: none; }
+    .note { color: #52606d; }
+    .error { background: #fff1f1; border-color: #cf5b5b; color: #7f1d1d; }
+    .synthetic { background: #fff8e6; border-color: #e6c77a; }
+    .metrics { display: grid; gap: 0.5rem; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
+    .metrics p { background: #edf4f8; margin: 0; padding: 0.75rem; }
+    .scroll { overflow-x: auto; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { border-bottom: 1px solid #d8dee6; padding: 0.45rem; text-align: left; white-space: nowrap; }
+    th { background: #edf4f8; }
+    img { height: auto; max-width: 100%; }
+    .button-form { margin-top: 1rem; }
+  </style>
+</head>
+<body>
+  <main>
+    <p><a href="{{ url_for('index') }}">← Individual-genome cluster analysis</a></p>
+    <h1>{{ page_title }}</h1>
+    <p>This page explores previously processed measurements by sample, feature, date, and location. It is descriptive data analysis only; it is not a diagnostic or outbreak-confirmation tool and does not process raw sequences.</p>
+
+    <section>
+      <h2>Upload processed measurements</h2>
+      <p class="note">Use one row per sample and genomic feature. Required columns: Sample_ID and Feature_ID. Optional columns: Collection_Date, Location_Name, Frequency, Measurement_Value, Coverage, Read_Depth, Quality, and Unit. Frequency uses fractions from 0 to 1. Missing values remain blank.</p>
+      <form method="post" enctype="multipart/form-data">
+        <label>Measurement file (.csv or .xlsx)
+          <input type="file" name="measurement_file" accept=".csv,.xlsx" required>
+        </label>
+        <button type="submit" name="analyze" value="yes">Analyze Measurements</button>
+      </form>
+      <p class="note">Files are limited to 3 MB. The organized CSV download is held temporarily for up to 10 minutes.</p>
+    </section>
+
+    <section class="synthetic">
+      <h2>Synthetic demonstration</h2>
+      <p>This small example is invented for classroom demonstration. Its sample IDs, locations, dates, and measurement values are not real environmental observations.</p>
+      <form method="post" class="button-form">
+        <button type="submit" name="run_example" value="yes">Run Synthetic Example</button>
+      </form>
+    </section>
+
+    {% if error %}<section class="error"><strong>Analysis could not be completed.</strong> {{ error }}</section>{% endif %}
+
+    {% if result %}
+      <section>
+        <h2>Analysis summary</h2>
+        {% if result.filename == 'Synthetic example (invented data)' %}<p><strong>SYNTHETIC EXAMPLE — invented data only</strong></p>{% endif %}
+        <p><strong>Input:</strong> {{ result.filename }}<br><strong>Summarized field:</strong> {{ result.metric or 'No numerical measurements available' }}</p>
+        <div class="metrics">
+          <p><strong>Total samples:</strong> {{ result.summary.samples }}</p>
+          <p><strong>Unique genomic features:</strong> {{ result.summary.features }}</p>
+          <p><strong>Measurement rows:</strong> {{ result.summary.rows }}</p>
+          <p><strong>Samples with a reported value:</strong> {{ result.summary.samples_with_values }}</p>
+        </div>
+        <p class="note">Feature counts describe the entries listed in the uploaded table. A missing or unlisted measurement does not establish feature absence.</p>
+        {% if result.summary.frequency_values %}
+          <p><strong>Available feature frequencies:</strong> {{ result.summary.frequency_values }} of {{ result.summary.rows }} rows. Supplied zero values remain zero; missing frequencies stay blank.</p>
+        {% else %}
+          <p><strong>Frequency information unavailable.</strong> No usable Frequency values were supplied; frequencies are not inferred from feature counts.</p>
+        {% endif %}
+        {% if result.summary.coverage_values or result.summary.read_depth_values %}
+          <p><strong>Coverage information:</strong> {{ result.summary.coverage_values }} supplied Coverage values and {{ result.summary.read_depth_values }} supplied Read_Depth values. These fields are retained separately.</p>
+        {% else %}
+          <p><strong>Coverage information unavailable.</strong> No usable Coverage or Read_Depth values were supplied. Coverage is not inferred from feature frequencies.</p>
+        {% endif %}
+        {% if result.summary.missing_dates %}<p class="note">{{ result.summary.missing_dates }} rows have no collection date and cannot contribute to date comparisons.</p>{% endif %}
+        {% if result.summary.missing_locations %}<p class="note">{{ result.summary.missing_locations }} rows have no sampling location and cannot contribute to location comparisons.</p>{% endif %}
+        <p><a class="download" href="{{ url_for(download_endpoint, download_id=result.download_id) }}">Download organized measurements (CSV)</a></p>
+        <p class="note">The CSV contains all validated, organized rows. Download links are temporary and expire after 10 minutes.</p>
+      </section>
+
+      <section>
+        <h2>Changes over time and differences by location</h2>
+        <p class="note">Charts show feature counts for the first 20 samples and sample counts over collection dates. When numerical values are available, up to three features also have date and location plots. Means use supplied values only; missing measurements produce gaps. These summaries do not test statistical significance.</p>
+        <img alt="Feature counts by sample, samples over collection dates, and available measurement trends by date and location" src="data:image/png;base64,{{ result.chart }}">
+      </section>
+
+      {% macro show_table(title, rows, columns=None) %}
+        <section>
+          <h2>{{ title }}</h2>
+          {% if rows %}
+            <div class="scroll"><table>
+              <thead><tr>{% for column in (columns or rows[0].keys()) %}<th>{{ column }}</th>{% endfor %}</tr></thead>
+              <tbody>{% for row in rows %}<tr>{% for column in (columns or rows[0].keys()) %}<td>{{ row[column] }}</td>{% endfor %}</tr>{% endfor %}</tbody>
+            </table></div>
+          {% else %}<p class="note">No values are available for this summary.</p>{% endif %}
+        </section>
+      {% endmacro %}
+
+      {{ show_table('Measurements by sample', result.tables.samples) }}
+      {{ show_table('Samples and features by collection date', result.tables.date_counts) }}
+      {{ show_table('Feature changes over time', result.tables.temporal_changes) }}
+      {{ show_table('Samples and features by sampling location', result.tables.location_counts) }}
+      {{ show_table('Differences between locations', result.tables.location_summary) }}
+      {{ show_table('Missing-data summary', result.tables.missing_data) }}
+      {{ show_table('Quality summary', result.tables.quality_summary) }}
+      {{ show_table('Organized measurement rows (first ' ~ result.preview|length ~ ')', result.preview, result.measurement_columns) }}
+      {% if result.summary.rows > result.preview|length %}<p class="note">Only the first 100 measurement rows are shown here; download the CSV to see all rows.</p>{% endif %}
+    {% endif %}
+  </main>
+</body>
+</html>

@@ -22,3 +22,4 @@ output/
 /*.xls
 Thumbs.db
 .DS_Store
+tmp/
