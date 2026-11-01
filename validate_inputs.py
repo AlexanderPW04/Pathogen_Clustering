@@ -72,7 +72,10 @@ INTERNAL_COLUMNS = [
 
 FASTA_EXTENSIONS = {".fasta", ".fa", ".fna"}
 METADATA_EXTENSIONS = {".xlsx", ".csv"}
-ALLOWED_SEQUENCE_CHARACTERS = set("ACGTN-")
+# IUPAC ambiguity codes (for example R = A or G) are accepted, but every stage
+# treats them like N: they are never counted as a difference or a variant call.
+AMBIGUOUS_NUCLEOTIDES = set("RYSWKMBDHV")
+ALLOWED_SEQUENCE_CHARACTERS = set("ACGTN-") | AMBIGUOUS_NUCLEOTIDES
 
 
 def blank_mask(series):
@@ -392,7 +395,8 @@ def match_fasta_to_metadata(
             errors.append(
                 f"Invalid sequence character(s) {character_text!r} for FASTA "
                 f"accession {accession!r} in record {record_number}. "
-                "Allowed characters are A, C, G, T, N, and -."
+                "Allowed characters are A, C, G, T, N, -, and the IUPAC "
+                "ambiguity codes R, Y, S, W, K, M, B, D, H, and V."
             )
 
     # Make dictionaries that connect normalized IDs to their original IDs.

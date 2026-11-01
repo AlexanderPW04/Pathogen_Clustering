@@ -23,6 +23,24 @@ def find_mafft():
     return mafft_path
 
 
+def run_mafft(mafft_path, input_path):
+    """Run MAFFT on one FASTA file and return the aligned FASTA text."""
+
+    command = [mafft_path, "--auto", "--nuc", str(input_path)]
+
+    # The official Windows package may expose MAFFT as a batch file.
+    if Path(mafft_path).suffix.lower() in {".bat", ".cmd"}:
+        command = ["cmd.exe", "/c"] + command
+
+    result = subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return result.stdout
+
+
 def align_samples(data, mafft_path=None):
     """Return a copy with MAFFT-aligned sequences in each comparable group."""
 
@@ -48,19 +66,8 @@ def align_samples(data, mafft_path=None):
                         f">{sample['Sample_ID']}\n{sample['Sequence']}\n"
                     )
 
-            command = [mafft_path, "--auto", "--nuc", str(input_path)]
-
-            # The official Windows package may expose MAFFT as a batch file.
-            if Path(mafft_path).suffix.lower() in {".bat", ".cmd"}:
-                command = ["cmd.exe", "/c"] + command
-
             try:
-                result = subprocess.run(
-                    command,
-                    capture_output=True,
-                    text=True,
-                    check=True,
-                )
+                aligned_text = run_mafft(mafft_path, input_path)
             except (OSError, subprocess.CalledProcessError) as error:
                 details = getattr(error, "stderr", "") or str(error)
                 raise RuntimeError(
@@ -68,7 +75,7 @@ def align_samples(data, mafft_path=None):
                     f"{details.strip()}"
                 ) from error
 
-        records = list(SeqIO.parse(StringIO(result.stdout), "fasta"))
+        records = list(SeqIO.parse(StringIO(aligned_text), "fasta"))
         aligned_by_id = {}
         for record in records:
             sample_id = str(record.id)

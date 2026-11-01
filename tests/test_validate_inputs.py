@@ -175,6 +175,17 @@ class InputValidationTests(unittest.TestCase):
 
         self.assertIn("Invalid sequence character(s) 'X'", "\n".join(errors))
 
+    def test_iupac_ambiguity_codes_are_accepted(self) -> None:
+        metadata = self.valid_metadata().iloc[[0]].copy()
+
+        with tempfile.TemporaryDirectory() as folder:
+            fasta_path = self.write_fasta(folder, ">ACC001\nACGRYKN-\n")
+            metadata_path = self.write_metadata(folder, metadata, ".csv")
+            data, errors, _ = load_and_validate_inputs(fasta_path, metadata_path)
+
+        self.assertNotIn("Invalid sequence character", "\n".join(errors))
+        self.assertEqual(data.loc[0, "Sequence"], "ACGRYKN-")
+
     def test_bad_metadata_values_are_reported_without_deleting_rows(self) -> None:
         metadata = self.valid_metadata()
         metadata.loc[0, "Pathogen"] = " "
