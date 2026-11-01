@@ -79,3 +79,109 @@ general mapping/variant-calling stage order.
   integration test (`tests/test_optional_real_ncbi_data.py`).
 - Result: 111 tests, all passing, 1 optional test skipped. With the untracked
   real files temporarily present, the optional test also passed.
+
+### Phase 1 — Shared reference-based model (complete)
+
+- `genomics/references.py`: one-record reference FASTA, SHA-256 checksum;
+  different labels are accepted as one reference only when both supplied
+  sequences are identical. Labels alone (MN908947.3 vs NC_045512.2) are not.
+- `genomics/unified_schema.py`: shared sample and variant tables,
+  `Variant_Key = Reference_ID:Position:Ref>Alt`, explicit status words
+  (variant observed, reference base called, adequate depth not reported, low
+  coverage, not covered, coverage unknown, reported but excluded by QC).
+- `genomics/pooled_observations.py`: processed SNV rows -> shared table;
+  optional per-position depth / A/C/G/T table; unlisted positions are unknown.
+
+### Phase 2 — Reference-coordinate individual profiles (complete)
+
+- `genomics/sequence_variants.py`: MAFFT aligns each sequence to the reference;
+  the reference row defines 1-based positions; partial spans, N/IUPAC,
+  deletions, insertions handled separately; mapping safeguard (>= 20 callable
+  positions, >= 90% identity — prototype rule, not from the paper).
+- Backbone changes (documented and tested): `align_sequences.run_mafft()`
+  factored out with the identical command; FASTA validation accepts IUPAC
+  ambiguity codes, which the p-distance treats exactly like N.
+
+### Phase 3 — Pooled importer and paper QC (complete)
+
+- `wastewater/processed_snv.py` keeps Supplementary Table 2 annotations as
+  `Published_*`, reads iVar TSV (indels set aside visibly; `Source_*` columns),
+  validates alternate read counts, records its input format.
+- `genomics/quality_control.py`: paper preset (>90% coverage at 10x, depth >= 20,
+  Fisher p < 0.05, no frequency cut-off, optional masked sites) applied only to
+  supplied values; base quality reported as not verifiable; reference-base
+  agreement added as a data-integrity check; paper vs exploratory modes; a
+  method-reproduction report for every run.
+
+### Phase 4 — Analyses and figures (complete)
+
+- `genomics/temporal_analysis.py`: observation matrix (no unknown -> 0%),
+  per-site trends with weekly least-squares slope, SNVs per sample, depth
+  regression with seeded bootstrap band and permutation p-value.
+- `genomics/diversity_analysis.py`: paper Yue–Clayton PCoA when A/C/G/T counts
+  exist (validated on hand-computed examples; negative eigenvalues reported);
+  otherwise a separately labeled exploratory Jaccard ordination.
+- `genomics/figures.py`: SNVs per sample (Fig 2A analogue), depth vs SNVs
+  (Fig 2B), genome positions (Fig 3), trajectories, heatmap, PCoA (Fig 5),
+  cross-source categories, cross-source timeline, sequencing quality. The
+  categorical palette passed the dataviz colorblind validator (contrast WARN
+  for three hues is covered by legends, marker shapes, and table/CSV views).
+
+### Phases 5–6 — Cross-source comparison and synthetic demo (complete)
+
+- `genomics/variant_matching.py`: shared / individual-only / pooled-only /
+  unresolved (either source) / incomparable, with dates, date-window pairs,
+  carrier locations, precise-coordinate distances, and documented-profile
+  overlap (never a lineage call).
+- `examples/integrated/`: deterministic, entirely invented paired dataset with
+  known answers (`EXPECTED_CATEGORIES`); `tests/test_integrated_example.py`
+  checks every category, QC exclusions, trend arithmetic (0.20/week), PCoA.
+
+### Phase 7 — Unified dashboard (complete)
+
+- `templates/index.html` + `integrated_view.py` + `app.py`: one submission for
+  individual, reference, and pooled inputs; eight sections; Sprint 2 results
+  preserved verbatim; provenance; 10-minute in-memory CSV/PNG downloads;
+  legacy Sprint 3 pages still linked. Rendered and inspected in a local
+  browser preview with MAFFT mocked.
+- `run_integrated_analysis.py`: the same analysis from the command line.
+
+### Phase 8 — Optional offline raw-read workflow (template + converters)
+
+- `offline_workflow/`: BWA-MEM / iVar trim / iVar variants / samtools
+  template with the paper's settings (NOT run: tools not installed), and
+  tested converters for iVar TSVs and `samtools mpileup` -> Q20 A/C/G/T counts.
+
+### Phase 9 — Verification
+
+- 164 tests: 162 passed, 2 skipped (real MAFFT absent; optional real-NCBI data).
+- Mocked: MAFFT (pass-through or `tests/fake_mafft.py`) and GeoNames.
+- Not verified here: a real MAFFT run, a live GeoNames call, a Docker build,
+  the real `mmc2.xlsx` workbook, and the Render deployment.
+
+## Remaining limitations
+
+- Exact PCoA needs genome-wide A/C/G/T counts, which `mmc2.xlsx` does not
+  contain; the paper's counts would have to be regenerated from SRA reads.
+- No GISAID comparison or PANGOLIN lineage support; historical novelty is only
+  shown when the source table provides it.
+- Base-quality filtering, primer trimming, and the De Maio masked-site list
+  cannot be verified from processed records.
+- Regression model details are not stated in the paper; the bootstrap band and
+  permutation p-value are this project's choices.
+- The individual mapping safeguard (20 callable positions, 90% identity) is a
+  prototype rule and should be tuned for real genomes.
+- Pooled site labels are never geocoded; cross-source geography is contextual.
+- Hosted uploads are limited to 10 MB; large tables need the command line.
+
+## Recommended next steps
+
+1. Run the integrated example with real MAFFT locally and in Docker, then
+   compare with the mocked results.
+2. Download `mmc2.xlsx` and confirm the import counts (7,973 records, 52
+   samples) and published annotations; add the paper's Table 1 coverage and
+   mean depth as pooled metadata to reproduce the Fig 2B analysis.
+3. Assemble SARS-CoV-2 consensus genomes from a comparable place and period
+   with NC_045512.2 for a real cross-source comparison.
+4. Optionally regenerate A/C/G/T counts from SRA PRJNA662596 offline for the
+   exact paper PCoA.

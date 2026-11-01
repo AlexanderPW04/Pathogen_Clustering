@@ -2,6 +2,17 @@
 
 **Purpose:** Transfer working context for a biomedical informatics class coding project. This handoff was prepared from discussion, Codex-reported summaries, and screenshots. It is **not** a code audit or an assertion that every file exists in the present repository. Verify the current files before editing.
 
+## Current state after the Sprint 4 integration (November 1, 2026)
+
+This section supersedes the "not yet confirmed" items further below; the rest of the file is the original handoff, kept for history.
+
+- **Branches:** work is on `sprint4-integration` (local commits only, not pushed). `origin/sprint-3` (1c2d59b) was merged in without its generated `tmp/pdfs/` files. A local backup branch `backup/sprint4-before-integration` points at the pre-merge commit `eb72013`. `main` and the Render deployment were not changed.
+- **Sprint 3 files that actually existed:** `wastewater/processed_snv.py` (Fontenele Supplementary Table 2 / standardized SNV importer), `environmental_analysis.py` (generic sample-by-feature page), `templates/wastewater.html`, `templates/environmental.html`, and their tests. They remain available as legacy pages.
+- **Sprint 4 implementation:** `genomics/` package (shared reference-based model, reference-anchored individual variants, paper-based QC, temporal analysis, Yue–Clayton PCoA, cross-source matching, figures, orchestration with provenance), unified dashboard in `templates/index.html`, `integrated_view.py`, `run_integrated_analysis.py`, synthetic paired demo in `examples/integrated/`, optional `offline_workflow/`. See `SPRINT_4_IMPLEMENTATION_LOG.md` and the README section "Integrated analysis (Sprint 4)".
+- **Paper facts verified from the full text** (Europe PMC, PMC8464352) are recorded in `SPRINT_4_IMPLEMENTATION_LOG.md`, including the exact PCoA method (per-position Yue–Clayton summed over positions; zero-depth positions contribute 0).
+- **Data reality:** the local Sprint 2 real dataset is H5N1 influenza HA (segment 4); the paper is SARS-CoV-2 wastewater. They cannot be compared. `mmc2.xlsx` is not in the repository and was not available in this environment, so the real-table import was verified only with synthetic replicas of its documented headers.
+- **Tests:** 164 run, 162 pass, 2 skipped (real MAFFT not installed here; optional real-NCBI test needs untracked files). MAFFT and GeoNames are mocked in automated tests; neither was exercised for real in this environment.
+
 ## Project objective
 Build **one integrated genomic surveillance system** from the foundations of two research sprints, then extend that system in Sprint 4. Avoid ending with two unrelated analyses on adjacent web pages.
 

@@ -1,12 +1,23 @@
-# BMI 461 Genomic Surveillance and Wastewater Data Analysis
+# BMI 461 Integrated Genomic Surveillance
 
-A classroom Flask application with an individual-genome surveillance pipeline
-and pages for summarizing already processed environmental measurements.
+A classroom Flask application that analyzes **two kinds of genomic evidence
+in one workflow**: individual (consensus) sequences and pooled-sample
+sequencing results such as wastewater SNV tables. Both are placed on the same
+reference-genome coordinates when the reference is verified, so the
+dashboard can show sequencing quality, genomic variation, temporal trends,
+population structure (PCoA), geographic context, cross-source variant
+overlap, and the original Sprint 2 sequence-relationship screening.
 
-The current application can run on a personal computer or in the supplied
-Docker container. This README describes the current code as of October 19,
-2026. A potential outbreak cluster is a screening result; it does not confirm
-transmission or an outbreak.
+The application can run on a personal computer or in the supplied Docker
+container. This README describes the code on the `sprint4-integration`
+branch as of November 1, 2026. A potential outbreak cluster, a shared variant,
+or a variant-profile overlap is a screening result; none of them confirms
+transmission, an outbreak, or the lineage present in a mixed sample.
+
+> **Sprint 4 summary:** see [Integrated analysis (Sprint 4)](#integrated-analysis-sprint-4)
+> below and `SPRINT_4_IMPLEMENTATION_LOG.md` for what was implemented, which
+> methods of Fontenele et al. (2021) are reproduced, and what remains
+> approximate or unavailable.
 
 ## Start locally on Windows
 
@@ -110,13 +121,18 @@ the no-activation approach, replace `python` with
 
 | Page | Local address | Input and purpose |
 |---|---|---|
-| Individual-genome cluster analysis | `http://127.0.0.1:5000/` | FASTA + CSV/XLSX metadata; requires MAFFT for analysis |
-| Wastewater Data Analysis | `http://127.0.0.1:5000/wastewater-data` | One processed feature-measurement CSV/XLSX |
-| Wastewater Surveillance | `http://127.0.0.1:5000/wastewater` | Processed SNV CSV/XLSX, with optional sample metadata |
+| **Integrated dashboard (primary)** | `http://127.0.0.1:5000/` | Individual FASTA + metadata, a reference FASTA, and/or pooled SNV tables in one submission; individual sequences need MAFFT |
+| Wastewater Data Analysis (Sprint 3, legacy) | `http://127.0.0.1:5000/wastewater-data` | One processed feature-measurement CSV/XLSX |
+| Wastewater Surveillance (Sprint 3, legacy) | `http://127.0.0.1:5000/wastewater` | Processed SNV CSV/XLSX, with optional sample metadata |
 | Earlier environmental page | `http://127.0.0.1:5000/environmental` | Same measurement analysis as Wastewater Data Analysis |
 | Health check | `http://127.0.0.1:5000/health` | Returns `OK`; performs no external dependency tests |
 
-For a first local demonstration without installing MAFFT:
+The main page also has **Run Integrated Example** (needs MAFFT), which runs
+the entirely synthetic paired demonstration described in
+[Integrated analysis (Sprint 4)](#integrated-analysis-sprint-4). Pooled-only
+uploads (an SNV table without FASTA files) do not need MAFFT.
+
+For a first local demonstration of a Sprint 3 page without installing MAFFT:
 
 1. Open `/wastewater-data`.
 2. Click **Run Synthetic Example**.
@@ -133,6 +149,127 @@ That uses `examples/synthetic_sequences.fasta` and
 One example record has a real place name with synthetic sample information
 so optional GeoNames lookup can be demonstrated. All example records are
 classroom data rather than actual outbreaks.
+
+## Integrated analysis (Sprint 4)
+
+### Architecture
+
+```text
+Individual FASTA + metadata          Reference FASTA          Pooled SNV table (+ optional metadata,
+        |                                  |                   per-position depth/A-C-G-T counts,
+        v                                  |                   masked sites, variant profiles)
+ Sprint 2 pipeline (unchanged):            |                              |
+ validate -> GeoNames -> MAFFT ->          |                              v
+ p-distance -> time/place -> clusters      |            wastewater/processed_snv.py (Sprint 3 importer,
+        |                                  |            now keeps published annotations, reads iVar TSV)
+        |   validated, geocoded samples    |                              |
+        +--------------------------------> genomics/  <-------------------+
+                                           references.py         verified reference identity (SHA-256)
+                                           sequence_variants.py  MAFFT to reference -> 1-based variants
+                                           pooled_observations.py shared variant/sample tables, coverage
+                                           quality_control.py    paper preset or exploratory flags
+                                           temporal_analysis.py  per-site frequency trends, regression
+                                           diversity_analysis.py Yue-Clayton PCoA (paper) / Jaccard (exploratory)
+                                           variant_matching.py   cross-source categories, profiles
+                                           figures.py            PNG figures (no Flask code)
+                                           integrated_analysis.py orchestration + provenance
+                                                      |
+                              app.py + integrated_view.py + templates/index.html
+                              (one dashboard, CSV/PNG downloads)   run_integrated_analysis.py (command line)
+```
+
+Both evidence types use one shared variant table (`genomics/unified_schema.py`):
+`Variant_Key` (= `Reference_ID:Position:Ref>Alt`), `Reference_ID`, 1-based
+`Position`, `Ref`, `Alt`, `Sample_ID`, `Sample_Type` (individual sequence or
+pooled sample), `Observation_Type` (consensus base call or allele frequency),
+`Alt_Frequency`, `Read_Depth`, `Alt_Depth`, `Callable_Status`,
+`Quality_Status`, date, location, and `Data_Source`. Source-provided extras are
+kept as `Published_*` (paper annotations) or `Source_*` (variant-caller output)
+columns, separate from values this application calculates.
+
+### Rules that keep the comparison honest
+
+- Positions are compared only on the same reference. Two different accession
+  labels count as the same reference only when both sequences are supplied
+  and identical (checked by SHA-256). A pooled record whose `Ref` base
+  disagrees with the supplied reference is marked incomparable.
+- Individual sequences are aligned **to the reference**, so alignment columns
+  are never used as positions. Partial sequences keep their real span; `N`,
+  IUPAC ambiguity codes, deletions, and positions outside the span are not
+  callable; insertions/deletions are listed but not compared. A sequence that
+  does not map (fewer than 20 callable positions or below 90% identity — a
+  prototype safeguard, not a paper rule) keeps its Sprint 2 distances but gets
+  no variant profile.
+- An unreported pooled variant is never set to 0%. With a per-position depth
+  table it becomes *adequate depth, not reported*, *low coverage*, or *not
+  covered*; without one it stays *coverage unknown*. A reported call that
+  failed QC is shown as *excluded by QC*, not as a non-detection.
+- Cross-source categories: **Shared**, **Individual only** (not detected in
+  pooled samples with adequate depth), **Pooled only** (callable individual
+  sequences show the reference base), **Unresolved** (the other source lacks
+  coverage), **Incomparable** (reference not verified).
+- Pooled site labels are not geocoded and are never treated as precise points;
+  state-only individual locations keep the existing coarse-location rules.
+- Variant-profile overlap is reported as overlap only, never as a lineage call.
+
+### Fontenele et al. (2021) methods: reproduced, applied, or unavailable
+
+| Paper method | In this project |
+|---|---|
+| >90% genome coverage at 10x for detailed analysis | Applied when genome coverage is supplied in metadata or calculable from a complete per-position depth table |
+| Variant depth >= 20x | Applied to supplied `Read_Depth` |
+| Fisher's exact test p < 0.05 (iVar) | Applied to supplied p-values or iVar PASS flags; never recalculated or invented |
+| No minimum allele frequency | Matched |
+| Minimum base quality 20 | Not verifiable from processed records; applied when converting `samtools mpileup` text offline |
+| Problematic-site masking (De Maio et al. 2020) | Applied only to an uploaded site list; the historical list is not bundled |
+| SNVs per sample (Fig 2A) | Reproduced as a per-site bar chart |
+| SNV count vs mean depth with 95% CI (Fig 2B) | Least-squares line, seeded bootstrap 95% band, permutation p-value (model details not stated in the paper); needs mean depth |
+| SNVs by genome position (Fig 3) | Reproduced; published novelty flags shown only when present in the source table |
+| Yue–Clayton PCoA (Fig 5) | Reproduced exactly when per-position A/C/G/T counts are supplied (per-position dissimilarity summed over positions; zero-depth positions contribute 0, as stated in the paper). Otherwise a separately labeled exploratory Jaccard ordination of reported SNV sets |
+| BWA-MEM / iVar read processing | Not run here; command template and tested converters in `offline_workflow/` |
+| GISAID comparison and PANGOLIN lineage support | Not reproduced (requires GISAID access); optional documented variant profiles are compared as overlap only |
+
+The quality-control mode can be **paper** (failures excluded from analyses,
+still listed in downloads) or **exploratory** (failures flagged only). The
+dashboard shows a method-reproduction table for every run.
+
+### Run the synthetic integrated example
+
+Every file in `examples/integrated/` is invented; it was generated by
+`examples/integrated/make_integrated_example.py`, which also lists the
+expected category for every planted variant. With MAFFT installed:
+
+```console
+python app.py
+```
+
+Open `http://127.0.0.1:5000`, click **Run Integrated Example**, and use the
+section links (Overview through Individual sequence relationships). Or, from
+the command line:
+
+```console
+python run_integrated_analysis.py --example --output-folder results/integrated_example
+```
+
+Expected highlights: 2 shared variants, 1 individual-only, 1 pooled-only,
+1 unresolved for each source, 2 incomparable records (another reference and a
+reference-base mismatch), WW_S4 excluded by the paper preset (78% genome
+coverage), and the paper-method PCoA on 7 pooled samples.
+
+### Real data
+
+- **Pooled:** upload Fontenele et al. (2021) Supplementary Table 2
+  (`mmc2.xlsx`, from the article's supplementary materials) as the SNV table.
+  It has SNV calls only, so PCoA falls back to the exploratory ordination and
+  unreported positions stay *coverage unknown*. Genome coverage per sample is
+  not in that table; supply it as pooled metadata (from the paper's Table 1)
+  to apply the >90% rule.
+- **Individual + cross-source:** upload SARS-CoV-2 consensus sequences from a
+  comparable place and period, the NC_045512.2 reference FASTA (one record),
+  and the pooled table. The bundled H5N1 influenza Sprint 2 data and the
+  SARS-CoV-2 wastewater data are different pathogens and cannot be compared.
+- Data larger than the 10 MB web limit (for example a genome-wide A/C/G/T
+  table for 52 samples) should be analyzed with `run_integrated_analysis.py`.
 
 ## Requirements
 
@@ -152,12 +289,13 @@ All pages share one Flask application, so install the complete
 | Python dependency | Purpose |
 |---|---|
 | `pandas>=2.1,<3.0` | Tables, cleaning, grouping, and CSV output |
+| `numpy>=1.26,<3.0` | Yue–Clayton distances, PCoA eigen-decomposition, regression (already a pandas dependency; now listed because the code imports it directly) |
 | `openpyxl>=3.1,<4.0` | Reading XLSX workbooks |
 | `Flask>=3.0,<4.0` | Web forms and rendered results |
 | `biopython>=1.83,<2.0` | FASTA parsing |
 | `requests>=2.31,<3.0` | GeoNames HTTPS requests |
 | `gunicorn>=22.0,<24.0` | Web server in the Linux Docker image |
-| `matplotlib>=3.8,<4.0` | Basic measurement charts |
+| `matplotlib>=3.8,<4.0` | Dashboard figures and Sprint 3 measurement charts |
 
 Local Windows use starts with `python app.py`. Gunicorn is used in Linux
 hosting. MAFFT is an external program and is not installed by pip.
@@ -296,9 +434,12 @@ ACGTACGTACGA
 ```
 
 Biopython reads the ID and full description. Sequences are uppercased and
-whitespace is removed. Allowed characters are `A C G T N -`.
-Empty sequences, invalid characters, and duplicate normalized accessions
-are reported.
+whitespace is removed. Allowed characters are `A C G T N -` and, since
+Sprint 4, the IUPAC ambiguity codes `R Y S W K M B D H V`, which real
+consensus genomes often contain. Every stage treats an ambiguity code like
+`N`: it is never counted as a nucleotide difference or a variant, so p-distance
+results for `A C G T N -` input are unchanged. Empty sequences, other
+characters, and duplicate normalized accessions are reported.
 
 ### Metadata CSV or XLSX
 
@@ -568,28 +709,25 @@ For the full suite in the development folder:
 python -m unittest discover -s tests -v
 ```
 
-The latest full run passed **110 tests on Python 3.11.9** on October 19, 2026.
-External MAFFT and GeoNames behavior is mocked in automated tests; also use
-the real System Status button and a real example analysis.
+The latest full run (November 1, 2026, Python 3.11.9) ran **164 tests: 162
+passed and 2 were skipped**. The suite is now self-contained:
 
-Two full-suite regression methods use local data that are excluded by
-`.gitignore` and may be absent from a fresh GitHub download:
+- The invented DEMO/NCBI-style example files live in `tests/fixtures/`.
+- The state-only Flask upload check generates its own NCBI-style records.
+- `tests/test_optional_real_ncbi_data.py` keeps the original real-NCBI
+  (H5N1 segment 4) check as an **optional integration test**. It is skipped
+  with a stated reason unless `sequences.fasta` and `sequences.csv` (untracked)
+  are placed in the project root; it passed when those files were present.
+- `RealMafftReferenceAlignmentTest` runs only when real MAFFT is on `PATH`
+  (it was skipped here because MAFFT is not installed in this environment).
 
-```text
-sequences.fasta
-sequences.csv
-outputs/01a0e5b9-470b-7032-a8c4-c8465c89040b/example_sequences.fasta
-outputs/01a0e5b9-470b-7032-a8c4-c8465c89040b/example_metadata.csv
-outputs/01a0e5b9-470b-7032-a8c4-c8465c89040b/ncbi_virus_style_sequences.fasta
-outputs/01a0e5b9-470b-7032-a8c4-c8465c89040b/ncbi_virus_style_metadata.csv
-```
-
-These are used by
-`test_state_only_ncbi_upload_keeps_strict_and_candidate_results_separate` in
-`test_app.py` and `test_both_existing_examples_still_produce_clusters` in
-`test_pipeline.py`. Obtain the original matching fixtures from the project
-maintainer to reproduce those exact tests. Their absence does not prevent
-running the application or the portable measurement tests.
+**Mocked versus real external checks.** MAFFT is mocked in the automated
+tests: older tests use a pass-through, and the integrated tests use
+`tests/fake_mafft.py`, a small Needleman–Wunsch aligner, so partial
+sequences and indels can be exercised deterministically. GeoNames network
+calls are always mocked. Before deploying, confirm the real tools with the
+System Status button and by clicking **Run Integrated Example** on a machine
+or container where MAFFT is installed.
 
 ## Troubleshooting locally
 
@@ -694,11 +832,16 @@ classroom or appropriately de-identified data on this unauthenticated prototype.
 | `detect_potential_clusters.py` | Strict related pairs and connected components |
 | `run_pipeline.py` | Six-stage individual-genome runner |
 | `system_diagnostics.py` | Small MAFFT test alignment |
-| `environmental_analysis.py` | Processed measurement loading, summaries, and charts |
-| `wastewater/processed_snv.py` | Existing processed-SNV loader and summaries |
-| `templates/` | Flask HTML templates |
-| `examples/` | Three bundled synthetic input files |
-| `tests/` | Unit and integration tests |
+| `environmental_analysis.py` | Processed measurement loading, summaries, and charts (Sprint 3 legacy page) |
+| `wastewater/processed_snv.py` | Processed-SNV importer: paper Table 2, iVar TSV, standardized tables |
+| `genomics/` | Sprint 4 shared reference-based model, QC, analyses, matching, figures, orchestration |
+| `integrated_view.py` | Formats integrated results for the dashboard template |
+| `run_integrated_analysis.py` | Command-line integrated analysis (larger processed datasets) |
+| `offline_workflow/` | Optional BWA/iVar command template and tested output converters (not used by the website) |
+| `templates/` | Flask HTML templates (`index.html` is the unified dashboard) |
+| `examples/` | Bundled synthetic inputs; `examples/integrated/` is the paired demonstration |
+| `tests/` | Unit and integration tests; `tests/fixtures/` holds small invented regression files |
+| `SPRINT_4_IMPLEMENTATION_LOG.md` | Sprint 4 research facts, progress, and limitations |
 | `requirements.txt` | Python package requirements |
 | `Dockerfile` | Linux runtime, MAFFT, and Gunicorn |
 | `SPRINT_3_CHANGELOG.md` | Record of changes after the Sprint 2 baseline |
@@ -707,10 +850,11 @@ The local historical `output/pdf/` guides and `PYTHON_LINE_BY_LINE_GUIDE.md`
 describe earlier code. Some `output/` and `outputs/` files are not included in
 GitHub. Use this README and the current source for the current setup.
 
-The prototype performs no raw FASTQ processing, read mapping, variant calling,
-lineage deconvolution, or advanced statistical modeling. Genomic similarity,
-time/location proximity, and processed-table patterns need scientific context
-before interpretation.
+The website performs no raw FASTQ processing, read mapping, variant calling,
+lineage deconvolution, or advanced statistical modeling; an optional offline
+template for read processing is in `offline_workflow/`. Genomic similarity,
+shared variants, time/location proximity, and processed-table patterns need
+scientific context before interpretation.
 
 ## AI tools acknowledgment
 
