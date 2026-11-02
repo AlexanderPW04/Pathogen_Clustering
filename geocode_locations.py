@@ -68,6 +68,16 @@ def fill_missing_coordinates(data):
     samples.loc[state_only, "Geographic_Precision"] = (
         "State-level location (too coarse for distance cutoff)"
     )
+    # Levels known from separate country/state columns (any country).
+    level = (samples["Location_Level"].astype("string") if "Location_Level" in samples
+             else pd.Series(pd.NA, index=samples.index, dtype="string"))
+    for name, label in [("country", "Country-level location (too coarse for distance cutoff)"),
+                        ("state", "State-level location (too coarse for distance cutoff)"),
+                        ("conflict", "Conflicting location columns (too coarse for distance cutoff "
+                                     "until reviewed)")]:
+        rows = level.eq(name).fillna(False).astype(bool) & ~no_location
+        samples.loc[rows, "Geographic_Precision"] = label
+        state_only = state_only | rows
     if state_only.any():
         print(
             f"State-level locations: {int(state_only.sum())}; their coordinates "

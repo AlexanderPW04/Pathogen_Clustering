@@ -31,6 +31,8 @@ from genomics.column_detection import (
     unresolved,
     value_warnings,
 )
+from genomics.location_hierarchy import location_hierarchy
+from geocode_locations import is_state_only_location
 from genomics.file_formats import (
     ALIGNMENT_KIND,
     EXCEL_KIND,
@@ -531,6 +533,49 @@ def count_present(values):
     return 0 if values is None else int(values.ne("").sum())
 
 
+def location_review(review, entry):
+    """Explain how the geographic columns were combined; return the number of located records."""
+
+    columns = {match["field"]: match["column"] for match in entry.get("matches", [])
+               if match["status"] == "matched"}
+    if not ({"Location_Name", "Country", "State_Province"} & set(columns)):
+        return None
+    table = apply_mapping(entry["table"], entry["matches"])
+    header = columns.get("Location_Name", "Location_Name")
+    result, summary = location_hierarchy(table, location_header=header)
+    total = len(result)
+    broader = [f"'{columns[field]}'" for field in ("Country", "State_Province") if field in columns]
+    if "Location_Name" in columns and broader:
+        review["annotation_notes"].append(
+            f"Geographic columns recognized: '{header}' was selected for Location_Name; "
+            f"{' and '.join(broader)} were kept separately as country and state information.")
+    elif broader:
+        review["annotation_notes"].append(
+            f"No specific location column: locations are built from {' and '.join(broader)} "
+            "and labeled as country- or state-level.")
+    if summary["filled"] and "Location_Name" in columns:
+        review["annotation_notes"].append(
+            f"{summary['filled']} record(s) without a '{header}' value use the broader country/state "
+            "columns instead (labeled with that level).")
+    coarse = summary["country_level"] + summary["state_level"] + int(
+        (result["Location_Level"].eq("") & result["Location_Name"].map(is_state_only_location)).sum())
+    if coarse:
+        example = result.loc[result["Location_Level"].isin(["country", "state"]) |
+                             result["Location_Name"].map(is_state_only_location), "Location_Name"].iloc[0]
+        review["annotation_notes"].append(
+            f"{coarse} of {total} record(s) have only country- or state-level locations (for example "
+            f"'{example}'). Genetic and date comparisons continue, but these records cannot pass the "
+            "kilometer cutoff; such pairs are reported as unresolved geography.")
+    if summary["conflicts"]:
+        ids = table["Accession"] if "Accession" in table else pd.Series(table.index, index=table.index)
+        conflicts = [f"{ids[index]}: {note}" for index, note in result["Location_Conflict"].items() if note]
+        review["location_conflicts"] = conflicts
+        review["warnings"].append(
+            f"{summary['conflicts']} record(s) have contradictory location columns; please review them "
+            "(listed under 'Location values to review'). They are kept out of kilometer screening.")
+    return int(result["Location_Name"].ne("").sum())
+
+
 def individual_review(review, options):
     fasta_entries = review["by_role"].get("fasta", [])
     if not fasta_entries:
@@ -574,6 +619,9 @@ def individual_review(review, options):
                              for match in metadata.get("matches", []))
         dates = count_present(mapped_values(metadata, "Collection_Date"))
         locations = count_present(mapped_values(metadata, "Location_Name"))
+        if metadata.get("table") is not None:
+            located = location_review(review, metadata)
+            locations = located if located is not None else locations
         latitudes = mapped_values(metadata, "Latitude")
         longitudes = mapped_values(metadata, "Longitude")
         coordinates = (0 if latitudes is None or longitudes is None

@@ -31,6 +31,11 @@ DATE_ALIASES = ["collection_date", "date", "sample_date", "sampling_date", "coll
                 "date_collected", "collected"]
 LOCATION_ALIASES = ["location_name", "location", "geo_location", "geographic_location",
                     "geo_loc_name", "site", "sampling_site", "site_name", "sampling_location"]
+# Broader geographic levels are separate fields, not Location_Name candidates:
+# NCBI Virus tables have Geo_Location ("USA: SD"), Country ("USA"), and a
+# column named "USA" with the US state ("SD"), which describe one hierarchy.
+COUNTRY_ALIASES = ["country", "country_name", "nation"]
+STATE_ALIASES = ["state", "province", "state_province", "admin1", "division", "usa"]
 LATITUDE_ALIASES = ["latitude", "lat"]
 LONGITUDE_ALIASES = ["longitude", "lon", "long", "lng"]
 REFERENCE_ALIASES = ["reference_genome", "reference", "reference_id", "ref_genome", "chrom",
@@ -48,7 +53,10 @@ ROLE_FIELDS = {
         field("Pathogen", ["organism", "organism_name", "virus", "virus_name", "pathogen_name"],
               purpose="Groups sequences that may be aligned together"),
         field("Collection_Date", DATE_ALIASES, purpose="Temporal screening"),
-        field("Location_Name", LOCATION_ALIASES + ["country"], purpose="Geographic context"),
+        field("Location_Name", LOCATION_ALIASES, purpose="Most specific collection location"),
+        field("Country", COUNTRY_ALIASES, purpose="Country (kept separately; fills a missing location)"),
+        field("State_Province", STATE_ALIASES,
+              purpose="State or province (kept separately; fills a missing location)"),
         field("Latitude", LATITUDE_ALIASES, purpose="Kilometer screening"),
         field("Longitude", LONGITUDE_ALIASES, purpose="Kilometer screening"),
         field("Host_Source", ["host", "host_source", "isolation_source", "host_name"],

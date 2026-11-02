@@ -2,6 +2,17 @@
 
 **Purpose:** Transfer working context for a biomedical informatics class coding project. This handoff was prepared from discussion, Codex-reported summaries, and screenshots. It is **not** a code audit or an assertion that every file exists in the present repository. Verify the current files before editing.
 
+## NCBI Virus geographic columns (November 2, 2026)
+
+- **Bug:** NCBI Virus metadata (Geo_Location "USA: SD", Country "USA", and a column named "USA" holding the state) stopped at "Choose which column is Location_Name (Geo_Location, Country)". The cause was that `country` was listed as a Location_Name alias in `genomics/column_detection.py`, so two candidates looked ambiguous.
+- **Fix:** Country and State_Province are now separate detected fields. `genomics/location_hierarchy.py` treats the columns as one hierarchy:
+  - Geo_Location is used as given and never overwritten;
+  - blank rows are built from country/state and labeled with their level and source;
+  - contradictory rows are listed under "Location values to review".
+- **Precision:** country-, state-, and conflict-level rows are labeled too coarse for the kilometer cutoff and are not sent to GeoNames. Genetic and date comparisons still run, and such pairs are reported as unresolved geography.
+- **No change** to distance, date, or cluster calculations.
+- **Tests:** `tests/test_ncbi_location.py` (15) with a synthetic fixture copying the 17-column structure: `tests/fixtures/ncbi_virus_structure_*`.
+
 ## Sprint 4 from the upload page, before the analysis (November 2, 2026)
 
 - **Toggle.** The upload page has a toggle, off by default: "Use PubTator + Claude AI to find missing or more precise sample information". There is an optional field for dataset-wide publication or study identifiers. It works in every analysis mode.

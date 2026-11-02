@@ -327,6 +327,7 @@
               <tbody>{% for row in r.completeness %}<tr><td>{{ row.Source }}</td><td>{{ row.Samples }}</td><td>{{ row.With_Collection_Date }}</td><td>{{ row.With_Location }}</td><td>{{ row.With_Coordinates }}</td><td>{{ row.With_Genome_Coverage }}</td></tr>{% endfor %}</tbody></table></div>
           {% endif %}
           {% if r.annotation_notes %}<ul class="notes">{% for item in r.annotation_notes %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
+          {% if r.location_conflicts %}<h3>Location values to review</h3><ul class="warnings">{% for item in r.location_conflicts[:20] %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
 
           {% if r.warnings %}<h3>Missing optional information</h3><ul class="warnings">{% for item in r.warnings %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
           {% if r.problems %}<h3>Required information to fix before running</h3><ul class="problems">{% for item in r.problems %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}

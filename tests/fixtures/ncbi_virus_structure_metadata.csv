@@ -1,0 +1,11 @@
+Accession,Organism_Name,Species,Genotype,Isolate,Segment,Length,Nuc_Completeness,Geo_Location,Country,USA,Host,Tissue_Specimen_Source,Submitters,Collection_Date,Release_Date,Molecule_type
+TST000001,Influenza A virus,Alphainfluenzavirus influenzae,H5N1,A/Synthetic/SD/1/2026,1,48,partial,USA: SD,USA,SD,Synthetic host,oronasopharynx,"Example,A., Example,B.",2026-09-07,2026-10-26,ssRNA(-)
+TST000002,Influenza A virus,Alphainfluenzavirus influenzae,H5N1,A/Synthetic/SD/1/2026,2,48,partial,USA: SD,USA,SD,Synthetic host,oronasopharynx,"Example,A., Example,B.",2026-09-07,2026-10-26,ssRNA(-)
+TST000003,Influenza A virus,Alphainfluenzavirus influenzae,H5N1,A/Synthetic/SD/1/2026,3,48,partial,USA: SD,USA,SD,Synthetic host,oronasopharynx,"Example,A., Example,B.",2026-09-07,2026-10-26,ssRNA(-)
+TST000004,Influenza A virus,Alphainfluenzavirus influenzae,H5N1,A/Synthetic/SD/1/2026,4,48,partial,USA: SD,USA,SD,Synthetic host,oronasopharynx,"Example,A., Example,B.",2026-09-07,2026-10-26,ssRNA(-)
+TST000005,Influenza A virus,Alphainfluenzavirus influenzae,H5N1,A/Synthetic/SD/1/2026,5,48,partial,USA: SD,USA,SD,Synthetic host,oronasopharynx,"Example,A., Example,B.",2026-09-07,2026-10-26,ssRNA(-)
+TST000006,Influenza A virus,Alphainfluenzavirus influenzae,H5N1,A/Synthetic/SD/1/2026,6,48,partial,USA: SD,USA,SD,Synthetic host,oronasopharynx,"Example,A., Example,B.",2026-09-07,2026-10-26,ssRNA(-)
+TST000007,Influenza A virus,Alphainfluenzavirus influenzae,H5N1,A/Synthetic/SD/1/2026,7,48,partial,USA: SD,USA,SD,Synthetic host,oronasopharynx,"Example,A., Example,B.",2026-09-07,2026-10-26,ssRNA(-)
+TST000008,Influenza A virus,Alphainfluenzavirus influenzae,H5N1,A/Synthetic/SD/1/2026,8,48,partial,USA: SD,USA,SD,Synthetic host,oronasopharynx,"Example,A., Example,B.",2026-09-07,2026-10-26,ssRNA(-)
+TST000009,Influenza A virus,Alphainfluenzavirus influenzae,H5N1,A/Synthetic/SD/2/2026,1,48,partial,USA: SD,USA,SD,Synthetic host,oronasopharynx,"Example,A., Example,B.",2026-09-07,2026-10-26,ssRNA(-)
+TST000010,Influenza A virus,Alphainfluenzavirus influenzae,H5N1,A/Synthetic/SD/2/2026,2,48,partial,USA: SD,USA,SD,Synthetic host,oronasopharynx,"Example,A., Example,B.",2026-09-07,2026-10-26,ssRNA(-)

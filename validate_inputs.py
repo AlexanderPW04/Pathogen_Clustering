@@ -83,6 +83,11 @@ INTERNAL_COLUMNS = [
     "Longitude",
     "Host_Source",
     "Accession",
+    # Geographic level when known from country/state columns (see
+    # genomics/location_hierarchy.py); country- and state-level places are
+    # too coarse for the kilometer cutoff.
+    "Location_Level",
+    "Location_Name_Source",
 ]
 
 FASTA_EXTENSIONS = {".fasta", ".fa", ".fna"}
@@ -223,6 +228,10 @@ def validate_metadata(data, warnings=None):
 
     validated = data.copy()
     validated = standardize_metadata_columns(validated)
+    # Combine Geo_Location / Country / state columns into one location per row
+    # (imported here because that module imports from this one).
+    from genomics.location_hierarchy import apply_location_hierarchy
+    validated = apply_location_hierarchy(validated)
     errors = []
     if warnings is None:
         warnings = []
