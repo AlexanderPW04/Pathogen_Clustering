@@ -75,6 +75,7 @@ def run_pipeline(
         return 2
 
     print("1/6 Validating and matching FASTA with metadata...")
+    metadata_warnings = []
     try:
         data, validation_errors, _ = load_and_validate_inputs(
             fasta_path,
@@ -82,10 +83,16 @@ def run_pipeline(
             default_gene_segment,
             confirm_same_region,
             complete_genomes,
+            warnings=metadata_warnings,
         )
     except Exception as error:
         print(f"ERROR: Could not validate the input files: {error}", file=sys.stderr)
         return 2
+
+    # Missing dates, locations, or hosts limit some screening but do not stop
+    # the genetic comparison; say so on standard error (shown on the web page).
+    for warning in metadata_warnings:
+        print(f"NOTE: {warning}", file=sys.stderr)
 
     if validation_errors:
         for error in validation_errors:

@@ -4,6 +4,8 @@ from pathlib import Path
 
 import pandas as pd
 
+from genomics.file_formats import VCF_FORMAT, vcf_notes, vcf_to_snv_table
+
 
 # Supplementary Table 2 in Fontenele et al. (2021) uses these exact headers.
 PAPER_COLUMNS = {
@@ -64,12 +66,18 @@ IVAR_REQUIRED = {"REGION", "POS", "REF", "ALT", "ALT_FREQ", "TOTAL_DP"}
 PAPER_FORMAT = "Fontenele et al. (2021) Supplementary Table 2"
 IVAR_FORMAT = "iVar variants TSV"
 STANDARD_FORMAT = "Standardized processed SNV table"
+VCF_SNV_FORMAT = "VCF (single-nucleotide entries converted to the standardized table)"
 
 
 def read_table(path):
-    """Read a CSV, TSV, or Excel table without losing numeric-looking sample IDs."""
+    """Read a CSV, TSV, Excel, or VCF file without losing numeric-looking sample IDs."""
 
     path = Path(path)
+    if path.suffix.lower() == ".vcf":
+        data, details = vcf_to_snv_table(path, path.stem)
+        data = data.astype(str)
+        data.attrs["vcf_notes"] = vcf_notes(details)
+        return data
     if path.suffix.lower() == ".csv":
         return pd.read_csv(path, dtype=str, keep_default_na=False)
     if path.suffix.lower() == ".tsv":
@@ -87,13 +95,17 @@ def read_table(path):
             and "SARS-CoV-2" in description
         )
         return data
-    raise ValueError("Use a processed SNV .xlsx, .csv, or .tsv file.")
+    raise ValueError("Use a processed SNV .xlsx, .csv, .tsv, or SNV .vcf file.")
 
 
 def load_processed_snvs(path, metadata_path=None):
     """Return standardized SNV rows and visible data-quality warnings."""
 
     data = read_table(path)
+    conversion_notes = list(data.attrs.get("vcf_notes", []))
+    if conversion_notes and data.empty:
+        raise ValueError("The VCF has no single-nucleotide variant entries that can be analyzed. "
+                         + " ".join(conversion_notes))
     data.columns = [str(name).strip() for name in data.columns]
     published = (
         data.attrs.get("fontenele_2021_table2", False)
@@ -105,7 +117,7 @@ def load_processed_snvs(path, metadata_path=None):
         and IVAR_REQUIRED.issubset(data.columns)
         and ("SAMPLE" in data.columns or "Sample_ID" in data.columns)
     )
-    warnings = []
+    warnings = conversion_notes
 
     if published:
         input_format = PAPER_FORMAT
@@ -132,6 +144,9 @@ def load_processed_snvs(path, metadata_path=None):
         dates = pd.to_datetime(data["Collection_Date"].replace("", pd.NA), errors="coerce")
     else:
         input_format = STANDARD_FORMAT
+        formats = set(data.get("Source_Input_Format", pd.Series(dtype=str)).astype(str)) - {""}
+        if formats == {VCF_FORMAT}:
+            input_format = VCF_SNV_FORMAT
         missing = sorted(set(REQUIRED_COLUMNS) - set(data.columns))
         if missing:
             raise ValueError("Missing processed SNV column(s): " + ", ".join(missing))

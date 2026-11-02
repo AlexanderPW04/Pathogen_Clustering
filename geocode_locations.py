@@ -32,6 +32,10 @@ def fill_missing_coordinates(data):
     samples["Coordinate_Source"] = pd.NA
     samples["Geographic_Precision"] = "Named location only (precision unverified)"
 
+    no_location = samples["Location_Name"].isna() | samples["Location_Name"].astype(
+        "string").str.strip().eq("").fillna(True)
+    samples.loc[no_location, "Geographic_Precision"] = "No location given"
+
     provided = samples["Latitude"].notna() & samples["Longitude"].notna()
     samples.loc[provided, "Coordinate_Source"] = "Provided"
     samples.loc[provided, "Geographic_Precision"] = (

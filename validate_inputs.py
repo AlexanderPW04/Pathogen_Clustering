@@ -10,14 +10,18 @@ from Bio import SeqIO
 from genomic_regions import fasta_region, metadata_region, regions_conflict
 
 
-# Required metadata after NCBI column names are standardized.
+# Required metadata after NCBI column names are standardized. Sequence
+# comparison needs an identifier that matches the FASTA and a pathogen to group
+# sequences for MAFFT; nothing else is required.
 REQUIRED_METADATA_COLUMNS = [
     "Accession",
     "Pathogen",
-    "Collection_Date",
-    "Location_Name",
-    "Host_Source",
 ]
+
+# Context fields. When a column is absent or a value is blank, the sample is
+# still compared genetically; only the temporal or geographic screening that
+# needs the value is skipped for it. Nothing is filled in.
+CONTEXT_METADATA_COLUMNS = ["Collection_Date", "Location_Name", "Host_Source"]
 
 # Coordinates are useful, but they are not required.
 OPTIONAL_METADATA_COLUMNS = ["Latitude", "Longitude"]
@@ -152,12 +156,34 @@ def load_metadata(file_path):
     raise ValueError("Metadata must be an .xlsx or .csv file.")
 
 
-def validate_metadata(data):
-    """Clean and validate metadata without deleting any rows."""
+def partial_date_mask(values):
+    """True for dates given only as a year or a year and month.
+
+    Such dates (for example "2020" or "2020-06") are kept as text in the
+    source but are not turned into a day, because pandas would otherwise
+    silently read "2020" as 1 January 2020.
+    """
+
+    text = values.astype("string").str.strip()
+    year_only = text.str.fullmatch(r"\d{4}")
+    year_month = text.str.fullmatch(r"\d{4}[-/]\d{1,2}")
+    month_year = text.str.fullmatch(r"[A-Za-z]{3,9}[- ]\d{4}")
+    return (year_only | year_month | month_year).fillna(False).astype(bool)
+
+
+def validate_metadata(data, warnings=None):
+    """Clean and validate metadata without deleting any rows.
+
+    `warnings`, when a list is given, receives notes about missing optional
+    context (dates, locations, hosts) that limit some analyses but do not stop
+    the genetic comparison.
+    """
 
     validated = data.copy()
     validated = standardize_metadata_columns(validated)
     errors = []
+    if warnings is None:
+        warnings = []
 
     # Check the required headers.
     missing_columns = []
@@ -168,6 +194,16 @@ def validate_metadata(data):
     if missing_columns:
         message = "Missing required metadata column(s): "
         errors.append(message + ", ".join(missing_columns))
+
+    absent_columns = set()
+    for column in CONTEXT_METADATA_COLUMNS:
+        if column not in validated.columns:
+            absent_columns.add(column)
+            validated[column] = pd.Series(pd.NA, index=validated.index, dtype="string")
+            warnings.append(
+                f"No {column} column: analyses that need it are skipped; genetic "
+                "comparison still runs."
+            )
 
     # Choose an explicit region from any supported metadata column, by priority.
     region_columns = [column for column in REGION_COLUMNS if column in validated]
@@ -223,7 +259,13 @@ def validate_metadata(data):
 
         if missing_values.any():
             row_text = metadata_rows(missing_values)
-            errors.append(f"Missing {column} at metadata row(s): {row_text}")
+            if column in REQUIRED_METADATA_COLUMNS:
+                errors.append(f"Missing {column} at metadata row(s): {row_text}")
+            elif not missing_values.all():
+                warnings.append(f"Missing {column} at metadata row(s): {row_text}")
+            elif column not in absent_columns:
+                warnings.append(f"{column} is blank in every metadata row.")
+            validated.loc[missing_values, column] = pd.NA
 
     # Detect duplicate metadata accessions after removing numeric versions.
     if "Accession" in validated.columns:
@@ -250,17 +292,29 @@ def validate_metadata(data):
     if "Collection_Date" in validated.columns:
         original_dates = validated["Collection_Date"].copy()
         missing_dates = blank_mask(original_dates)
+        partial_dates = ~missing_dates & partial_date_mask(original_dates)
         converted_dates = pd.to_datetime(
-            original_dates,
+            original_dates.where(~partial_dates),
             errors="coerce",
             format="mixed",
         )
-        invalid_dates = ~missing_dates & converted_dates.isna()
+        invalid_dates = ~missing_dates & ~partial_dates & converted_dates.isna()
         validated["Collection_Date"] = converted_dates
 
-        if missing_dates.any():
+        if missing_dates.any() and not missing_dates.all():
             row_text = metadata_rows(missing_dates)
-            errors.append(f"Missing Collection_Date at metadata row(s): {row_text}")
+            warnings.append(
+                f"Missing Collection_Date at metadata row(s): {row_text}; those samples "
+                "are compared genetically but not by date."
+            )
+        elif missing_dates.all() and len(missing_dates) and "Collection_Date" not in absent_columns:
+            warnings.append("No collection dates were given; temporal screening is skipped.")
+        if partial_dates.any():
+            row_text = metadata_rows(partial_dates)
+            warnings.append(
+                f"Collection_Date gives only a year or month at metadata row(s): {row_text}; "
+                "no day is assumed, so those samples are not used for day-level comparisons."
+            )
 
         if invalid_dates.any():
             row_text = metadata_rows(invalid_dates)
@@ -302,11 +356,11 @@ def validate_metadata(data):
     return validated, errors, missing_counts
 
 
-def load_and_validate_metadata(file_path):
+def load_and_validate_metadata(file_path, warnings=None):
     """Load and validate one metadata file."""
 
     metadata = load_metadata(file_path)
-    return validate_metadata(metadata)
+    return validate_metadata(metadata, warnings)
 
 
 def load_fasta(file_path):
@@ -616,12 +670,15 @@ def match_fasta_to_metadata(
 
 def load_and_validate_inputs(
     fasta_path, metadata_path, default_gene_segment=None, confirm_same_region=False,
-    complete_genomes=False,
+    complete_genomes=False, warnings=None,
 ):
-    """Load both inputs and return the DataFrame used by analysis stages."""
+    """Load both inputs and return the DataFrame used by analysis stages.
+
+    Notes about missing optional context are appended to `warnings`.
+    """
 
     metadata, metadata_errors, missing_counts = load_and_validate_metadata(
-        metadata_path
+        metadata_path, warnings
     )
     fasta_records = load_fasta(fasta_path)
     matched, matching_errors = match_fasta_to_metadata(
