@@ -15,7 +15,9 @@ existing loader keeps reading ordinary files.
 """
 
 import gzip
+import math
 import shutil
+import zlib
 from pathlib import Path
 
 import pandas as pd
@@ -84,11 +86,17 @@ def is_gzip(path):
         return handle.read(2) == b"\x1f\x8b"
 
 
-def plain_copy(path, destination):
-    """Copy `path` to `destination`, decompressing gzip data with a size limit."""
+def plain_copy(path, destination, display_name=None, limit=None):
+    """Copy `path` to `destination`, decompressing gzip data with a size limit.
+
+    `display_name` is the user's file name for messages; `limit` overrides the
+    per-file decompressed-size limit (used to enforce a per-request total).
+    """
 
     path = Path(path)
     destination = Path(destination)
+    name = display_name or path.name
+    limit = MAX_DECOMPRESSED_BYTES if limit is None else limit
     if not is_gzip(path):
         if path.resolve() != destination.resolve():
             shutil.copyfile(path, destination)
@@ -101,16 +109,16 @@ def plain_copy(path, destination):
                 if not block:
                     break
                 written += len(block)
-                if written > MAX_DECOMPRESSED_BYTES:
+                if written > limit:
                     raise ValueError(
-                        f"{path.name} expands to more than "
-                        f"{MAX_DECOMPRESSED_BYTES // (1024 * 1024)} MB when decompressed; "
-                        "analyze it with run_integrated_analysis.py on your own computer."
+                        f"{name} expands to more than {limit // (1024 * 1024)} MB when "
+                        "decompressed (the limit applies to all files in one upload); analyze "
+                        "large files with run_integrated_analysis.py on your own computer."
                     )
                 target.write(block)
-    except (OSError, EOFError) as error:
+    except (OSError, EOFError, zlib.error) as error:
         destination.unlink(missing_ok=True)
-        raise ValueError(f"{path.name} is not a readable gzip file ({error}).") from error
+        raise ValueError(f"{name} is not a readable gzip file ({error}).") from error
     except ValueError:
         destination.unlink(missing_ok=True)
         raise
@@ -211,9 +219,10 @@ def numbers(text):
     for item in str(text).split(","):
         item = item.strip()
         try:
-            values.append(None if item in {"", "."} else float(item))
+            number = None if item in {"", "."} else float(item)
         except ValueError:
-            values.append(None)
+            number = None
+        values.append(number if number is not None and math.isfinite(number) else None)
     return values
 
 
@@ -228,21 +237,23 @@ def allele_measurement(fields, info, alt_index, alt_count, use_info):
     interpreted correctly or not at all. Order of preference:
     FORMAT/AD (one value per allele), FORMAT/AO+RO (FreeBayes), FORMAT/AF
     (one value per ALT), iVar's FORMAT/ALT_FREQ (single ALT only), and the
-    LoFreq-style INFO/AF only for a single-sample or sites-only file (with
-    several samples, INFO values describe the whole cohort, not one sample).
+    LoFreq-style INFO/AF only for a sites-only file (with sample columns, INFO
+    values describe the file or are genotype-based, not one sample's reads).
     """
 
     depth = pick(numbers(fields["DP"]), 0) if "DP" in fields else None
     if depth is None and use_info and "DP" in info:
         depth = pick(numbers(info["DP"]), 0)
 
+    # When allele counts are used, depth is their total so frequency =
+    # alternate reads / depth exactly (FORMAT/DP can count filtered reads too).
     if "AD" in fields:
         counts = numbers(fields["AD"])
         if len(counts) == alt_count + 1 and None not in counts:
             alt_reads = counts[alt_index + 1]
             total = sum(counts)
             if total > 0:
-                return alt_reads / total, alt_reads, depth if depth is not None else total, "FORMAT/AD"
+                return alt_reads / total, alt_reads, total, "FORMAT/AD"
     if "AO" in fields and "RO" in fields:
         alt_counts = numbers(fields["AO"])
         reference_count = pick(numbers(fields["RO"]), 0)
@@ -250,7 +261,7 @@ def allele_measurement(fields, info, alt_index, alt_count, use_info):
             total = reference_count + sum(alt_counts)
             if total > 0:
                 alt_reads = alt_counts[alt_index]
-                return alt_reads / total, alt_reads, depth if depth is not None else total, "FORMAT/AO,RO"
+                return alt_reads / total, alt_reads, total, "FORMAT/AO,RO"
     if "AF" in fields:
         frequencies = numbers(fields["AF"])
         if len(frequencies) == alt_count and frequencies[alt_index] is not None:
@@ -321,7 +332,13 @@ def vcf_to_snv_table(path, fallback_sample_id):
             format_keys = fields[8].split(":") if len(fields) > 8 else []
             entries = fields[9:] if sample_names else [None]
             names = sample_names if sample_names else [fallback_sample_id]
-            use_info = len(names) == 1
+            # INFO values describe the file, not a sample: with sample columns
+            # (for example GATK), INFO/AF is genotype-based, so it is used only
+            # for sites-only files such as LoFreq output.
+            use_info = not sample_names
+            if sample_names and len(fields) < 9 + len(sample_names):
+                set_aside("record has no FORMAT/sample fields", len(sample_names) * len(alts))
+                continue
             for name, entry in zip(names, entries):
                 values = dict(zip(format_keys, entry.split(":"))) if entry is not None else {}
                 for index, alt in enumerate(alts):

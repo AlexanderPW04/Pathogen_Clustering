@@ -144,8 +144,8 @@ def detect_columns(columns, role):
     return results
 
 
-def resolve_choices(matches, choices):
-    """Apply the user's choices ({field: column}) to ambiguous matches."""
+def resolve_choices(matches, choices, chooser="the user"):
+    """Apply choices ({field: column}) to ambiguous matches; `chooser` says who chose."""
 
     resolved = []
     for match in matches:
@@ -154,7 +154,7 @@ def resolve_choices(matches, choices):
         if match["status"] == "ambiguous" and chosen in match["candidates"]:
             match["status"] = "matched"
             match["column"] = chosen
-            match["evidence"] = f"header '{chosen}' chosen by the user from " + ", ".join(
+            match["evidence"] = f"header '{chosen}' chosen by {chooser} from " + ", ".join(
                 f"'{name}'" for name in match["candidates"])
         resolved.append(match)
     return resolved

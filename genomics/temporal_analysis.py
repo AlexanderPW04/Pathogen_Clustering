@@ -219,7 +219,8 @@ def depth_regression(per_sample, bootstrap_rounds=1000, permutations=2000, seed=
     extreme = 0
     for _ in range(permutations):
         shuffled_slope = np.polyfit(x, generator.permutation(y), 1)[0]
-        if abs(shuffled_slope) >= abs(slope):
+        # A tolerance keeps exact ties (equal up to rounding) counted as extreme.
+        if abs(shuffled_slope) >= abs(slope) - 1e-12 * max(1.0, abs(slope)):
             extreme += 1
 
     return {

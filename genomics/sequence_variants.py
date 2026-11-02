@@ -226,13 +226,25 @@ def build_individual_profiles(data, reference, mafft_path, data_source):
     for sample in data.to_dict("records"):
         sample_id = str(sample["Sample_ID"])
         sequence = str(sample["Sequence"]).replace("-", "")
-        reference_row, sample_row = align_with_reference(reference, sequence, mafft_path)
-        mapping = map_alignment_to_reference(reference_row, sample_row)
+        try:
+            reference_row, sample_row = align_with_reference(reference, sequence, mafft_path)
+        except RuntimeError as error:
+            # One sample that cannot be aligned is reported as unmapped; it
+            # must not stop the profiles of every other sample.
+            reference_row = sample_row = None
+            alignment_problem = f"reference alignment failed ({error})"
+        else:
+            alignment_problem = None
+        if reference_row is None:
+            mapping = {"calls": CALL_OUTSIDE * reference["Length"], "substitutions": [],
+                       "insertions": [], "deletions": []}
+        else:
+            mapping = map_alignment_to_reference(reference_row, sample_row)
         if len(mapping["calls"]) != reference["Length"]:
             raise RuntimeError("Reference positions were lost during alignment mapping.")
 
         summary = summarize_calls(mapping["calls"])
-        problem = mapping_problem(summary)
+        problem = alignment_problem or mapping_problem(summary)
         if problem is None:
             status = "Mapped to reference"
             calls_by_sample[sample_id] = mapping["calls"]
@@ -292,6 +304,16 @@ def build_individual_profiles(data, reference, mafft_path, data_source):
                 "Data_Source": data_source,
             })
         for after_position, bases in mapping["insertions"]:
+            if after_position in (0, reference["Length"]):
+                # Bases before the reference start or after its end are
+                # unaligned sequence, not an insertion between reference bases.
+                indel_rows.append({
+                    "Sample_ID": sample_id, "Event": "Unaligned overhang",
+                    "Reference_Positions": ("before 1" if after_position == 0
+                                            else f"after {after_position} (reference end)"),
+                    "Bases": bases, "Note": "Outside the reference; no reference coordinates",
+                })
+                continue
             indel_rows.append({
                 "Sample_ID": sample_id, "Event": "Insertion",
                 "Reference_Positions": f"after {after_position}", "Bases": bases,

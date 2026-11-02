@@ -14,6 +14,7 @@ import pandas as pd
 
 MISSING = "—"  # an em dash marks a value that is not available
 NOT_AVAILABLE = "Not available"  # a statistic the inputs cannot provide (not zero)
+WIDE_FIGURE_PIXELS = 1400
 
 
 def format_value(value, digits=4):
@@ -47,6 +48,12 @@ def table_view(table, columns=None, limit=None, title="", filename=None):
             "total": total, "shown": len(rows), "filename": filename}
 
 
+def png_width(png):
+    """Pixel width from a PNG header (bytes 16-19), or 0 if it is not a PNG."""
+
+    return int.from_bytes(png[16:20], "big") if png[:8] == b"\x89PNG\r\n\x1a\n" else 0
+
+
 def figure_view(result, name, download_id):
     figure = result["figures"].get(name)
     if figure is None:
@@ -57,6 +64,8 @@ def figure_view(result, name, download_id):
         "data_uri": "data:image/png;base64," + b64encode(figure["png"]).decode("ascii"),
         "filename": f"{name}.png",
         "download_id": download_id,
+        # Wider than the page: shown at full size in a scrolling box so labels stay readable.
+        "wide": png_width(figure["png"]) > WIDE_FIGURE_PIXELS,
     }
 
 
@@ -67,14 +76,27 @@ def stat(label, value, detail=""):
             "available": value is not None, "detail": detail}
 
 
+def short_category(name):
+    """'Unresolved: pooled coverage ...' -> 'Unresolved (pooled)' so the two differ."""
+
+    label, _, detail = name.partition(":")
+    if label == "Unresolved":
+        return "Unresolved (pooled)" if "pooled" in detail else "Unresolved (individual)"
+    return label
+
+
 def section(identifier, number, title, purpose):
     return {"id": identifier, "number": number, "title": title, "purpose": purpose,
             "stats": [], "figures": [], "tables": [], "limitations": [], "downloads": [],
             "unavailable": None}
 
 
-def build_dashboard(result, download_id):
-    """Organize results into the dashboard's eight sections."""
+def build_dashboard(result, download_id, available=None):
+    """Organize results into the dashboard's eight sections.
+
+    `available` is the set of file names actually stored for download; files
+    that were too large to keep are not linked.
+    """
 
     tables = result["tables"]
     notes = result["notes"]
@@ -93,7 +115,8 @@ def build_dashboard(result, download_id):
         for key in note_keys:
             item["limitations"] += notes.get(key, [])
         item["downloads"] = [name for name in download_names
-                             if name in tables or name[:-4] in result["figures"]]
+                             if (name in tables or name[:-4] in result["figures"])
+                             and (available is None or name in available)]
         return item
 
     pooled = result["pooled"]
@@ -111,9 +134,11 @@ def build_dashboard(result, download_id):
              if "individual_mapped" in summary else ""),
         stat("Pooled samples", summary.get("pooled_samples"),
              f"{summary['pooled_samples_included']} kept after QC" if "pooled_samples_included" in summary else ""),
-        stat("Shared reference", summary.get("reference")),
+        stat("Reference FASTA", summary.get("reference")),
         stat("Variants observed in both sources", summary.get("shared_variants"),
-             "" if comparison is not None else "needs both sources on one verified reference"),
+             "needs both sources on one verified reference" if comparison is None else
+             (f"{summary['incomparable_variants']} more could not be compared: reference not verified"
+              if summary.get("incomparable_variants") else "")),
         stat("Collection dates", f"{summary['date_start']} to {summary['date_end']}"
              if "date_start" in summary else None),
     ]
@@ -134,7 +159,7 @@ def build_dashboard(result, download_id):
                                 "FASTA, and a pooled SNV table on the same verified reference.")
     else:
         counts = comparison["counts"].set_index("Category")["Variants"]
-        cross["stats"] = [stat(name.split(":")[0], int(value), name.split(":", 1)[1].strip())
+        cross["stats"] = [stat(short_category(name), int(value), name.split(":", 1)[1].strip())
                           for name, value in counts.items()]
     finish(cross, ["cross_source", "evidence_matrix", "cross_source_positions", "cross_source_timeline"], [
         table_view(comparison["counts"], title="Variants per evidence category") if comparison else None,

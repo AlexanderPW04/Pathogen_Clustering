@@ -21,6 +21,7 @@ import numpy as np
 import pandas as pd
 
 from add_temporal_geographic import haversine_km
+from geocode_locations import is_state_only_location
 from genomics.pooled_observations import pooled_position_status, read_any_table, standard_name
 from genomics.references import reference_base, references_compatible
 from genomics.sequence_variants import CALL_REFERENCE, CALL_VARIANT
@@ -88,6 +89,8 @@ def usable_coordinates(sample):
     precision = str(sample.get("Geographic_Precision", ""))
     if "too coarse" in precision or "no coordinates" in precision:
         return None
+    if is_state_only_location(sample.get("Location_Name")):
+        return None  # a state or country centroid is not a collection site
     if pd.isna(sample.get("Latitude")) or pd.isna(sample.get("Longitude")):
         return None
     return float(sample["Latitude"]), float(sample["Longitude"])
@@ -292,7 +295,10 @@ def compare_evidence(individual, pooled, reference, registry, minimum_depth, dat
                 "Ref": ref,
                 "Alt": alt,
                 "Category": INCOMPARABLE,
-                "Pooled_Reported": group["Sample_ID"].nunique(),
+                "Pooled_Reported": group.loc[group["Analysis_Included"].astype(bool),
+                                             "Sample_ID"].nunique(),
+                "Pooled_Coverage_Unknown_Or_QC_Excluded": group.loc[
+                    ~group["Analysis_Included"].astype(bool), "Sample_ID"].nunique(),
                 "Note": group["Incomparable_Reason"].iloc[0],
             })
 
@@ -367,20 +373,25 @@ def compare_signatures(signatures, reference, registry, individual, pooled, mini
             rows.append(signature_row(name, sample_id, "Individual sequence", len(keys), skipped, present, assessable))
 
         if pooled_variants is not None:
-            included = pooled_variants[pooled_variants["Analysis_Included"]]
-            comparable, _ = harmonize_pooled_variants(included, reference, registry)
+            comparable_all, _ = harmonize_pooled_variants(pooled_variants, reference, registry)
             for sample in pooled["samples"][pooled["samples"]["Analysis_Included"]].to_dict("records"):
                 sample_id = sample["Sample_ID"]
-                reported = set()
-                if not comparable.empty:
-                    reported = set(comparable.loc[comparable["Sample_ID"].eq(sample_id), "Variant_Key"])
+                reported, excluded = set(), set()
+                original_reference = reference["Reference_ID"]
+                if not comparable_all.empty:
+                    mine = comparable_all[comparable_all["Sample_ID"].eq(sample_id)]
+                    kept = mine["Analysis_Included"].astype(bool)
+                    reported = set(mine.loc[kept, "Variant_Key"])
+                    excluded = set(mine.loc[~kept, "Variant_Key"])
+                    if not mine.empty:
+                        original_reference = mine["Original_Reference_ID"].iloc[0]
                 present = sum(1 for _, key in keys if key in reported)
                 assessable = present
                 for position, key in keys:
-                    if key in reported:
-                        continue
+                    if key in reported or key in excluded:
+                        continue  # an excluded call is neither present nor a non-detection
                     status, _ = pooled_position_status(pooled["depth_lookup"], sample_id,
-                                                       str(sample["Reference_ID"]), position, minimum_depth)
+                                                       original_reference, position, minimum_depth)
                     if status == COVERED_NOT_DETECTED:
                         assessable += 1
                 rows.append(signature_row(name, sample_id, "Pooled sample", len(keys), skipped, present, assessable))

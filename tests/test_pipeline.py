@@ -69,7 +69,7 @@ class PipelineIntegrationTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             fasta_path = Path(folder) / "sequences.fasta"
             fasta_path.write_text(
-                ">A.1\nACGT\n>B.1\nACGA\n>C.1\nACGA\n",
+                ">A.1\n" + "ACGT" * 5 + "\n>B.1\n" + "ACGA" * 5 + "\n>C.1\n" + "ACGA" * 5 + "\n",  # 20 bases: the minimum overlap for relatedness
                 encoding="utf-8",
             )
             metadata_path = Path(folder) / "samples.xlsx"

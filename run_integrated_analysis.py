@@ -22,8 +22,7 @@ import shutil
 import sys
 from pathlib import Path
 
-import pandas as pd
-
+from compare_genetic_distances import read_pair_table
 from genomics.file_formats import plain_copy, split_name
 from genomics.integrated_analysis import run_integrated_analysis
 from run_pipeline import output_paths, run_pipeline
@@ -129,8 +128,7 @@ def main(arguments=None):
             return status
         individual_data = shared["samples"]
         mafft_path = shared["mafft_path"]
-        pairs = pd.read_csv(output_paths(metadata_copy)[1],
-                            dtype={"Sample_ID_1": "string", "Sample_ID_2": "string"})
+        pairs = read_pair_table(output_paths(metadata_copy)[1])
         # Cluster and candidate lists are only built by the web page, so the
         # network figure is drawn there; the distance figure is drawn here too.
         relationship = {"pairs": pairs, "candidates": None, "clusters": None,

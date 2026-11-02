@@ -109,7 +109,7 @@ class FlaskInterfaceTest(unittest.TestCase):
         )
 
         form_data = {
-            "fasta_file": (io.BytesIO(b">A\nACGT\n>B\nACGA\n"), "sequences.fasta"),
+            "fasta_file": (io.BytesIO(b">A\n" + b"ACGT" * 5 + b"\n>B\n" + b"ACGA" * 5 + b"\n"), "sequences.fasta"),  # 20 bases: the minimum overlap for relatedness
             "metadata_file": (
                 io.BytesIO(metadata.to_csv(index=False).encode("utf-8")),
                 "metadata.csv",
@@ -159,7 +159,7 @@ class FlaskInterfaceTest(unittest.TestCase):
             }
         )
         form_data = {
-            "fasta_file": (io.BytesIO(b">A\nACGT\n>B\nACGT\n"), "sequences.fasta"),
+            "fasta_file": (io.BytesIO(b">A\n" + b"ACGT" * 5 + b"\n>B\n" + b"ACGT" * 5 + b"\n"), "sequences.fasta"),  # 20 bases: the minimum overlap for relatedness
             "metadata_file": (
                 io.BytesIO(metadata.to_csv(index=False).encode("utf-8")),
                 "metadata.csv",
@@ -276,7 +276,7 @@ class FlaskInterfaceTest(unittest.TestCase):
             }
         )
         form_data = {
-            "fasta_file": (io.BytesIO(b">A\nACGT\n>B\nACGT\n"), "states.fasta"),
+            "fasta_file": (io.BytesIO(b">A\n" + b"ACGT" * 5 + b"\n>B\n" + b"ACGT" * 5 + b"\n"), "states.fasta"),  # 20 bases: the minimum overlap for relatedness
             "metadata_file": (
                 io.BytesIO(metadata.to_csv(index=False).encode("utf-8")),
                 "states.csv",

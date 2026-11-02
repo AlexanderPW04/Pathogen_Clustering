@@ -26,6 +26,16 @@ RESULT_COLUMNS = [
 ]
 
 
+def read_pair_table(path):
+    """Read a pairwise CSV without changing sample IDs.
+
+    Plain read_csv would turn IDs such as "001" into 1 and "NA" into a missing
+    value, so the IDs would no longer match the metadata.
+    """
+
+    return pd.read_csv(path, converters={"Sample_ID_1": str, "Sample_ID_2": str})
+
+
 def compare_sequences(sequence_1, sequence_2):
     """Compare two already-aligned sequences position by position."""
 

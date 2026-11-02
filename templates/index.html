@@ -71,6 +71,7 @@
     nav.sections a { color: var(--accent); font-weight: bold; text-decoration: none; }
     figure { margin: 1rem 0; }
     figure img { border: 1px solid var(--border); border-radius: 8px; height: auto; max-width: 100%; }
+    .wide-figure img { max-width: none; }
     figcaption { color: var(--ink-muted); font-size: 0.9rem; max-width: 62rem; }
     .scroll { overflow-x: auto; overflow-wrap: normal; }
     .scroll th, .scroll td { min-width: 5.5rem; }
@@ -83,7 +84,7 @@
     .section-downloads { font-size: 0.9rem; }
     .badge { border-radius: 999px; display: inline-block; font-size: 0.8rem; font-weight: bold; padding: 0.05rem 0.55rem; white-space: nowrap; }
     .badge.run, .badge.completed { background: var(--good-bg); color: var(--good-ink); }
-    .badge.limited, .badge.not-evaluable { background: var(--warn-bg); color: #6b4a00; }
+    .badge.limited, .badge.not-evaluable, .badge.partly-completed { background: var(--warn-bg); color: #6b4a00; }
     .badge.skipped, .badge.refused { background: #eef0f2; color: var(--ink-muted); }
     .badge.needs { background: var(--error-bg); color: var(--error-ink); }
     .swatch { border-radius: 3px; display: inline-block; height: 0.8rem; margin-right: 0.3rem; vertical-align: -0.05rem; width: 0.8rem; }
@@ -321,7 +322,9 @@
 
     {% macro show_figure(item) %}
       <figure>
-        <img src="{{ item.data_uri }}" alt="{{ item.title }}. {{ item.caption }}">
+        {% if item.wide %}<div class="scroll wide-figure"><img src="{{ item.data_uri }}" alt="{{ item.title }}. {{ item.caption }}"></div>
+        <p class="help">Wide figure: scroll sideways, or download the PNG.</p>
+        {% else %}<img src="{{ item.data_uri }}" alt="{{ item.title }}. {{ item.caption }}">{% endif %}
         <figcaption><strong>{{ item.title }}.</strong> {{ item.caption }}
           <a href="{{ url_for('result_download', download_id=item.download_id, filename=item.filename) }}">Download PNG</a></figcaption>
       </figure>
@@ -349,7 +352,7 @@
         <p><strong>Unique samples analyzed:</strong> {{ summary.unique_samples }}</p>
         <p><strong>Pairwise comparisons:</strong> {{ summary.pairwise_comparisons }}</p>
         <p><strong>Strict related pairs:</strong> {{ related_pair_count }}</p>
-        <p><strong>Potential clusters meeting all criteria:</strong> {{ clusters|length }}</p>
+        <p><strong>Potential clusters:</strong> {{ clusters|length }}</p>
         <p><strong>Genomic-temporal candidate pairs with unresolved geography:</strong> {{ candidates|length }}</p>
         <p><strong>Unique samples represented in candidate pairs:</strong> {{ summary.candidate_unique_samples }}</p>
       </div>
@@ -361,8 +364,7 @@
         <strong>Valid geographic-distance comparisons:</strong> {{ summary.valid_geographic_comparisons }}</p>
 
       <h3>Potential clusters meeting all three screening criteria</h3>
-      <p><strong>Potential clusters:</strong> {{ clusters|length }}</p>
-      <p><strong>Related pairs:</strong> {{ related_pair_count }}</p>
+      <p class="note">A related pair meets the genetic, date, and distance cutoffs (and shares at least 20 comparable positions); clusters are connected groups of related pairs.</p>
       {% if clusters %}
         {% for cluster in clusters %}
           <div class="cluster">
@@ -432,6 +434,7 @@
         {% endif %}
         {% if s.id == 'relationships' %}
           {% if analysis_complete %}{{ sprint2_results() }}
+          {% elif input_names and input_names.fasta %}<p class="unavailable">The sequence comparison could not be completed for the uploaded sequences; see the message at the top of the page.</p>
           {% else %}<p class="unavailable">Upload individual FASTA sequences and metadata to compare sequences with MAFFT, p-distance, dates, and locations.</p>{% endif %}
         {% endif %}
         {% for table in s.tables %}{{ show_table(table) }}{% endfor %}
@@ -486,7 +489,7 @@
           <details><summary>Show the provenance record</summary>{{ show_table(dashboard.provenance) }}</details>
         {% endif %}
         {% if downloads %}
-          <p class="note">Files are kept in this server's memory for 10 minutes; uploads were deleted after the analysis.</p>
+          <p class="note">Result files are kept in this server's memory for up to 10 minutes (sooner if several newer analyses run); uploaded files were deleted after the analysis.</p>
           <ul class="downloads">
             {% for name in downloads %}<li><a href="{{ url_for('result_download', download_id=download_id, filename=name) }}">{{ name }}</a></li>{% endfor %}
           </ul>

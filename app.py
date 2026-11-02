@@ -17,18 +17,21 @@ from secrets import token_urlsafe
 from shutil import copyfile, rmtree
 from tempfile import TemporaryDirectory, gettempdir, mkdtemp
 from threading import Lock
-from time import monotonic
+from time import monotonic, time
 
 import pandas as pd
 from flask import Flask, abort, render_template, request, send_file
 
+from compare_genetic_distances import read_pair_table
+from detect_potential_clusters import enough_overlap
 from geocode_locations import check_geonames
 from run_pipeline import output_paths, region_assignment_path, run_pipeline
 from system_diagnostics import check_mafft
 from validate_inputs import FASTA_EXTENSIONS, METADATA_EXTENSIONS
 from environmental_analysis import load_measurements, make_charts, summarize_measurements, table_records
 from genomics.file_formats import (
-    EXCEL_KIND, FASTA_KIND, VCF_KIND, detect_kind, plain_copy, split_name,
+    EXCEL_KIND, FASTA_KIND, MAX_DECOMPRESSED_BYTES, VCF_KIND, detect_kind, plain_copy,
+    split_name,
 )
 from genomics.input_inspection import (
     ROLE_LABELS, empty_info, inspect_file, prepare_inputs, review_dataset, suggest_roles,
@@ -430,6 +433,8 @@ def find_geography_unresolved_candidates(pairs, thresholds):
     for _, pair in pairs.iterrows():
         if pd.isna(pair["P_Distance"]) or pd.isna(pair["Days_Apart"]):
             continue
+        if not enough_overlap(pair):
+            continue
         if pair["P_Distance"] > thresholds[0] or pair["Days_Apart"] > thresholds[1]:
             continue
         if pd.notna(pair["Km_Apart"]):
@@ -539,15 +544,12 @@ def run_relationship_analysis(fasta_path, metadata_path, thresholds, complete_ge
     enriched_path = output_files[1]
 
     try:
-        related_pairs = pd.read_csv(related_path)
-        enriched_pairs = pd.read_csv(
-            enriched_path,
-            dtype={"Sample_ID_1": "string", "Sample_ID_2": "string"},
-        )
-        membership = pd.read_csv(membership_path, dtype={"Sample_ID": "string"})
+        related_pairs = read_pair_table(related_path)
+        enriched_pairs = read_pair_table(enriched_path)
+        membership = pd.read_csv(membership_path, converters={"Sample_ID": str})
         assignments = pd.read_csv(
             region_assignment_path(metadata_path),
-            dtype={"Sample_ID": "string"},
+            converters={"Sample_ID": str},
         )
     except Exception:
         app.logger.exception("Could not read pipeline results")
@@ -601,7 +603,7 @@ def save_upload(upload, folder, key):
     upload.save(raw)
     path = folder / f"{key}{extension}"
     try:
-        plain_copy(raw, path)
+        plain_copy(raw, path, display_name=name)
     finally:
         raw.unlink(missing_ok=True)
     return path, name
@@ -711,6 +713,7 @@ def run_analyses(paths, names, values, thresholds, date_window, temporary_folder
             settings={"qc_mode": values["qc_mode"], "date_window_days": date_window},
             input_labels=names,
             relationship=relationship_tables(relationship, thresholds) if completed else None,
+            input_notes=page.get("input_notes"),
         )
     except (ValueError, RuntimeError) as problem:
         page["integrated_error"] = str(problem).replace(str(temporary_folder), "[temporary upload]")
@@ -723,7 +726,7 @@ def run_analyses(paths, names, values, thresholds, date_window, temporary_folder
     else:
         files, skipped = download_files(result, relationship_files)
         page["download_id"] = store_result_files(files)
-        page["dashboard"] = build_dashboard(result, page["download_id"])
+        page["dashboard"] = build_dashboard(result, page["download_id"], set(files))
         page["downloads"] = sorted(files)
         page["skipped_downloads"] = skipped
         return page
@@ -843,13 +846,25 @@ def remove_staged(token):
 
 
 def clean_staged():
-    """Delete expired staged uploads and keep at most STAGED_LIMIT sets."""
+    """Delete expired staged uploads and keep at most STAGED_LIMIT sets.
+
+    Folders left behind by an earlier server process (not in STAGED) are
+    deleted once they are older than STAGED_SECONDS.
+    """
 
     now = monotonic()
     for token in [key for key, item in STAGED.items() if now - item["created"] > STAGED_SECONDS]:
         remove_staged(token)
     while len(STAGED) >= STAGED_LIMIT:
         remove_staged(min(STAGED, key=lambda key: STAGED[key]["created"]))
+    tracked = {Path(item["folder"]).resolve() for item in STAGED.values()}
+    for folder in STAGING_ROOT.glob("upload_*"):
+        try:
+            old = time() - folder.stat().st_mtime > STAGED_SECONDS
+        except OSError:
+            continue
+        if folder.is_dir() and old and folder.resolve() not in tracked:
+            rmtree(folder, ignore_errors=True)
 
 
 PLAIN_EXTENSIONS = {FASTA_KIND: ".fasta", VCF_KIND: ".vcf", EXCEL_KIND: ".xlsx"}
@@ -864,6 +879,9 @@ def stage_uploads(uploads):
     folder = Path(mkdtemp(prefix="upload_", dir=STAGING_ROOT))
     staged = {}
     inspections = []
+    # One budget for all files in the request, so many small .gz files cannot
+    # together expand to gigabytes on disk.
+    remaining = MAX_DECOMPRESSED_BYTES
     try:
         for index, upload in enumerate(uploads):
             name = Path(upload.filename).name
@@ -871,7 +889,8 @@ def stage_uploads(uploads):
             upload.save(raw)
             plain = folder / f"file_{index}"
             try:
-                plain_copy(raw, plain)
+                plain_copy(raw, plain, display_name=name, limit=max(remaining, 0))
+                remaining -= plain.stat().st_size
             except ValueError as problem:
                 info = empty_info(name)
                 info.update(kind="Unreadable", refused=True, problems=[str(problem)])
@@ -949,6 +968,11 @@ def review_upload():
     except ValueError as problem:
         page["error"] = str(problem)
         page["step"] = 1
+    except Exception:
+        app.logger.exception("Reviewing the uploaded files failed")
+        page["error"] = ("The uploaded files could not be reviewed. Check that each file is a "
+                         "valid FASTA, CSV/TSV, XLSX, or VCF file and try again.")
+        page["step"] = 1
     return render_page(values, page)
 
 
@@ -964,7 +988,15 @@ def run_reviewed():
         page["error"] = "The uploaded files have expired. Please upload them again."
         return render_page(values, page)
     roles, choices, options = review_choices(request.form, item["inspections"])
-    review = review_dataset(item["files"], item["inspections"], roles, choices, options)
+    try:
+        review = review_dataset(item["files"], item["inspections"], roles, choices, options)
+    except Exception:
+        app.logger.exception("Reviewing the uploaded files failed")
+        page["error"] = "The uploaded files could not be reviewed. Please upload them again."
+        return render_page(values, page)
+    if "fasta" not in review["by_role"]:
+        # Genomic-region settings only apply to individual sequences.
+        values["genomic_region_mode"] = "automatic"
     thresholds, date_window, error = check_settings(values)
     if error is None and not review["ready"]:
         error = "Resolve the problems listed in Step 2 before running the analysis."
@@ -976,11 +1008,18 @@ def run_reviewed():
         try:
             paths, names = prepare_inputs(item["files"], review, temporary_folder, options)
         except ValueError as problem:
-            page["error"] = str(problem)
+            page["error"] = str(problem).replace(str(temporary_folder), "[temporary upload]")
+        except Exception:
+            app.logger.exception("Preparing the uploaded files failed")
+            page["error"] = "The uploaded files could not be prepared for analysis."
         else:
+            page["input_notes"] = names.pop("_notes", [])
             run_analyses(paths, names, values, thresholds, date_window, temporary_folder, page)
+    # The analysis has read the files; the uploads are deleted now (only the
+    # results stay, in memory, for the download links).
+    with STAGED_LOCK:
+        remove_staged(token)
     page["analysis_plan"] = review["analyses"]
-    page["token"] = token
     return render_page(values, page)
 
 

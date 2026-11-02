@@ -7,22 +7,45 @@ import sys
 import pandas as pd
 import requests
 
+from validate_inputs import is_missing_value
+
 
 GEONAMES_URL = "https://secure.geonames.org/searchJSON"
 
 
+US_NAMES = {"usa", "us", "u.s.", "u.s.a.", "united states", "united states of america"}
+US_STATES = {
+    "alabama", "alaska", "arizona", "arkansas", "california", "colorado", "connecticut",
+    "delaware", "florida", "georgia", "hawaii", "idaho", "illinois", "indiana", "iowa",
+    "kansas", "kentucky", "louisiana", "maine", "maryland", "massachusetts", "michigan",
+    "minnesota", "mississippi", "missouri", "montana", "nebraska", "nevada",
+    "new hampshire", "new jersey", "new mexico", "new york", "north carolina",
+    "north dakota", "ohio", "oklahoma", "oregon", "pennsylvania", "rhode island",
+    "south carolina", "south dakota", "tennessee", "texas", "utah", "vermont", "virginia",
+    "washington", "west virginia", "wisconsin", "wyoming", "district of columbia",
+    "puerto rico",
+}
+
+
 def is_state_only_location(location):
-    """Recognize names like 'USA: ND' without treating them as collection sites."""
+    """Recognize US country- or state-level labels that are not collection sites.
+
+    Examples: 'USA', 'USA: ND', 'USA: North Dakota'. A more specific label such
+    as 'USA: ND, Fargo' is not coarse. Country-only labels of other countries
+    are not recognized here (GeoNames flags them when it is configured).
+    """
 
     if pd.isna(location):
         return False
-    country, separator, area = " ".join(str(location).split()).partition(":")
-    return (
-        bool(separator)
-        and country.casefold() in {"usa", "us", "united states"}
-        and len(area.strip()) == 2
-        and area.strip().isalpha()
-    )
+    text = " ".join(str(location).split()).casefold()
+    country, separator, area = text.partition(":")
+    country = country.strip()
+    area = area.strip()
+    if country not in US_NAMES:
+        return False
+    if not separator or not area:
+        return True  # the whole country
+    return (len(area) == 2 and area.isalpha()) or area in US_STATES
 
 
 def fill_missing_coordinates(data):
@@ -32,8 +55,7 @@ def fill_missing_coordinates(data):
     samples["Coordinate_Source"] = pd.NA
     samples["Geographic_Precision"] = "Named location only (precision unverified)"
 
-    no_location = samples["Location_Name"].isna() | samples["Location_Name"].astype(
-        "string").str.strip().eq("").fillna(True)
+    no_location = samples["Location_Name"].map(is_missing_value)
     samples.loc[no_location, "Geographic_Precision"] = "No location given"
 
     provided = samples["Latitude"].notna() & samples["Longitude"].notna()
@@ -53,7 +75,7 @@ def fill_missing_coordinates(data):
             file=sys.stderr,
         )
 
-    missing_count = int((~provided & ~state_only).sum())
+    missing_count = int((~provided & ~state_only & ~no_location).sum())
     if missing_count == 0:
         return samples
 
@@ -70,7 +92,7 @@ def fill_missing_coordinates(data):
     geocoded_count = 0
     coarse_count = 0
 
-    for index, sample in samples.loc[~provided & ~state_only].iterrows():
+    for index, sample in samples.loc[~provided & ~state_only & ~no_location].iterrows():
         location = sample["Location_Name"]
         if pd.isna(location):
             continue
@@ -120,8 +142,9 @@ def fill_missing_coordinates(data):
                 if valid_latitude and valid_longitude:
                     feature_code = str(places[0].get("fcode", "")).upper()
                     feature_class = str(places[0].get("fcl", "")).upper()
-                    if feature_class == "A" or feature_code.startswith(
-                        ("ADM", "PCL")
+                    # A = countries/states/regions; L = continents, areas, regions.
+                    if feature_class in {"A", "L"} or feature_code.startswith(
+                        ("ADM", "PCL", "CONT", "RGN", "AREA")
                     ):
                         precision = "Administrative area (too coarse for distance cutoff)"
                     else:

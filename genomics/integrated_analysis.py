@@ -151,12 +151,14 @@ def add_figure(result, name, title, caption, make):
 def run_integrated_analysis(individual_data=None, mafft_path=None, reference_path=None,
                             snv_path=None, pooled_metadata_path=None, position_path=None,
                             masked_sites_path=None, signature_path=None, settings=None,
-                            input_labels=None, relationship=None):
+                            input_labels=None, relationship=None, input_notes=None):
     """Return a dictionary of tables, figures, summaries, notes, and provenance.
 
     `relationship` optionally carries the Sprint 2 pairwise results
     ({"pairs", "thresholds", "candidates", "clusters"}) so their figures are
     drawn with the rest of the dashboard; they are not recalculated here.
+    `input_notes` are messages from preparing the inputs (for example each
+    combined file's import warnings); they are shown with the quality notes.
     """
 
     settings = {**DEFAULT_SETTINGS, **(settings or {})}
@@ -167,6 +169,9 @@ def run_integrated_analysis(individual_data=None, mafft_path=None, reference_pat
 
     def note(section, text):
         result["notes"].setdefault(section, []).append(text)
+
+    for text in input_notes or []:
+        note("quality", text)
 
     # 1. Reference genome.
     reference = None
@@ -388,6 +393,14 @@ def run_integrated_analysis(individual_data=None, mafft_path=None, reference_pat
     elif individual is not None or pooled is not None:
         note("cross_source", "Cross-source comparison needs individual sequences with a "
                              "reference FASTA and a pooled SNV table on a compatible reference.")
+
+    if individual is not None and pooled is None and not individual["variants"].empty:
+        summary = position_summary(None, individual["variants"], reference["Reference_ID"])
+        result["tables"]["variant_positions.csv"] = summary
+        add_figure(result, "genome_positions", "Variants along the reference genome",
+                   "Variants carried by individual sequences at their reference positions. No "
+                   "pooled samples were supplied, so pooled occurrence is not shown.",
+                   lambda: figures.genome_position_figure(summary, annotation_ranges(summary)))
 
     if individual is not None and individual["calls"] is not None:
         add_figure(result, "callable_positions", "Callable and uncallable reference positions",
@@ -616,7 +629,10 @@ def analysis_status(result, individual_data, relationship):
             f"{int(pooled['variants']['Analysis_Included'].sum())} of {len(pooled['variants'])} "
             "records retained")
         coverage = int(pooled["samples"]["Genome_Coverage_Percent"].notna().sum())
-        add("Paper coverage filter (>90% at 10x)", "Completed" if coverage else "Not evaluable",
+        total_samples = len(pooled["samples"])
+        add("Paper coverage filter (>90% at 10x)",
+            "Not evaluable" if not coverage else ("Completed" if coverage == total_samples
+                                                  else "Partly completed"),
             f"Genome coverage known for {coverage} of {len(pooled['samples'])} pooled samples")
         add("Depth-versus-SNV regression (Fig 2B analogue)",
             "Completed" if result.get("regression") else "Skipped",
@@ -706,7 +722,9 @@ def geographic_summary(individual_data, pooled_samples):
         for location, group in data.groupby("Location_Name", dropna=False, sort=True):
             precision = group.get("Geographic_Precision", pd.Series(dtype=str)).astype(str)
             has_point = group["Latitude"].notna() & group["Longitude"].notna()
-            usable = has_point & ~precision.str.contains("too coarse") & ~precision.str.contains("no coordinates")
+            coarse = group["Location_Name"].map(is_state_only_location).astype(bool)
+            usable = (has_point & ~precision.str.contains("too coarse")
+                      & ~precision.str.contains("no coordinates") & ~coarse)
             dates = group["Collection_Date"].dropna()
             rows.append({
                 "Location_Name": location if pd.notna(location) and str(location) else "(no location)",
@@ -741,13 +759,16 @@ def build_summary(result, individual_data):
         summary["pooled_records_included"] = int(pooled["variants"]["Analysis_Included"].sum())
         summary["pooled_variants"] = int(
             pooled["variants"].loc[pooled["variants"]["Analysis_Included"], "Variant_Key"].nunique())
-        dates = pd.concat([pooled["samples"]["Collection_Date"],
-                           individual["samples"]["Collection_Date"] if individual else pd.Series(dtype="datetime64[ns]")])
-        dates = dates.dropna()
-        if not dates.empty:
-            summary["date_start"] = dates.min().date().isoformat()
-            summary["date_end"] = dates.max().date().isoformat()
         summary["pooled_coverage_known"] = int(pooled["samples"]["Genome_Coverage_Percent"].notna().sum())
+    date_sources = []
+    if pooled is not None:
+        date_sources.append(pooled["samples"]["Collection_Date"])
+    if individual_data is not None:
+        date_sources.append(pd.to_datetime(individual_data["Collection_Date"], errors="coerce"))
+    dates = pd.concat(date_sources).dropna() if date_sources else pd.Series(dtype="datetime64[ns]")
+    if not dates.empty:
+        summary["date_start"] = dates.min().date().isoformat()
+        summary["date_end"] = dates.max().date().isoformat()
     if result["reference"] is not None:
         summary["reference"] = (f"{result['reference']['Reference_ID']} "
                                 f"({result['reference']['Length']} bases)")
@@ -755,6 +776,7 @@ def build_summary(result, individual_data):
         counts = result["comparison"]["counts"].set_index("Category")["Variants"]
         summary["category_counts"] = counts.to_dict()
         summary["shared_variants"] = int(counts.iloc[0])
+        summary["incomparable_variants"] = int(counts.get(INCOMPARABLE, 0))
     population = result["population"]
     if population is not None:
         summary["population_method"] = population["method"] if population["available"] else "Not available"

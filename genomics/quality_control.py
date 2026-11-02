@@ -128,6 +128,7 @@ def apply_pooled_quality_control(variants, samples, mode=PAPER_MODE, masked_site
     depth_results = []
     fisher_results = []
     mask_results = []
+    masked_references = {reference_id for reference_id, _ in (masked_sites or set())}
     reference_results = []
     for row in variants.to_dict("records"):
         reference_results.append(reference_check(row, reference, registry))
@@ -135,6 +136,8 @@ def apply_pooled_quality_control(variants, samples, mode=PAPER_MODE, masked_site
         fisher_results.append(fisher_check(row, settings["max_fisher_p"]))
         if masked_sites is None:
             mask_results.append("Not reproduced (no masked-site list supplied)")
+        elif row["Reference_ID"] not in masked_references:
+            mask_results.append(f"{NOT_EVALUABLE} (masked-site list uses a different reference)")
         elif (row["Reference_ID"], int(row["Position"])) in masked_sites:
             mask_results.append("Fail (listed problematic site)")
         else:

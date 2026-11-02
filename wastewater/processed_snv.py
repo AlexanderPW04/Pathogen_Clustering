@@ -62,11 +62,15 @@ IVAR_COLUMNS = {
     "ALT_AA": "Source_Alt_AA",
 }
 IVAR_REQUIRED = {"REGION", "POS", "REF", "ALT", "ALT_FREQ", "TOTAL_DP"}
+# Header spellings (letters and digits only, lower case) accepted as the
+# sample column of a combined iVar table.
+SAMPLE_HEADERS = {"sample", "sampleid", "samplename"}
 
 PAPER_FORMAT = "Fontenele et al. (2021) Supplementary Table 2"
 IVAR_FORMAT = "iVar variants TSV"
 STANDARD_FORMAT = "Standardized processed SNV table"
 VCF_SNV_FORMAT = "VCF (single-nucleotide entries converted to the standardized table)"
+COMBINED_FORMAT = "Combined standardized table (some records converted from VCF)"
 
 
 def read_table(path):
@@ -107,6 +111,11 @@ def load_processed_snvs(path, metadata_path=None):
         raise ValueError("The VCF has no single-nucleotide variant entries that can be analyzed. "
                          + " ".join(conversion_notes))
     data.columns = [str(name).strip() for name in data.columns]
+    if IVAR_REQUIRED.issubset(data.columns) and not {"SAMPLE", "Sample_ID"} & set(data.columns):
+        sample_columns = [name for name in data.columns
+                          if "".join(c for c in name.casefold() if c.isalnum()) in SAMPLE_HEADERS]
+        if len(sample_columns) == 1:
+            data = data.rename(columns={sample_columns[0]: "SAMPLE"})
     published = (
         data.attrs.get("fontenele_2021_table2", False)
         and set(PAPER_COLUMNS).issubset(data.columns)
@@ -144,9 +153,11 @@ def load_processed_snvs(path, metadata_path=None):
         dates = pd.to_datetime(data["Collection_Date"].replace("", pd.NA), errors="coerce")
     else:
         input_format = STANDARD_FORMAT
-        formats = set(data.get("Source_Input_Format", pd.Series(dtype=str)).astype(str)) - {""}
+        formats = set(data.get("Source_Input_Format", pd.Series(dtype=str)).fillna("").astype(str))
         if formats == {VCF_FORMAT}:
             input_format = VCF_SNV_FORMAT
+        elif VCF_FORMAT in formats:
+            input_format = COMBINED_FORMAT
         missing = sorted(set(REQUIRED_COLUMNS) - set(data.columns))
         if missing:
             raise ValueError("Missing processed SNV column(s): " + ", ".join(missing))
@@ -252,6 +263,31 @@ def load_processed_snvs(path, metadata_path=None):
     if errors:
         raise ValueError("Processed SNV validation failed: " + " ".join(errors))
 
+    # A row reporting 0% (or 0 alternate reads) is not a detected variant. It is
+    # set aside rather than analyzed as an observation, and it is not used as
+    # coverage evidence either (coverage comes only from a per-position table).
+    zero = frequencies.eq(0)
+    if alt_depths is not None:
+        zero = zero | alt_depths.eq(0).fillna(False)
+    if zero.all():
+        raise ValueError("Every record reports a 0% frequency or 0 alternate reads, so the "
+                         "table contains no detected variants.")
+    if zero.any():
+        warnings.append(f"{int(zero.sum())} record(s) report a 0% frequency or 0 alternate reads; "
+                        "they were set aside because they are not variant calls.")
+        data, frequencies, depths = data.loc[~zero].copy(), frequencies[~zero], depths[~zero]
+        positions, dates = positions[~zero], dates[~zero]
+        if alt_depths is not None:
+            alt_depths = alt_depths[~zero]
+
+    # IMP-9: reported frequencies should agree with the read counts given.
+    if alt_depths is not None:
+        implied = alt_depths / depths
+        disagree = implied.notna() & (implied - frequencies).abs().gt(0.05)
+        if disagree.any():
+            warnings.append(f"{int(disagree.sum())} record(s) report a frequency that differs by more "
+                            "than 0.05 from alternate reads / depth; the reported frequency is used.")
+
     data["Position"] = positions.astype(int)
     data["Alt_Frequency"] = frequencies.astype(float)
     data["Read_Depth"] = depths.astype("Int64")
@@ -267,7 +303,10 @@ def load_processed_snvs(path, metadata_path=None):
     keys = ["Sample_ID", "Reference_Genome", "Position", "Ref", "Alt"]
     duplicate_count = int(data.duplicated(keys).sum())
     if duplicate_count:
-        warnings.append(f"{duplicate_count} repeated sample/reference/position/allele record(s) found; rows were retained.")
+        conflicting = int((data.groupby(keys)["Alt_Frequency"].nunique() > 1).sum())
+        warnings.append(f"{duplicate_count} repeated sample/reference/position/allele record(s) found; "
+                        "rows were retained and analyses use the first one"
+                        + (f" ({conflicting} of them report different frequencies)." if conflicting else "."))
     missing_dates = int(data["Collection_Date"].isna().sum())
     missing_locations = int(data["Location_Name"].eq("").sum())
     if missing_dates:

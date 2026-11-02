@@ -26,12 +26,16 @@ def check_mafft():
             encoding="utf-8",
         )
         command = [mafft_path, "--auto", "--nuc", str(input_path)]
+        folder_for_command = None
         if Path(mafft_path).suffix.lower() in {".bat", ".cmd"}:
-            command = ["cmd.exe", "/c"] + command
+            # Same quoting rule as align_sequences.run_mafft: pass the input by
+            # its plain name so paths with spaces still work through cmd.exe.
+            command = ["cmd.exe", "/c", mafft_path, "--auto", "--nuc", input_path.name]
+            folder_for_command = folder
 
         try:
             result = subprocess.run(
-                command, capture_output=True, text=True, timeout=5
+                command, capture_output=True, text=True, timeout=5, cwd=folder_for_command
             )
         except subprocess.TimeoutExpired:
             return {"status": "Check failed", "message": "The MAFFT test timed out."}

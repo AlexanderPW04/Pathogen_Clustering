@@ -50,6 +50,7 @@ from genomics.sequence_variants import MINIMUM_CALLABLE_POSITIONS, MINIMUM_MAPPI
 from validate_inputs import ALLOWED_SEQUENCE_CHARACTERS, clean_sequence, normalize_accession
 from wastewater.processed_snv import (
     IVAR_REQUIRED,
+    SAMPLE_HEADERS,
     PAPER_COLUMNS,
     load_processed_snvs,
     read_table as read_snv_table,
@@ -164,6 +165,15 @@ def column_values(table, column):
     return sorted(set(values[values.ne("")]))
 
 
+def ivar_sample_column(columns):
+    """The sample column of an iVar table, whatever its capitalization, or None."""
+
+    for column in columns:
+        if column in {"SAMPLE", "Sample_ID"} or squash(column) in SAMPLE_HEADERS:
+            return column
+    return None
+
+
 def inspect_table(path, info):
     if info["kind"] == EXCEL_KIND:
         table = read_snv_table(path)  # handles the paper's descriptive first row
@@ -187,7 +197,7 @@ def inspect_table(path, info):
         info["format"] = IVAR_TABLE_FORMAT
         info["candidates"] = ["snv"]
         info["reference_ids"] = column_values(table, "REGION")
-        sample_column = "SAMPLE" if "SAMPLE" in columns else ("Sample_ID" if "Sample_ID" in columns else None)
+        sample_column = ivar_sample_column(table.columns)
         if sample_column:
             info["ids"] = column_values(table, sample_column)
         else:
@@ -267,7 +277,7 @@ def inspect_file(path, name):
             info["refused"] = True
             info["problems"].append("This file type is not supported. Use FASTA, CSV/TSV/XLSX, "
                                     "or VCF (each optionally .gz).")
-    except (ValueError, KeyError, UnicodeDecodeError, OSError) as error:
+    except Exception as error:  # any unreadable file is refused on its own, not the whole upload
         info["refused"] = True
         info["problems"].append(f"Could not read this file: {error}")
     if info["kind"] == FASTA_KIND and info["extension"] not in {".fasta", ".fa", ".fna"}:
@@ -428,8 +438,9 @@ def review_dataset(staged, inspections, roles, choices=None, options=None):
         review["by_role"].setdefault(role, []).append(entry)
         if role in TABLE_ROLES and info["kind"] in {TABLE_KIND, EXCEL_KIND} and not native_format(info):
             table = table_for(staged[index], info)
-            picks = {**info["auto_choices"].get(role, {}), **choices.get(index, {})}
-            matches = resolve_choices(detect_columns(table.columns, role), picks)
+            matches = resolve_choices(detect_columns(table.columns, role), choices.get(index, {}))
+            matches = resolve_choices(matches, info["auto_choices"].get(role, {}),
+                                      "matching its values with the other uploaded files")
             entry["matches"] = matches
             entry["problems"] += unresolved(matches) + value_warnings(table, matches)
             review["mappings"][index] = matches
@@ -441,7 +452,9 @@ def review_dataset(staged, inspections, roles, choices=None, options=None):
                                       "only one is allowed. Set the others to 'Do not use'.")
     if "reference" in review["by_role"]:
         info = review["by_role"]["reference"][0]["info"]
-        if info["records"] != 1:
+        if info["kind"] != FASTA_KIND:
+            review["problems"].append("The reference genome must be a FASTA file.")
+        elif info["records"] != 1:
             review["problems"].append("The reference FASTA must contain exactly one sequence.")
         else:
             review["reference"] = {"id": info["ids"][0], "length": info["lengths"][0]}
@@ -659,8 +672,9 @@ def compatibility_review(review):
                 declared = lengths.get(reference["id"])
                 if declared and str(declared).isdigit() and int(declared) != reference["length"]:
                     status = (f"VCF contig length {declared} differs from the reference FASTA "
-                              f"({reference['length']}); records will be treated as incomparable.")
-                    review["warnings"].append(entry["info"]["name"] + ": " + status)
+                              f"({reference['length']}) under the same name, so they are different "
+                              "sequences. Upload the matching reference before running.")
+                    review["problems"].append(entry["info"]["name"] + ": " + status)
             else:
                 others = [name for name in names if name != reference["id"]]
                 status = ("Different reference label(s) " + ", ".join(others) + " versus "
@@ -778,13 +792,18 @@ def prepared_metadata(review, options):
     return table
 
 
-def combine_variant_tables(entries, staged, folder):
-    """Load each pooled variant file and write one standardized CSV."""
+def combine_variant_tables(entries, staged, folder, notes=None):
+    """Load each pooled variant file and write one standardized CSV.
+
+    Each file's import warnings are added to `notes` with the file's name.
+    """
 
     frames = []
     for number, entry in enumerate(entries):
         single = prepare_variant_file(entry, staged, folder, f"variants_part{number}")
-        data, _ = load_processed_snvs(single)
+        data, warnings = load_processed_snvs(single)
+        if notes is not None:
+            notes += [f"{entry['info']['name']}: {warning}" for warning in warnings]
         data["Collection_Date"] = data["Collection_Date"].dt.strftime("%Y-%m-%d")
         frames.append(data)
     combined = pd.concat(frames, ignore_index=True).astype(object)
@@ -813,7 +832,7 @@ def prepare_variant_file(entry, staged, folder, stem):
     if table is None:
         table = table_for(source, info)
     if info["format"] == IVAR_TABLE_FORMAT:
-        if "SAMPLE" not in table.columns and "Sample_ID" not in table.columns:
+        if ivar_sample_column(table.columns) is None:
             table.insert(0, "SAMPLE", info["ids"][0])
         path = Path(folder) / f"{stem}.tsv"
         table.to_csv(path, sep="\t", index=False)
@@ -843,8 +862,11 @@ def prepare_inputs(staged, review, folder, options=None):
         names["reference"] = roles["reference"][0]["info"]["name"]
     if "snv" in roles:
         entries = roles["snv"]
+        notes = []
         paths["snv"] = (prepare_variant_file(entries[0], staged, folder, "pooled_variants")
-                        if len(entries) == 1 else combine_variant_tables(entries, staged, folder))
+                        if len(entries) == 1 else combine_variant_tables(entries, staged, folder, notes))
+        if notes:
+            names["_notes"] = notes
         names["snv"] = ", ".join(entry["info"]["name"] for entry in entries)
     for role in ("pooled_metadata", "positions", "masked_sites", "signatures"):
         if role in roles:
