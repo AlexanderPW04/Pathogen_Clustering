@@ -10,7 +10,7 @@ overlap, and the original Sprint 2 sequence-relationship screening.
 
 The application can run on a personal computer or in the supplied Docker
 container. This README describes the code on the `sprint4-integration`
-branch as of November 1, 2026. A potential outbreak cluster, a shared variant,
+branch as of November 2, 2026. A potential outbreak cluster, a shared variant,
 or a variant-profile overlap is a screening result; none of them confirms
 transmission, an outbreak, or the lineage present in a mixed sample.
 
@@ -19,104 +19,361 @@ transmission, an outbreak, or the lineage present in a mixed sample.
 > `ARTICLE_METHOD_VALIDATION.md` for which methods of Fontenele et al. (2021)
 > are reproduced, partially reproduced, or exploratory, with a comparison
 > against the paper's published supplementary data.
+>
+> **To run it on your computer**, follow
+> [Run everything locally: complete setup](#run-everything-locally-complete-setup) step by step.
 
-## Start locally on Windows
+## Run everything locally: complete setup
 
-These instructions use **Windows Command Prompt**. Replace the example project
-path with the folder that contains `app.py` and `requirements.txt`.
+Follow these steps in order. Steps 1–5 and 8 are needed for the core website
+(individual sequences, pooled sequencing results, and the combined analysis).
+Step 6 (GeoNames) and step 7 (Sprint 4 AI metadata enrichment) are optional;
+every analysis still runs without them. Commands are given for **Windows
+Command Prompt**, **Windows PowerShell**, and **macOS/Linux**; use the one
+that matches your terminal.
 
-### First-time setup
+### 0. What you need
 
-1. Install [Python 3.11](https://www.python.org/downloads/) if it is not already
-   available. Confirm the installation:
+| Item | Needed for | Required? |
+|---|---|---|
+| Python **3.11** with pip | Running the application | Yes |
+| Git (or a ZIP download of the project) | Getting the code | Yes (one of the two) |
+| A web browser | Using the website | Yes |
+| **MAFFT** (external program) | Aligning individual sequences (Sprint 2, combined analysis, both example buttons that use sequences) | Yes for individual sequences; not for pooled-only uploads |
+| Internet access | GeoNames, NCBI E-utilities, PubTator3, Claude | Only for those optional features |
+| A free **GeoNames** account | Turning specific place names into approximate coordinates | Optional |
+| An **Anthropic API key** with billing enabled | Paid Claude extraction in Sprint 4 | Optional (off by default) |
+| An **NCBI API key** | Faster NCBI literature lookups (10 instead of 3 requests per second) | Optional |
+| Docker Desktop/Engine | Running the Linux container instead of a local Python setup | Optional |
 
-   ```bat
-   py -3.11 --version
-   ```
+### 1. Get the code
 
-2. Download and extract the complete project, or clone its GitHub repository.
-   Keep the Python modules, `templates`, `examples`, and `wastewater` together.
-   Open Command Prompt in that folder.
+With Git (the work is on the `sprint4-integration` branch):
 
-3. Create a virtual environment, install the packages, and start Flask:
-
-   ```bat
-   cd /d "C:\path\to\project"
-   py -3.11 -m venv .venv
-   .venv\Scripts\activate.bat
-   python -m pip install --upgrade pip
-   python -m pip install -r requirements.txt
-   python app.py
-   ```
-
-4. Open a browser at:
-
-   ```text
-   http://127.0.0.1:5000
-   ```
-
-The server stays running in that terminal. Press `Ctrl+C` to stop it.
-`python app.py` does not open the browser automatically.
-
-The website and processed wastewater pages can start without MAFFT or a
-GeoNames account. **Install MAFFT before running the individual-genome
-analysis.** GeoNames is optional. Both are explained below.
-
-If the `py` launcher is unavailable but `python --version` reports Python 3.11,
-use `python -m venv .venv` instead. Create the environment on each computer;
-do not copy another computer's `.venv` folder.
-
-### Starting the project again
-
-After the first installation, use:
-
-```bat
-cd /d "C:\path\to\project"
-.venv\Scripts\activate.bat
-python app.py
+```console
+git clone https://github.com/AlexanderPW04/Pathogen_Clustering.git
+cd Pathogen_Clustering
+git checkout sprint4-integration
 ```
 
-If using a session-only MAFFT path or GeoNames environment variable, set it
-again in this same terminal before starting Flask. After downloading a new
-version of the project, reinstall any updated requirements:
+Or download the project as a ZIP from GitHub, extract **all** of it, and open
+a terminal in the folder that contains `app.py` and `requirements.txt`.
+Keep the folders `genomics/`, `literature/`, `wastewater/`, `templates/`,
+`examples/`, and `tests/` next to the Python files.
+
+### 2. Install Python 3.11 and check it
+
+Install Python 3.11 from [python.org](https://www.python.org/downloads/).
+On Windows, tick **"Add python.exe to PATH"** in the installer. Then check:
 
 ```bat
+:: Windows (Command Prompt or PowerShell)
+py -3.11 --version
+```
+
+```sh
+# macOS/Linux
+python3.11 --version
+```
+
+The output must start with `Python 3.11`. If `py` is not available on
+Windows but `python --version` shows 3.11, use `python` wherever `py -3.11`
+appears below.
+
+### 3. Create a virtual environment and install the Python packages
+
+Run these in the project folder. The environment is created once per
+computer; never copy a `.venv` folder from another computer.
+
+Windows Command Prompt:
+
+```bat
+cd /d "C:\path\to\Pathogen_Clustering"
+py -3.11 -m venv .venv
+.venv\Scripts\activate.bat
+python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
 
-### Windows PowerShell
-
-PowerShell can run the environment's Python directly without activating a
-script or changing the execution policy:
+Windows PowerShell (no activation script needed, so no execution-policy change):
 
 ```powershell
-Set-Location "C:\path\to\project"
+Set-Location "C:\path\to\Pathogen_Clustering"
 py -3.11 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\python.exe app.py
 ```
 
-For later runs, only the folder change and final command are needed.
-
-### macOS or Linux
-
-Use an installed Python 3.11 interpreter:
+macOS/Linux:
 
 ```sh
-cd "/path/to/project"
+cd "/path/to/Pathogen_Clustering"
 python3.11 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
+```
+
+Check that every package, including the Anthropic SDK used by Sprint 4,
+imports in this environment (it prints `all packages OK`):
+
+```console
+python -c "import flask, pandas, numpy, openpyxl, Bio, requests, matplotlib, anthropic; print('all packages OK')"
+```
+
+In PowerShell without activation, write `.\.venv\Scripts\python.exe` instead of
+`python` (here and in every later step). On macOS/Linux, run
+`source .venv/bin/activate` in each new terminal first.
+
+> If Sprint 4 later says *"The Anthropic Python SDK … is not installed in the
+> Python environment running this server"*, the server was started with a
+> Python that skipped this step. Run the `pip install -r requirements.txt`
+> line again **with the same Python that starts the server**, then restart it.
+
+### 4. Install MAFFT and put it on `PATH`
+
+MAFFT is a separate program; pip does not install it.
+
+**Windows**
+
+1. Download the all-in-one Windows package from the
+   [official MAFFT Windows page](https://mafft.ddbj.nig.ac.jp/alignment/software/windows_without_cygwin.html).
+2. Extract the whole package to a folder without spaces, for example
+   `C:\Tools\mafft-win`, and keep its subfolders together. The folder must
+   contain `mafft.bat`.
+3. Add that folder to your user `Path` permanently: open **Start → "Edit
+   environment variables for your account" → Path → Edit → New**, paste
+   `C:\Tools\mafft-win`, and click **OK** in every window.
+4. Close all terminals and open a new one (running programs do not see the
+   change), then check:
+
+   ```bat
+   where mafft
+   mafft --version
+   ```
+
+   For a single terminal session only, you can instead run
+   `set "PATH=C:\Tools\mafft-win;%PATH%"` (Command Prompt) or
+   `$env:Path = "C:\Tools\mafft-win;" + $env:Path` (PowerShell) before
+   starting the server.
+
+**macOS/Linux**
+
+```sh
+# Debian/Ubuntu
+sudo apt-get update
+sudo apt-get install mafft
+# macOS with Homebrew
+brew install mafft
+# check (both)
+command -v mafft
+mafft --version
+```
+
+The server must be started from a terminal in which `mafft --version` works.
+
+### 5. Start the website
+
+Windows Command Prompt (environment active):
+
+```bat
 python app.py
 ```
 
-If `python3` is already Python 3.11, it can replace `python3.11`.
-The local browser address is the same on all platforms.
+PowerShell:
 
-Later `python` commands assume the virtual environment is active. If you used
-the no-activation approach, replace `python` with
-`.\.venv\Scripts\python.exe` on Windows or `.venv/bin/python` on macOS/Linux.
+```powershell
+.\.venv\Scripts\python.exe app.py
+```
+
+macOS/Linux (environment active):
+
+```sh
+python app.py
+```
+
+Open **http://127.0.0.1:5000** in a browser. The terminal must stay open while
+you use the site; press `Ctrl+C` in it to stop the server. The address only
+works on this computer. If port 5000 is busy, run
+`python -m flask --app app run --host 127.0.0.1 --port 5001` and open port 5001.
+
+### 6. Optional: GeoNames place lookup
+
+1. Create an account at [geonames.org/login](https://www.geonames.org/login)
+   and confirm the e-mail.
+2. Sign in, open [Manage Account](https://www.geonames.org/manageaccount),
+   and click **enable** under *Free Web Services*.
+3. Store your **username** (no password is used) as an environment variable.
+   Permanent setting:
+
+   ```bat
+   :: Windows (Command Prompt or PowerShell), then open a NEW terminal
+   setx GEONAMES_USERNAME "your_username"
+   ```
+
+   ```sh
+   # macOS (zsh): add to ~/.zshrc; Linux (bash): add to ~/.bashrc; then open a new terminal
+   echo 'export GEONAMES_USERNAME="your_username"' >> ~/.zshrc
+   ```
+
+   For the current terminal only: `set "GEONAMES_USERNAME=your_username"`
+   (Command Prompt), `$env:GEONAMES_USERNAME = "your_username"` (PowerShell),
+   or `export GEONAMES_USERNAME="your_username"` (macOS/Linux).
+4. Restart the server (step 5) from a terminal that has the variable.
+
+Set GeoNames as an environment variable rather than in `.env`. Without it,
+analyses still run; specific place names simply stay without coordinates.
+
+### 7. Optional: Sprint 4 AI metadata enrichment
+
+Finding linked publications uses the free NCBI E-utilities and PubTator3
+services and needs no account. Only the Claude extraction step is paid, and
+it is **disabled until you configure it**. Even when it is configured,
+nothing is sent to Claude until you approve a cost estimate on the page.
+
+1. Create a local settings file from the example (`.env` is listed in
+   `.gitignore`, so it is never committed):
+
+   ```bat
+   :: Windows
+   copy ai_enrichment.example.env .env
+   notepad .env
+   ```
+
+   ```sh
+   # macOS/Linux
+   cp ai_enrichment.example.env .env
+   nano .env
+   ```
+
+2. To allow paid Claude extraction, create an API key in the
+   [Anthropic Console](https://console.anthropic.com/) (**API Keys**; the
+   account needs billing credit) and set in `.env`:
+
+   ```text
+   AI_ENRICHMENT_ENABLED=true
+   ANTHROPIC_API_KEY=your-key-here
+   ANTHROPIC_MODEL=claude-opus-5-5
+   ```
+
+   Keep the spending limits in the file (`AI_MAX_COST_USD_PER_RUN=1.00`,
+   `AI_MAX_COST_USD_PER_DAY=3.00`, and the request/token/article limits) or
+   lower them. Never paste the key into a chat, screenshot, source file, or
+   commit.
+3. Leave `AI_ACCESS_CODE` empty for local use: paid runs are then allowed only
+   from this computer (`127.0.0.1`). If you set a code, it is required for
+   every paid run, including local ones. Always set one before exposing the
+   site to other computers.
+4. Optional NCBI settings in the same file: `NCBI_API_KEY` (create it under
+   **Account settings → API Key Management** on
+   [ncbi.nlm.nih.gov](https://www.ncbi.nlm.nih.gov/account/)), and
+   `NCBI_EMAIL`. Without a key, requests are limited to 3 per second, which is
+   enough for normal use.
+5. Confirm that Git ignores the file. The command prints `.env`:
+
+   ```console
+   git check-ignore .env
+   ```
+
+6. Restart the server (step 5). The `.env` file is read when Sprint 4 starts;
+   variables already set in the environment take precedence over it.
+
+Without step 7, Sprint 4 still finds and assesses publications for free and
+explains that AI analysis is disabled; the genomic analysis is unaffected.
+
+### 8. Check the installation on the website
+
+On the main page, scroll to **System status and external services**:
+
+1. Click **Check MAFFT & GeoNames (and PubTator)**. Expected: MAFFT
+   *Operational*; GeoNames *Operational* (or *Not configured* if you skipped
+   step 6); PubTator3 *Operational* when online. The AI line reports
+   *Disabled*, *Not configured*, or *Configured* from your settings without
+   contacting Claude.
+2. Only if you completed step 7: click **Check Claude API access (token count
+   only, no text generated)**. *Operational* means the key and model were
+   accepted by Anthropic's free token-counting endpoint. It does not run a paid
+   extraction.
+
+### 9. Run the built-in examples (all synthetic, no AI call)
+
+On the main page:
+
+1. **Run Example Analysis (individual sequences only)**: Sprint 2 pipeline with MAFFT.
+2. **Run Integrated Example**: individual sequences, pooled SNVs, and a shared
+   reference on one coordinate system. Tick **Include Sprint 4 metadata
+   enrichment before the analysis** to walk through the enrichment steps with
+   invented articles and fixed answers.
+3. **Run Literature Enrichment Example (offline, no AI call)**: the Sprint 4
+   review, approval, and apply steps on their own.
+4. Open `http://127.0.0.1:5000/wastewater-data` and click **Run Synthetic
+   Example** for the processed-measurement page (no MAFFT needed).
+
+### 10. Analyze your own files
+
+1. On the main page choose an analysis mode: **Individual sequences** (FASTA +
+   metadata CSV/TSV/XLSX), **Pooled sequencing results** (processed SNV
+   table or VCF), or **Combined** (both plus one shared reference FASTA). Or
+   upload any mix with **Detect from my files**.
+2. Optional: tick **Use PubTator + Claude AI to find missing or more precise
+   sample information** to add Sprint 4 before the analysis.
+3. Click **Review files**. Check the detected file roles, the column mapping,
+   and the *Metadata readiness* table; fix any listed required item (for
+   example, enter the pathogen if the metadata does not state it).
+4. Click **Run analysis**. With Sprint 4 on, click **Continue to metadata
+   enrichment** instead:
+   1. **Find Relevant Literature** (free);
+   2. read the review outcome;
+   3. if usable evidence exists, run each Claude batch after its cost
+      estimate (paid);
+   4. approve or reject each proposal;
+   5. **Apply approved changes and run the analysis**.
+
+   **Continue with the original metadata** skips enrichment at any point.
+5. Download the result files from the results page. Uploaded files are deleted
+   after the analysis; downloads are kept in memory for about 10 minutes.
+
+### 11. Run the automated tests (optional)
+
+With the environment active, in the project folder:
+
+```console
+python -m unittest discover -s tests
+```
+
+The suite takes about 2–3 minutes and needs no internet, accounts, or keys:
+MAFFT, GeoNames, NCBI, PubTator, and Claude are all mocked. On November 2,
+2026 it ran **372 tests**:
+
+- with MAFFT on `PATH`: all pass except **2 skipped**;
+- without MAFFT: **3 skipped**.
+
+The skipped tests are optional real-data checks; see
+[Tests and local verification](#tests-and-local-verification).
+
+### 12. Every later session, and updating the code
+
+```bat
+:: Windows Command Prompt
+cd /d "C:\path\to\Pathogen_Clustering"
+.venv\Scripts\activate.bat
+python app.py
+```
+
+```powershell
+# Windows PowerShell
+Set-Location "C:\path\to\Pathogen_Clustering"
+.\.venv\Scripts\python.exe app.py
+```
+
+```sh
+# macOS/Linux
+cd "/path/to/Pathogen_Clustering" && source .venv/bin/activate && python app.py
+```
+
+After pulling a newer version (`git pull`), reinstall the requirements
+(`python -m pip install -r requirements.txt`). Then restart the server: code,
+template, and `.env` changes are only picked up by a fresh start.
 
 ## Pages and a first demonstration
 
@@ -393,6 +650,9 @@ coverage), and the paper-method PCoA on 7 pooled samples.
 | A web browser | Displays the local website |
 | MAFFT on `PATH` | Individual-genome alignment and the MAFFT diagnostic |
 | Optional GeoNames account and internet access | Missing-coordinate lookup and the GeoNames diagnostic |
+| Internet access (no account) | Sprint 4 publication discovery through NCBI E-utilities and PubTator3 |
+| Optional Anthropic API key in `.env` | Paid Claude extraction in Sprint 4 (disabled by default) |
+| Optional NCBI API key in `.env` | Faster Sprint 4 NCBI lookups (10 instead of 3 requests per second) |
 | Optional Docker Desktop/Engine | Runs the supplied Linux container |
 
 MAFFT and GeoNames are not needed for the processed-measurement or
@@ -410,6 +670,7 @@ All pages share one Flask application, so install the complete
 | `requests>=2.31,<3.0` | GeoNames HTTPS requests |
 | `gunicorn>=22.0,<24.0` | Web server in the Linux Docker image |
 | `matplotlib>=3.8,<4.0` | Dashboard figures and Sprint 3 measurement charts |
+| `anthropic>=2.3,<3.0` | Official Anthropic SDK for the optional Sprint 4 Claude extraction (imported only when it is used) |
 
 Local Windows use starts with `python app.py`. Gunicorn is used in Linux
 hosting. MAFFT is an external program and is not installed by pip.
@@ -495,7 +756,9 @@ python app.py
 
 Replace the placeholder with your account username. The application needs no
 GeoNames password. Keep the value in the environment rather than the source.
-A `.env` file alone is not automatically loaded by `python app.py`.
+For a permanent Windows setting, run `setx GEONAMES_USERNAME "your_username"`
+once and open a new terminal. The project's `.env` file is read only when
+Sprint 4 settings are loaded, so do not rely on it for GeoNames.
 Restart an already-running Flask process after changing its environment.
 
 The application uses `https://secure.geonames.org/searchJSON` with SSL
@@ -827,9 +1090,11 @@ For the full suite in the development folder:
 python -m unittest discover -s tests -v
 ```
 
-The latest full run (November 1, 2026, Python 3.11.9, with real MAFFT v7 on
-`PATH`) ran **204 tests: 202 passed and 2 were skipped** (the two optional
-real-data tests below). The suite is self-contained:
+The latest full run (November 2, 2026, Python 3.11.9, with real MAFFT v7 on
+`PATH`) ran **372 tests: all passed except 2 skipped** (the two optional
+real-data tests below; without MAFFT, 3 are skipped). NCBI E-utilities,
+PubTator3, GeoNames, and Claude are mocked, so no account, key, or internet
+connection is needed. The suite is self-contained:
 
 - The invented DEMO/NCBI-style example files live in `tests/fixtures/`.
 - The state-only Flask upload check generates its own NCBI-style records.
@@ -884,6 +1149,11 @@ segment 4 data through the guided workflow gave 10 sequences, 45 comparisons,
 | Zero strict clusters but candidate pairs exist | Genetic/date relationships exist, while usable geographic evidence is insufficient for the strict result. |
 | Download returns 404 | Its temporary cache entry expired, was evicted, or the server restarted. Rerun the analysis and download again. |
 | Full-suite `FileNotFoundError` after cloning | Check the local regression-fixture list above. |
+| Sprint 4: "The Anthropic Python SDK … is not installed" | The server's Python lacks the `anthropic` package. Run `python -m pip install -r requirements.txt` with the Python that starts the server (usually `.venv`), then restart. |
+| Sprint 4: "AI analysis is disabled on this server" | Expected until `.env` sets `AI_ENRICHMENT_ENABLED=true` and `ANTHROPIC_API_KEY` (setup step 7); restart after editing `.env`. |
+| Sprint 4: paid analysis refused ("only on the server computer or with the access code") | Open the site as `http://127.0.0.1:5000` on the same computer, or enter the `AI_ACCESS_CODE` value set in `.env`. |
+| Sprint 4: NCBI HTTP 429 or "limit of … requests" | Wait a minute and search again (answers are cached for an hour), search fewer samples, or add `NCBI_API_KEY` to `.env`. An incomplete search is reported as incomplete, never as "no evidence". |
+| Sprint 4 finds a paper but proposes nothing | Expected when the paper predates the samples, is linked only through a shared study, or never names the samples; the page shows the reason for each publication. |
 
 The local Flask development server uses `debug=False`. Each computer's
 `127.0.0.1` points to that computer; running locally does not automatically
@@ -911,6 +1181,16 @@ as shown earlier, then pass the variable by name:
 ```console
 docker run --rm -p 10000:10000 --env GEONAMES_USERNAME bmi461-sprint2
 ```
+
+The `.env` file is not copied into the image. To use the Sprint 4 settings
+(setup step 7) inside the container, pass the file at run time:
+
+```console
+docker run --rm -p 10000:10000 --env GEONAMES_USERNAME --env-file .env bmi461-sprint2
+```
+
+Paid Claude runs from the browser then need `AI_ACCESS_CODE`, because the
+container does not see the request as coming from `127.0.0.1`.
 
 The Dockerfile installs MAFFT through `apt-get`, installs `requirements.txt`,
 copies runtime modules/templates/examples, and starts one Gunicorn worker with
