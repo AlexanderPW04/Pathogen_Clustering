@@ -6,6 +6,12 @@
   {% if r.synthetic %}<p class="synthetic-note" style="padding:0.5rem 0.75rem;border-radius:8px;border:1px solid var(--warn-border)"><strong>SYNTHETIC offline demonstration:</strong> invented articles and fixed answers; no Claude call and nothing billed.</p>{% endif %}
   <p class="purpose">The results above were computed with the approved values below. The original files and metadata were not changed; each approved value carries its quoted evidence.</p>
   <div class="summary-grid">{% for label, value in r.summary.items() %}<p class="stat"><strong>{{ label }}:</strong> {{ value }}</p>{% endfor %}</div>
+  {% if r.resolution %}
+    <h3>Metadata gaps after enrichment</h3>
+    <p class="help">Each gap found at the review step, listed again with the approved values. "Improved, still limited" means a value was applied but the field is still not precise enough for its calculation (for example a place name that GeoNames must still locate). Unresolved gaps keep their original values; nothing was filled without evidence.</p>
+    <div class="scroll"><table><thead><tr><th>Field</th><th>Samples with a gap</th><th>Resolved</th><th>Improved, still limited</th><th>Unresolved</th><th>Details</th></tr></thead>
+      <tbody>{% for row in r.resolution %}<tr><td>{{ row.Field }}</td><td>{{ row['Samples with a gap'] }}</td><td>{{ row.Resolved }}</td><td>{{ row['Improved, still limited'] }}</td><td>{{ row.Unresolved }}</td><td>{% if row['Improved samples'] %}Improved: {{ row['Improved samples'] }}<br>{% endif %}{% if row['Unresolved samples'] %}Unresolved: {{ row['Unresolved samples'] }}{% endif %}</td></tr>{% endfor %}</tbody></table></div>
+  {% endif %}
   {% if r.changes %}
     <h3>Values used in this analysis</h3>
     <div class="scroll"><table><thead><tr><th>Sample</th><th>Field</th><th>Original</th><th>Applied value</th><th>Evidence</th><th>Result</th></tr></thead>

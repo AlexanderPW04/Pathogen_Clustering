@@ -49,8 +49,8 @@ from literature.config import ai_status
 from literature.pubtator import check_pubtator
 from literature.identifiers import parse_identifiers
 from literature.preanalysis import (
-    approved_changes, before_after, contribution, pooled_overrides, preview_session, sections_using,
-    write_individual_metadata,
+    approved_changes, before_after, contribution, gap_resolution, pooled_overrides, preview_session,
+    sections_using, write_individual_metadata,
 )
 from literature.workflow import new_session, record_decisions
 from literature_view import (
@@ -1214,7 +1214,8 @@ def review_choices(form, inspections):
         if picks:
             choices[index] = picks
     options = {"declared_pathogen": form.get("declared_pathogen", "").strip()[:120],
-               "complete_genomes": form.get("genomic_region_mode") == "complete_genomes"}
+               "complete_genomes": form.get("genomic_region_mode") == "complete_genomes",
+               "intended_mode": intended_mode(form)}
     return roles, choices, options
 
 
@@ -1436,6 +1437,7 @@ def enrichment_report(session, derived, log, outcome, thresholds, page):
     if comparison is not None:
         changed_pairs = comparison[comparison["Change"] != "Unchanged"].fillna("").astype(str).to_dict("records")
     return {"summary": contribution(session, derived, log, sections), "changes": changes,
+            "resolution": gap_resolution(session, derived),
             "screening": screening, "changed_pairs": changed_pairs[:40],
             "changed_pair_total": len(changed_pairs), "files": sorted(files),
             "download_id": download_id, "synthetic": session["synthetic"]}
@@ -1458,7 +1460,7 @@ def go_back():
     item = staged_item(token) if token else None
     if request.form.get("target") == "review":
         if item is not None:
-            roles, choices, options = review_choices({}, item["inspections"])
+            roles, choices, options = review_choices({"intended_mode": page["intended_mode"]}, item["inspections"])
             page["review"] = review_dataset(item["files"], item["inspections"], roles, choices, options)
             page["mode_check"] = mode_check(page["review"], page["intended_mode"])
             page.update(step=2, token=token, previous_files=[])

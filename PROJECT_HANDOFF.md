@@ -2,6 +2,24 @@
 
 **Purpose:** Transfer working context for a biomedical informatics class coding project. This handoff was prepared from discussion, Codex-reported summaries, and screenshots. It is **not** a code audit or an assertion that every file exists in the present repository. Verify the current files before editing.
 
+## Metadata readiness on the review step (November 2, 2026)
+
+- **What it shows:** `genomics/metadata_readiness.py` adds a "Metadata readiness for: <analysis>" table to Step 2. Requirements depend on the chosen or detected mode (individual, pooled, combined). Each field is labeled:
+  - **Required** (the analysis cannot run without it);
+  - **Recommended** (one named step is limited or unavailable);
+  - **Optional** (context or extra precision).
+- **Fields by mode:**
+  - *Individual:* required are the identifier, the pathogen (can be typed on the page), and the genomic region (or confirm complete genomes); dates and locations are recommended.
+  - *Pooled:* the variant-call columns are required; dates, sites, and genome coverage are recommended.
+  - *Combined:* adds the shared reference FASTA, which is required only for the cross-source comparison.
+- **What each row shows:** status (Detected / Partly filled / Imprecise / Missing / Needs your choice) with counts, the calculation it feeds, and the source columns kept unchanged. Each gap gets a specific sentence about what it affects, for example: "Collection locations are only available at the state level. Genetic comparisons can proceed, but precise geographic-distance screening cannot be performed".
+- **Blocking and labels (display only; no calculation changed):**
+  - The run is still blocked only by the existing review problems (missing identifier, pathogen, or variant columns; column choices).
+  - The review plan now says "Unavailable" instead of "Skipped", and gives specific temporal and geographic reasons.
+  - Analyses of other modes without files are hidden.
+- **Sprint 4:** with the toggle on, the table adds "Could Sprint 4 help?" (dates, locations, coordinates, sample source). After enrichment, `gap_resolution` in `literature/preanalysis.py` re-lists the gaps from the derived metadata: resolved, improved but still limited, or unresolved.
+- **Tests:** `tests/test_metadata_readiness.py` (9), using complete, partly filled, and sparse versions of the synthetic NCBI fixture.
+
 ## NCBI Virus geographic columns (November 2, 2026)
 
 - **Bug:** NCBI Virus metadata (Geo_Location "USA: SD", Country "USA", and a column named "USA" holding the state) stopped at "Choose which column is Location_Name (Geo_Location, Country)". The cause was that `country` was listed as a Location_Name alias in `genomics/column_detection.py`, so two candidates looked ambiguous.

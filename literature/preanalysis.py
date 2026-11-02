@@ -209,6 +209,54 @@ def before_after(session, derived, run_samples, pairs, thresholds):
     return rescreen(before, after, genetic, thresholds)
 
 
+# Gap kinds from metadata_gaps grouped by field, and the extraction fields
+# that can improve each group (as written in Enrichment_Sources).
+GAP_FIELDS = {
+    "Collection location": (["No collection location", "Country-only location", "State-only location",
+                             "Named place without coordinates (may be ambiguous; site not specified)"],
+                            ["Location", "Coordinates", "Site_Identifier"]),
+    "Collection date": (["No collection date", "Partial collection date (year or month only)"],
+                        ["Collection_Date", "Collection_Date_Range"]),
+    "Sample source": (["No sample source"], ["Sample_Type"]),
+}
+
+
+def gap_resolution(session, derived):
+    """For each field: samples whose gap was resolved, improved but still open, or unresolved.
+
+    The gaps are listed again from the derived metadata with the same rules
+    as before enrichment; nothing is counted as resolved unless the gap is gone.
+    """
+
+    after = {str(row["Sample_ID"]): row["Gaps"] for row in metadata_gaps(derived)}
+    sources = {str(sample): str(value) for sample, value in zip(derived["Sample_ID"], derived["Enrichment_Sources"])
+               if pd.notna(value)}
+    rows = []
+    for field, (kinds, fact_fields) in GAP_FIELDS.items():
+        resolved, improved, unresolved = [], [], []
+        for row in session["gaps"]:
+            sample = str(row["Sample_ID"])
+            before = next((gap for gap in row["Gaps"] if gap in kinds), None)
+            if before is None:
+                continue
+            remaining = next((gap for gap in after.get(sample, []) if gap in kinds), None)
+            applied = any(part.startswith(f"{name} from ") for part in sources.get(sample, "").split("; ")
+                          for name in fact_fields)
+            if remaining is None:
+                resolved.append(sample)
+            elif applied:
+                improved.append(f"{sample} (still: {remaining.split(' (')[0].lower()})")
+            else:
+                unresolved.append(sample)
+        total = len(resolved) + len(improved) + len(unresolved)
+        if total:
+            rows.append({"Field": field, "Samples with a gap": total, "Resolved": len(resolved),
+                         "Improved, still limited": len(improved), "Unresolved": len(unresolved),
+                         "Improved samples": ", ".join(improved[:8]) + (", …" if len(improved) > 8 else ""),
+                         "Unresolved samples": ", ".join(unresolved[:8]) + (", …" if len(unresolved) > 8 else "")})
+    return rows
+
+
 def contribution(session, derived, log, sections_changed):
     """Counts for the results overview: did Sprint 4 improve the dataset?"""
 

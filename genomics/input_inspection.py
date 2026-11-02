@@ -32,6 +32,7 @@ from genomics.column_detection import (
     value_warnings,
 )
 from genomics.location_hierarchy import location_hierarchy
+from genomics.metadata_readiness import metadata_readiness
 from geocode_locations import is_state_only_location
 from genomics.file_formats import (
     ALIGNMENT_KIND,
@@ -502,6 +503,7 @@ def review_dataset(staged, inspections, roles, choices=None, options=None):
     pooled_review(review)
     compatibility_review(review)
     review["analyses"] = analysis_plan(review, options)
+    review["readiness"] = metadata_readiness(review, options)
     review["ready"] = not review["problems"] and any(
         role in review["by_role"] for role in ("fasta", "snv", "reference"))
     if not review["by_role"]:
@@ -557,8 +559,9 @@ def location_review(review, entry):
         review["annotation_notes"].append(
             f"{summary['filled']} record(s) without a '{header}' value use the broader country/state "
             "columns instead (labeled with that level).")
-    coarse = summary["country_level"] + summary["state_level"] + int(
-        (result["Location_Level"].eq("") & result["Location_Name"].map(is_state_only_location)).sum())
+    state_text = int((result["Location_Level"].eq("") & result["Location_Name"].map(is_state_only_location)).sum())
+    coarse = summary["country_level"] + summary["state_level"] + state_text
+    example = ""
     if coarse:
         example = result.loc[result["Location_Level"].isin(["country", "state"]) |
                              result["Location_Name"].map(is_state_only_location), "Location_Name"].iloc[0]
@@ -573,7 +576,11 @@ def location_review(review, entry):
         review["warnings"].append(
             f"{summary['conflicts']} record(s) have contradictory location columns; please review them "
             "(listed under 'Location values to review'). They are kept out of kilometer screening.")
-    return int(result["Location_Name"].ne("").sum())
+    located = int(result["Location_Name"].ne("").sum())
+    review["location_summary"] = {"located": located, "coarse": coarse, "example": example,
+                                  "state": summary["state_level"] + state_text,
+                                  "country": summary["country_level"], "conflicts": summary["conflicts"]}
+    return located
 
 
 def individual_review(review, options):
@@ -647,11 +654,14 @@ def individual_review(review, options):
     elif not pathogen_known:
         review["annotation_notes"].append(f"Pathogen '{declared}' was stated by the user for every "
                                           "individual sequence.")
-    region_known = metadata is not None and any(
-        squash(column) in {"genesegment", "segment", "genename", "gene", "region"}
-        for column in metadata["info"]["columns"])
+    region_columns = [] if metadata is None else [
+        column for column in metadata["info"]["columns"]
+        if squash(column) in {"genesegment", "segment", "genename", "gene", "region"}]
+    region_known = bool(region_columns)
     header_regions = sum(1 for description in descriptions.values()
                          if fasta_region(description)["label"])
+    review["individual_region"] = {"column": region_columns[0] if region_columns else None,
+                                   "from_headers": header_regions}
     if not region_known and header_regions < total and not options.get("complete_genomes"):
         review["warnings"].append(
             f"The genomic region is annotated for {header_regions} of {total} sequences (FASTA "
@@ -777,7 +787,7 @@ def analysis_plan(review, options):
 
     def row(name, ready, needs, reason):
         return {"Analysis": name, "Status": "Will run" if ready is True else (
-            "Limited" if ready == "limited" else "Skipped"), "Needs": needs, "Reason": reason}
+            "Limited" if ready == "limited" else "Unavailable"), "Needs": needs, "Reason": reason}
 
     plan = []
     individual_count = individual.get("Samples", 0)
@@ -785,15 +795,12 @@ def analysis_plan(review, options):
                     "Two or more individual sequences with identifiers and a pathogen",
                     f"{individual_count} individual sequence(s)" if has_fasta else "No individual FASTA"))
     date_count = individual.get("With_Collection_Date", 0)
+    dated = has_fasta and isinstance(date_count, int) and date_count >= 2
     plan.append(row("Temporal screening of sequence pairs",
-                    has_fasta and isinstance(date_count, int) and date_count >= 2,
+                    (True if date_count >= individual_count else "limited") if dated else False,
                     "Collection dates for at least two sequences",
                     f"{date_count} of {individual_count} sequences have a date" if has_fasta else "No individual FASTA"))
-    geo = individual.get("With_Coordinates", 0) + individual.get("With_Location", 0) if has_fasta else 0
-    plan.append(row("Geographic-distance screening", "limited" if has_fasta and geo else False,
-                    "Coordinates, or specific place names that GeoNames can locate",
-                    "Coarse (state-level) places never satisfy the kilometer cutoff"
-                    if has_fasta and geo else "No locations for individual sequences"))
+    plan.append(geographic_row(review, individual, has_fasta, row))
     plan.append(row("Reference-coordinate variant profiles", has_fasta and has_reference,
                     "Individual FASTA and a reference FASTA",
                     "Ready" if has_fasta and has_reference else "Needs both files"))
@@ -826,6 +833,36 @@ def analysis_plan(review, options):
                     "A documented profile table", "Profile overlap only, never a lineage call"
                     if "signatures" in roles else "No profile table"))
     return plan
+
+
+def geographic_row(review, individual, has_fasta, row):
+    """Kilometer screening needs coordinates or specific place names; coarse places never pass."""
+
+    name = "Geographic-distance screening"
+    needs = "Coordinates, or specific place names that GeoNames can locate"
+    if not has_fasta:
+        return row(name, False, needs, "No individual FASTA")
+    total = individual.get("Samples", 0)
+    coordinates = individual.get("With_Coordinates", 0)
+    located = individual.get("With_Location", 0)
+    coarse = review.get("location_summary", {}).get("coarse", 0)
+    specific = max(located - coarse, 0)
+    if not located and not coordinates:
+        return row(name, False, needs, "No locations for individual sequences; genetic and date "
+                                       "comparisons still run")
+    if not specific and not coordinates:
+        return row(name, False, needs, "Locations are only at state or country level; genetic and date "
+                                       "comparisons still run and pairs are reported as unresolved geography")
+    if coordinates >= total:
+        return row(name, True, needs, "Coordinates supplied for every sequence")
+    parts = [f"{specific} specific place name(s), located with GeoNames during the run"]
+    if coordinates:
+        parts.append(f"{coordinates} with coordinates")
+    if coarse:
+        parts.append(f"{coarse} only at state or country level (never pass the kilometer cutoff)")
+    if located < total:
+        parts.append(f"{total - located} without a location")
+    return row(name, "limited", needs, "; ".join(parts))
 
 
 # ----------------------------------------------------------------------------

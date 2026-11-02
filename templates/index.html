@@ -85,9 +85,12 @@
     .downloads { columns: 2 260px; }
     .section-downloads { font-size: 0.9rem; }
     .badge { border-radius: 999px; display: inline-block; font-size: 0.8rem; font-weight: bold; padding: 0.05rem 0.55rem; white-space: nowrap; }
-    .badge.run, .badge.completed { background: var(--good-bg); color: var(--good-ink); }
+    .badge.run, .badge.will-run, .badge.completed { background: var(--good-bg); color: var(--good-ink); }
     .badge.limited, .badge.not-evaluable, .badge.partly-completed { background: var(--warn-bg); color: #6b4a00; }
-    .badge.skipped, .badge.refused { background: #eef0f2; color: var(--ink-muted); }
+    .badge.skipped, .badge.unavailable, .badge.refused { background: #eef0f2; color: var(--ink-muted); }
+    .badge.unavailable { border-left: 0; padding: 0.05rem 0.55rem; }
+    .badge.level { background: transparent; border: 1px solid currentColor; color: var(--ink-muted); font-weight: normal; }
+    .badge.level.required { color: var(--error-ink); }
     .badge.needs { background: var(--error-bg); color: var(--error-ink); }
     .swatch { border-radius: 3px; display: inline-block; height: 0.8rem; margin-right: 0.3rem; vertical-align: -0.05rem; width: 0.8rem; }
     .problems li { color: var(--error-ink); }
@@ -329,12 +332,26 @@
           {% if r.annotation_notes %}<ul class="notes">{% for item in r.annotation_notes %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
           {% if r.location_conflicts %}<h3>Location values to review</h3><ul class="warnings">{% for item in r.location_conflicts[:20] %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
 
+          {% if r.readiness %}{% set rd = r.readiness %}
+            <h3 id="readiness">Metadata readiness for: {{ rd.mode_label }}</h3>
+            <p class="purpose">Fields are checked against what <em>this</em> analysis needs. <strong>Required</strong>: the analysis cannot run without it. <strong>Recommended</strong>: one named step is limited or unavailable without it. <strong>Optional</strong>: context or extra precision. Missing values are never filled in, set to zero, or given coordinates.</p>
+            {% if rd.blocking %}<p class="problems"><strong>Required information missing:</strong> {{ rd.blocking|join('; ') }}. The analysis cannot start without it; the fix is listed under "Required information to fix before running".</p>{% endif %}
+            {% if rd.partial %}<p class="warnings"><strong>Required for one analysis:</strong> {{ rd.partial|join('; ') }}. Everything else can still run.</p>{% endif %}
+            {% if not rd.blocking and not rd.partial %}<p class="stat"><strong>All required fields were found.</strong> You can run the analysis{% if rd.counts.Recommended or rd.counts.Optional %}; the gaps below limit only the calculations they name{% endif %}.</p>{% endif %}
+            <div class="scroll"><table><thead><tr><th>Level</th><th>Field</th><th>Status</th><th>What was found</th><th>Used for</th>{% if enrich %}<th>Could Sprint 4 help?</th>{% endif %}</tr></thead>
+              <tbody>{% for row in rd.rows %}<tr><td><span class="badge level {{ row.Level|lower }}">{{ row.Level }}</span></td><td>{{ row.Field }}{% if rd.mode == 'combined' %}<br><span class="help">{{ row.Source }}</span>{% endif %}</td><td><span class="badge {{ row.Tone }}">{{ row.Status }}</span></td><td>{{ row.Detail }}</td><td>{{ row.Used_For }}</td>{% if enrich %}<td>{% if row.Sprint4 %}{{ 'Possibly. ' if row.Sprint4_Possible }}{{ row.Sprint4 }}{% else %}—{% endif %}</td>{% endif %}</tr>{% endfor %}</tbody></table></div>
+            {% if rd.kept_columns %}<p class="help"><strong>Other columns kept unchanged</strong> (carried along, not used in calculations): {{ rd.kept_columns[:20]|join(', ') }}{% if rd.kept_columns|length > 20 %}, …{% endif %}</p>{% endif %}
+            {% if rd.consequences %}<h3>What the missing or imprecise information affects</h3><ul class="warnings">{% for item in rd.consequences %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
+            {% if rd.enrichable and not enrich %}<p class="help">Optional Sprint 4 enrichment (below) could look in linked publications for: {{ rd.enrichable|join(', ') }}.</p>{% endif %}
+          {% endif %}
+
           {% if r.warnings %}<h3>Missing optional information</h3><ul class="warnings">{% for item in r.warnings %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
           {% if r.problems %}<h3>Required information to fix before running</h3><ul class="problems">{% for item in r.problems %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
 
           <h3>Analyses available with these files</h3>
           <div class="scroll"><table><thead><tr><th>Analysis</th><th>Status</th><th>Needs</th><th>With these files</th></tr></thead>
-            <tbody>{% for row in r.analyses %}<tr><td>{{ row.Analysis }}</td><td><span class="badge {{ row.Status|lower|replace(' ', '-') }}">{{ row.Status }}</span></td><td>{{ row.Needs }}</td><td>{{ row.Reason }}</td></tr>{% endfor %}</tbody></table></div>
+            <tbody>{% for row in (r.readiness.analyses if r.readiness else r.analyses) %}<tr><td>{{ row.Analysis }}</td><td><span class="badge {{ row.Status|lower|replace(' ', '-') }}">{{ row.Status }}</span></td><td>{{ row.Needs }}</td><td>{{ row.Reason }}</td></tr>{% endfor %}</tbody></table></div>
+          {% if r.readiness %}<p class="help">Shown for: {{ r.readiness.mode_label|lower }}. Analyses of other modes are left out when their files are absent. "Unavailable" stops only that analysis.</p>{% endif %}
 
           <h3>Sprint 4 · Metadata enrichment (optional)</h3>
           <input type="hidden" name="enrich_shown" value="1">

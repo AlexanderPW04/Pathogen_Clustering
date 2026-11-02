@@ -257,7 +257,7 @@ class ReviewTest(TemporaryFolderTest):
         self.assertTrue(review["ready"])
         plan = {row["Analysis"]: row["Status"] for row in review["analyses"]}
         self.assertEqual(plan["Sequence comparison (MAFFT, p-distance)"], "Will run")
-        self.assertEqual(plan["Temporal screening of sequence pairs"], "Skipped")
+        self.assertEqual(plan["Temporal screening of sequence pairs"], "Unavailable")  # review-step label (was "Skipped")
         paths, names = prepare_inputs(staged, review, self.folder,
                                       {"declared_pathogen": "Test virus"})
         metadata = pd.read_csv(paths["metadata"])

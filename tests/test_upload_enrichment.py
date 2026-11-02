@@ -149,6 +149,10 @@ class UploadEnrichmentTest(unittest.TestCase):
         self.assertAlmostEqual(pooled.loc["WW_N1", "Latitude"], 33.415)
         self.assertTrue(pd.isna(pooled.loc["WW_X1", "Latitude"]))  # no evidence, unchanged
         self.assertIn("Revisit metadata enrichment", result)
+        # The gaps listed at review are reported again: resolved, improved, or unresolved.
+        gaps = text(result[result.index("Metadata gaps after enrichment"):result.index("Values used in this analysis")])
+        self.assertIn("Collection location 10 8 1 1 Improved: IND_D (still: named place without coordinates) "
+                      "Unresolved: WW_X1", gaps)
 
     def test_genetic_outputs_are_unchanged_by_enrichment(self):
         plain = self.post("/", {"run_integrated_example": "1"})
