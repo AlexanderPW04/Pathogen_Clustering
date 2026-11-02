@@ -15,9 +15,10 @@ or a variant-profile overlap is a screening result; none of them confirms
 transmission, an outbreak, or the lineage present in a mixed sample.
 
 > **Integration summary:** see [Integrated analysis (Sprint 2 and Sprint 3)](#integrated-analysis-sprint-2-and-sprint-3)
-> below and `INTEGRATION_IMPLEMENTATION_LOG.md` for what was implemented, which
-> methods of Fontenele et al. (2021) are reproduced, and what remains
-> approximate or unavailable.
+> below, `INTEGRATION_IMPLEMENTATION_LOG.md` for what was implemented, and
+> `ARTICLE_METHOD_VALIDATION.md` for which methods of Fontenele et al. (2021)
+> are reproduced, partially reproduced, or exploratory, with a comparison
+> against the paper's published supplementary data.
 
 ## Start locally on Windows
 
@@ -121,7 +122,7 @@ the no-activation approach, replace `python` with
 
 | Page | Local address | Input and purpose |
 |---|---|---|
-| **Integrated dashboard (primary)** | `http://127.0.0.1:5000/` | Individual FASTA + metadata, a reference FASTA, and/or pooled SNV tables in one submission; individual sequences need MAFFT |
+| **Integrated dashboard (primary)** | `http://127.0.0.1:5000/` | Guided workflow: upload any mix of files, review what each one was recognized as, then run every applicable analysis; individual sequences need MAFFT |
 | Wastewater Data Analysis (Sprint 3, legacy) | `http://127.0.0.1:5000/wastewater-data` | One processed feature-measurement CSV/XLSX |
 | Wastewater Surveillance (Sprint 3, legacy) | `http://127.0.0.1:5000/wastewater` | Processed SNV CSV/XLSX, with optional sample metadata |
 | Earlier environmental page | `http://127.0.0.1:5000/environmental` | Same measurement analysis as Wastewater Data Analysis |
@@ -191,6 +192,102 @@ pooled sample), `Observation_Type` (consensus base call or allele frequency),
 kept as `Published_*` (paper annotations) or `Source_*` (variant-caller output)
 columns, separate from values this application calculates.
 
+Three modules support the guided upload: `genomics/file_formats.py` (gzip,
+FASTA/table/VCF recognition, VCF conversion), `genomics/column_detection.py`
+(flexible column names with explicit ambiguity), and
+`genomics/input_inspection.py` (file roles, dataset review, analysis plan, and
+standardized copies for the existing loaders).
+
+### Guided workflow: upload, review, run
+
+1. **Upload files.** Select every file at once (up to 20 files, 10 MB in total).
+   Gzip-compressed files are decompressed with a 60 MB size limit.
+2. **Review dataset.** Each file is inspected by content and shown with its
+   detected format, record count, sample IDs, reference IDs, and a suggested
+   role with the evidence for it (for example "5 of 5 values in column
+   'Sample' match the FASTA records", or "its ID SYNREF.1 is the reference
+   named in pooled.csv"). When the evidence is not decisive (a one-sequence
+   FASTA, metadata whose IDs match no other file) the role is left blank and
+   must be chosen. Every table's detected columns are listed; when two columns
+   could be the same field (for example `Date` and `Collection_Date`) the run is
+   blocked until the user picks one. The review also shows reference
+   compatibility, metadata completeness, missing optional information, required
+   information that is still missing, and which analyses will run, run with
+   limits, or be skipped (and why).
+3. **Run analysis.** Advanced thresholds and the QC mode are in a collapsible
+   section. Only applicable analyses run; the results start with a list of what
+   ran and what was skipped.
+
+Uploaded files wait in a temporary folder for at most 30 minutes between
+review and run (at most six upload sets per server process) and are never
+stored permanently. **Run Integrated Example** remains on the first page.
+The named-field form fields (`fasta_file`, `metadata_file`, `reference_file`,
+`snv_file`, ...) are still accepted by `POST /` for scripts and tests.
+
+### Supported file formats
+
+| Format | Use | Support |
+|---|---|---|
+| FASTA `.fasta`, `.fa`, `.fna` (and `.gz`) | Individual sequences; a one-record FASTA as the reference | Full. Content is checked, so FASTA in a `.txt` file is also recognized (and noted). |
+| CSV, TSV/TXT (tab), XLSX first sheet; CSV/TSV/TXT may be `.gz` | Metadata, pooled SNV tables, per-position tables, masked sites, profiles | Full. `.xlsx.gz` is not needed (XLSX is already compressed). |
+| Fontenele et al. (2021) Supplementary Table 2 (`mmc2.xlsx`) | Pooled SNV table with published annotations | Full; verified against the real workbook (see `ARTICLE_METHOD_VALIDATION.md`). |
+| iVar `variants` TSV | Pooled SNV table | Full for SNVs; insertions/deletions are set aside and counted. Without a `SAMPLE` column, one file = one sample named after the file (shown on the review page). Several iVar files are combined. |
+| VCF `.vcf`, `.vcf.gz` | Pooled SNV calls | Partial by design: single-nucleotide alleles only. Frequencies come only from allele-specific values: `FORMAT/AD` (one value per allele), `FORMAT/AO`+`RO`, `FORMAT/AF`, iVar `FORMAT/ALT_FREQ` (single ALT), or `INFO/AF` for a single-sample or sites-only file. Multi-allelic records are split per allele only when such values exist. Genotype-only (`GT`) entries, indels, symbolic alleles, and entries with no alternate reads are set aside and counted; they are never turned into 0% frequencies. `FILTER` is recorded, not applied. VCF has no dates or sites, so add pooled metadata for those analyses. A sites-only VCF uses its file name as the sample ID (shown). |
+| FASTQ (`.fastq`, `.fq`), SAM/BAM/CRAM | Raw reads / alignments | **Not accepted** as results. They are recognized and refused with a pointer to `offline_workflow/`. |
+| Other files | — | Refused with a message. |
+
+### Required versus optional information
+
+Column headers are matched without regard to case, spaces, underscores,
+hyphens, or dots, using role-specific names, for example: `Sample_ID` /
+`Sample` / `SampleName` / `Sample Name`; `Accession`; `Collection_Date` /
+`Date` / `Sample_Date`; `Location_Name` / `Location` / `Geo_Location` / `Site`;
+`Latitude` / `Lat`; `Longitude` / `Lon` / `Long`; `Reference_Genome` /
+`Reference` / `Reference_ID` / `CHROM`; `Read_Depth` / `Depth` / `DP`;
+`Alt_Frequency` / `AF` / `Frequency`. Units are never rescaled: coverage
+written as a fraction (all values ≤ 1) or frequencies written as percentages
+(values > 1) block the run with an explanation. Explicit FASTA description
+annotations such as `[collection_date=2020-06-01]`, `[organism=...]`,
+`[country=...]`, and `[host=...]` fill a metadata field only when the metadata
+file has no such column; the source is recorded. Nothing is inferred from file
+names (except the visible fallback sample ID above) or from sequence length.
+
+| Analysis | Needs | When it is missing |
+|---|---|---|
+| Sequence comparison (MAFFT, p-distance) | FASTA IDs, valid sequences, a pathogen (metadata column, FASTA annotation, or stated once on the review page), a genomic region (metadata, FASTA description, or confirmed complete genomes) | Not run; the review page says what is missing |
+| Temporal screening of pairs | Collection dates (full dates; a year-only or year-month date is not given a day) | Pairs without two dates are compared genetically only |
+| Geographic-distance screening | Coordinates, or specific place names GeoNames can locate | State-level or missing locations stay "unresolved", never 0 km |
+| Reference-coordinate variants and cross-source comparison | A reference FASTA; pooled records on the same verified reference | Skipped, or records kept apart as incomparable |
+| Variant-frequency analysis | Interpretable 0–1 frequencies | Records without one are rejected by the importer |
+| Coverage-aware non-detection | Per-position depth | Unreported variants stay "coverage unknown", never 0% |
+| Paper Yue–Clayton PCoA | Per-position A/C/G/T counts | A labeled exploratory ordination is shown instead |
+
+**Metadata rule change (documented and tested).** Individual metadata now
+requires only `Accession` and `Pathogen`. A missing `Collection_Date`,
+`Location_Name`, or `Host_Source` column, or a blank value, is a visible note
+instead of an error, so the genetic comparison still runs. Unparseable dates
+remain errors. Year-only or year-month dates (for example `2020` or
+`2020-06`) are no longer read as 1 January / day 1; they are treated as
+unknown for day-level comparisons and listed in the notes.
+
+### Dashboard sections
+
+Integrated sections come first, then source-specific ones. Every section has a
+purpose statement, summary statistics ("Not available" is shown instead of a
+misleading 0), figures with captions and PNG downloads, tables with CSV
+downloads, and an "Uncertainty and limitations" list.
+
+| Section | Figures |
+|---|---|
+| 1. Overview | Metadata completeness by source; how the two sources were connected (reference checksum, mapping rule, label and Ref-base checks, date overlap); analyses run or skipped |
+| 2. Cross-source evidence | Category counts; variant-overlap matrix (variant × sample, individual and pooled side by side, distinguishing detection, non-detection with adequate depth, unknown coverage, and QC exclusion); reference positions by category; when each variant was seen in each source |
+| 3. Genomic variation | Variants along the reference (Fig 3 analogue): samples per position, alternative base by color, source by marker shape, multi-allele positions, published novelty flags, annotation bands |
+| 4. Temporal patterns | Sampling dates and sites for both sources at their real dates; frequency trajectories; first-versus-last frequency changes with day spans; missing and unknown observations per sample; sample-by-variant heatmap |
+| 5. Geographic context | Location precision by source (source-provided coordinates, GeoNames estimates, broad administrative areas, named sites, none) and a plain coordinate plot (not a map) |
+| 6. Sequencing quality | Coverage by sample; which QC checks could be applied (pass / fail / not verifiable); read-depth distributions; callable and uncallable positions in individual sequences; SNVs per sample (Fig 2A); depth versus SNVs (Fig 2B) |
+| 7. Population structure | PCoA colored by date with site (or state) markers and an eigenvalue panel; paper method or labeled exploratory method |
+| 8. Individual sequence relationships | The original Sprint 2 results, plus a genetic-distance distribution with genetic-versus-temporal distance and a relationship network (solid = all three cutoffs, dashed = geography unresolved; never "transmission") |
+
 ### Rules that keep the comparison honest
 
 - Positions are compared only on the same reference. Two different accession
@@ -217,6 +314,11 @@ columns, separate from values this application calculates.
 - Variant-profile overlap is reported as overlap only, never as a lineage call.
 
 ### Fontenele et al. (2021) methods: reproduced, applied, or unavailable
+
+The full method-to-implementation table (what the study did, what is
+implemented, faithful / partial / exploratory status, required inputs, tests,
+and limits for Methods 2.1–2.6 and Figures 1–5) is in
+`ARTICLE_METHOD_VALIDATION.md`. Summary:
 
 | Paper method | In this project |
 |---|---|
@@ -267,7 +369,12 @@ coverage), and the paper-method PCoA on 7 pooled samples.
   It has SNV calls only, so PCoA falls back to the exploratory ordination and
   unreported positions stay *coverage unknown*. Genome coverage per sample is
   not in that table; supply it as pooled metadata (from the paper's Table 1)
-  to apply the >90% rule.
+  to apply the >90% rule. The real workbook was checked on November 1, 2026:
+  7,973 records, 52 samples, 10 states, 24–793 SNVs per sample, and D614G in
+  all 52 samples match the paper exactly; the full comparison (including small
+  differences) is in `ARTICLE_METHOD_VALIDATION.md`, and
+  `python validation/check_fontenele_2021.py path\to\mmc2.xlsx` repeats it.
+  The whole table runs in about 8 seconds.
 - **Individual + cross-source:** upload SARS-CoV-2 consensus sequences from a
   comparable place and period, the NC_045512.2 reference FASTA (one record),
   and the pooled table. The bundled H5N1 influenza Sprint 2 data and the
@@ -454,16 +561,19 @@ are included in the export.
 | Standard column | Accepted aliases | Requirement |
 |---|---|---|
 | `Accession` | `Accession` | Required |
-| `Pathogen` | `Organism_Name` | Required |
-| `Collection_Date` | `Collection_Date` | Required, with valid values |
-| `Location_Name` | `Geo_Location` | Required, with values |
-| `Host_Source` | `Host` | Required, with values |
+| `Pathogen` | `Organism_Name` | Required (or stated once on the review page) |
+| `Collection_Date` | `Collection_Date` | Optional context; values must be valid dates when given |
+| `Location_Name` | `Geo_Location` | Optional context |
+| `Host_Source` | `Host` | Optional context |
 | `Gene_Segment` | `Segment`, `Gene`, `Gene_Name`, `Region` | Optional if the region can be established another way |
 | `Latitude` | `Latitude` | Optional; valid range -90 to 90 |
 | `Longitude` | `Longitude` | Optional; valid range -180 to 180 |
 
 Prefer ISO dates such as `2026-01-08`. Metadata headers tolerate inconsistent
-capitalization and spacing. A segment value `4` becomes `Segment 4`.
+capitalization and spacing. The guided upload recognizes more header spellings
+(see [Required versus optional information](#required-versus-optional-information));
+a missing optional column is a visible note, and year-only dates are treated as
+unknown for day-level comparisons. A segment value `4` becomes `Segment 4`.
 A text gene label such as `NA` is preserved as text.
 
 Accession matching trims surrounding spaces and ignores one final numeric
@@ -689,6 +799,7 @@ pipeline or infer lineages.
 | Organized processed-data CSV | At most 4 MB |
 | Detailed processed-data preview | First 100 rows |
 | Processed-data download cache | Up to 10 minutes; at most four recent results per mode and application process |
+| Guided upload (review step) | Up to 20 files per request; gzip files expand to at most 60 MB; kept in a temporary folder for at most 30 minutes, at most six upload sets |
 
 Uploads are handled in temporary directories. The processed-data download
 cache holds CSV bytes in memory, so a restart clears links and a later run may
@@ -713,8 +824,9 @@ For the full suite in the development folder:
 python -m unittest discover -s tests -v
 ```
 
-The latest full run (November 1, 2026, Python 3.11.9) ran **164 tests: 162
-passed and 2 were skipped**. The suite is now self-contained:
+The latest full run (November 1, 2026, Python 3.11.9, with real MAFFT v7 on
+`PATH`) ran **204 tests: 202 passed and 2 were skipped** (the two optional
+real-data tests below). The suite is self-contained:
 
 - The invented DEMO/NCBI-style example files live in `tests/fixtures/`.
 - The state-only Flask upload check generates its own NCBI-style records.
@@ -723,7 +835,14 @@ passed and 2 were skipped**. The suite is now self-contained:
   with a stated reason unless `sequences.fasta` and `sequences.csv` (untracked)
   are placed in the project root; it passed when those files were present.
 - `RealMafftReferenceAlignmentTest` runs only when real MAFFT is on `PATH`
-  (it was skipped here because MAFFT is not installed in this environment).
+  (it ran and passed with `C:\Tools\mafft-win\mafft.bat`).
+- `tests/test_optional_fontenele_table.py` checks the real Supplementary
+  Table 2 against the paper's counts when `FONTENELE_MMC2` points to
+  `mmc2.xlsx` (not stored in Git); it passed when the workbook was supplied.
+- `tests/test_input_detection.py` and `tests/test_guided_workflow.py` cover
+  gzip, VCF, FASTQ refusal, header detection, ambiguous columns, optional
+  metadata, missing dates/geography/reference, compatible and incompatible
+  cross-source comparisons, the review/run pages, and the new figures.
 
 **Mocked versus real external checks.** MAFFT is mocked in the automated
 tests: older tests use a pass-through, and the integrated tests use
@@ -732,6 +851,15 @@ sequences and indels can be exercised deterministically. GeoNames network
 calls are always mocked. Before deploying, confirm the real tools with the
 System Status button and by clicking **Run Integrated Example** on a machine
 or container where MAFFT is installed.
+
+Real-tool checks run outside the automated mocks on November 1, 2026 (Windows,
+MAFFT from `C:\Tools\mafft-win`): the synthetic integrated example gave the
+same cross-source categories as the mocked tests (2 shared, 1 individual-only,
+1 pooled-only, 1 + 1 unresolved, 2 incomparable), and the real NCBI H5N1
+segment 4 data through the guided workflow gave 10 sequences, 45 comparisons,
+22 genomic-temporal candidate pairs among 9 samples, and 0 strict clusters
+(state-level locations). GeoNames was **not** checked live (no
+`GEONAMES_USERNAME` in this environment).
 
 ## Troubleshooting locally
 
@@ -837,9 +965,12 @@ classroom or appropriately de-identified data on this unauthenticated prototype.
 | `run_pipeline.py` | Six-stage individual-genome runner |
 | `system_diagnostics.py` | Small MAFFT test alignment |
 | `environmental_analysis.py` | Processed measurement loading, summaries, and charts (Sprint 3 legacy page) |
-| `wastewater/processed_snv.py` | Processed-SNV importer: paper Table 2, iVar TSV, standardized tables |
+| `wastewater/processed_snv.py` | Processed-SNV importer: paper Table 2, iVar TSV, SNV VCF, standardized tables |
 | `genomics/` | Shared reference-based model, QC, analyses, matching, figures, orchestration (Sprint 2 + 3 integration) |
-| `integrated_view.py` | Formats integrated results for the dashboard template |
+| `genomics/file_formats.py`, `genomics/column_detection.py`, `genomics/input_inspection.py` | Guided upload: formats and VCF, flexible columns, file roles, dataset review |
+| `integrated_view.py` | Arranges integrated results into the eight dashboard sections |
+| `validation/check_fontenele_2021.py` | Compares the import of the paper's real Supplementary Table 2 with its reported counts |
+| `ARTICLE_METHOD_VALIDATION.md` | Method-to-implementation table for Fontenele et al. (2021) |
 | `run_integrated_analysis.py` | Command-line integrated analysis (larger processed datasets) |
 | `offline_workflow/` | Optional BWA/iVar command template and tested output converters (not used by the website) |
 | `templates/` | Flask HTML templates (`index.html` is the unified dashboard) |

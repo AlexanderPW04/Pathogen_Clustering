@@ -161,6 +161,46 @@ general mapping/variant-calling stage order.
 - Not verified here: a real MAFFT run, a live GeoNames call, a Docker build,
   the real `mmc2.xlsx` workbook, and the Render deployment.
 
+### Phase 10 — Professor feedback: usability, formats, metadata, visuals (complete)
+
+- **Checkpoint:** local tag `checkpoint/before-guided-workflow` at `ec1c017`;
+  baseline 164 tests (163 passed with real MAFFT on PATH, 1 optional skipped).
+- **Guided workflow:** `/review` stages uploads (30 minutes, temporary folder),
+  inspects every file by content, and suggests a role only with stated
+  evidence (shared IDs, reference names, explicit FASTA annotations, required
+  headers). Ambiguous roles and columns must be chosen by the user. `/run`
+  writes standardized copies and calls the unchanged loaders and analyses.
+- **Formats:** gzip for FASTA/CSV/TSV/VCF (60 MB decompressed limit), TSV/TXT,
+  SNV VCF (allele-specific AD, AO/RO, AF, iVar ALT_FREQ, single-sample INFO/AF;
+  genotype-only and indel entries set aside and counted), several VCF or iVar
+  files combined; FASTQ/SAM/BAM/CRAM refused with a pointer to the offline
+  workflow.
+- **Metadata:** role-specific header aliases; ambiguity blocks the run; unit
+  checks (fraction coverage, percentage frequencies) block instead of
+  rescaling; explicit FASTA `[key=value]` annotations fill absent columns with
+  a recorded source; individual metadata needs only `Accession` + `Pathogen`
+  (a stated pathogen is accepted on the review page); partial dates are not
+  given a day.
+- **Dashboard:** sections reordered (integrated first), each with purpose,
+  statistics, figures, tables, limitations, and downloads; 13 new figures and
+  improved genome-position and PCoA figures; per-sample cross-source evidence
+  table; an analysis-status table for every run.
+- **Performance:** `frequency_trends` and `observation_matrix` vectorized or
+  hoisted; the real 7,973-record table runs in about 8 s instead of 106 s.
+- **Real-data validation:** the real `mmc2.xlsx` (via the Europe PMC
+  supplementary-files service; not in Git) matched the paper's 7,973 records,
+  52 samples, 10 states, 24–793 SNVs per sample, D614G in all 52, and 4 novel
+  SNVs in more than 8 samples; differences (5,677 vs 5,680 distinct SNVs, 589
+  vs 548 multi-sample novel SNVs, 12 records below 20x) are reported in
+  `ARTICLE_METHOD_VALIDATION.md`.
+- **Real tools:** MAFFT (Windows build in `C:\Tools\mafft-win`) ran the
+  synthetic example (same categories as the mocked tests) and the real H5N1
+  data through the guided workflow (45 comparisons, 22 candidate pairs among
+  9 samples, 0 strict clusters). GeoNames was not called live; Docker was not
+  built (daemon not running).
+- **Tests:** 204 tests, 202 passed, 2 optional real-data tests skipped by
+  default (both passed when their files were supplied).
+
 ## Remaining limitations
 
 - Exact PCoA needs genome-wide A/C/G/T counts, which `mmc2.xlsx` does not
@@ -175,14 +215,23 @@ general mapping/variant-calling stage order.
   prototype rule and should be tuned for real genomes.
 - Pooled site labels are never geocoded; cross-source geography is contextual.
 - Hosted uploads are limited to 10 MB; large tables need the command line.
+- Role and column detection relies on headers, shared identifiers, and
+  explicit annotations; an unusual table may need its role chosen by hand.
+- VCF files without allele-specific depth or frequency values (for example
+  genotype-only consensus VCFs) cannot be used as pooled frequencies.
+- The exploratory PCoA of the real supplementary table explains little
+  variation per axis (4.8% on axis 1) and must not be read as the paper's
+  Yue–Clayton result.
+- The relationship network uses a simple circular layout and is drawn only
+  for 40 or fewer sequences.
 
 ## Recommended next steps (candidates for Sprint 4, once its requirements are known)
 
-1. Run the integrated example with real MAFFT locally and in Docker, then
-   compare with the mocked results.
-2. Download `mmc2.xlsx` and confirm the import counts (7,973 records, 52
-   samples) and published annotations; add the paper's Table 1 coverage and
-   mean depth as pooled metadata to reproduce the Fig 2B analysis.
+1. Build and run the Docker image, then repeat the real-MAFFT example checks
+   there (done locally on Windows; not yet in Docker).
+2. Enter the paper's Table 1 coverage and mean depth as pooled metadata for the
+   52 samples to reproduce the coverage filter and the Fig 2B regression (the
+   `mmc2.xlsx` import itself is now verified).
 3. Assemble SARS-CoV-2 consensus genomes from a comparable place and period
    with NC_045512.2 for a real cross-source comparison.
 4. Optionally regenerate A/C/G/T counts from SRA PRJNA662596 offline for the

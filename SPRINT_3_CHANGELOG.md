@@ -31,6 +31,61 @@ Sprint 2.
 
 ## Sprint 3 changes so far
 
+### November 1, 2026 — Guided upload, more formats, flexible metadata, and richer integrated dashboard
+
+This responds to the professor's review of the Sprint 2 + Sprint 3
+integration (more meaningful visuals, a friendlier site, more file formats,
+flexible metadata, a clearer integration, and more of Fontenele et al. 2021).
+It is still Sprint 2 + Sprint 3 work, not Sprint 4.
+
+- **Added files:** `genomics/file_formats.py` (gzip, FASTA/table/VCF/FASTQ
+  recognition, VCF-to-SNV conversion), `genomics/column_detection.py`
+  (role-specific header aliases, ambiguity, unit checks),
+  `genomics/input_inspection.py` (file roles with evidence, dataset review,
+  analysis plan, standardized copies), `validation/check_fontenele_2021.py`,
+  `ARTICLE_METHOD_VALIDATION.md`, and the tests `test_input_detection.py`,
+  `test_guided_workflow.py`, and `test_optional_fontenele_table.py`.
+- **Changed files:** `app.py` adds the `/review` and `/run` routes and a
+  30-minute temporary staging folder; the named-field `POST /` still works.
+  `templates/index.html` is a three-step page (upload, review, results) with a
+  prominent Run Integrated Example card, collapsible advanced settings, and one
+  layout for all eight sections. `integrated_view.py` gives every section a
+  purpose, statistics ("Not available" instead of 0), figures, tables,
+  limitations, and downloads, and puts the integrated sections first.
+  `genomics/figures.py` adds 13 figures (metadata completeness, variant-overlap
+  matrix, cross-source positions, sampling timeline, frequency changes,
+  missing observations, geographic precision, QC outcomes, depth distribution,
+  callable positions, genetic distances, relationship network) and improves
+  the genome-position and PCoA figures. `genomics/integrated_analysis.py`
+  records per-sample cross-source evidence, which analyses ran, and how the
+  sources were connected. `genomics/temporal_analysis.py` computes trends with
+  grouped sums (the real 7,973-record table went from 106 s to about 8 s; same
+  values). `validate_inputs.py` and `run_pipeline.py` relax individual
+  metadata requirements (see below). `wastewater/processed_snv.py` reads SNV
+  VCF files. `run_integrated_analysis.py` accepts `.gz` inputs and draws the
+  Sprint 2 distance figure. `geocode_locations.py` labels a blank location
+  "No location given".
+- **Removed files:** None.
+- **Scientific rule changes (documented and tested):** individual metadata now
+  requires only `Accession` and `Pathogen`; missing dates, locations, or hosts
+  are notes, not errors, and disable only the affected screening. A year-only
+  or year-month date is no longer turned into a specific day. Units are never
+  rescaled automatically. VCF frequencies are taken only from allele-specific
+  values; genotype-only entries are not converted to frequencies.
+- **Before:** one long form with eight separate file fields; exact column
+  names; eight sections with few figures; pooled-only or individual-only
+  sections were mostly blank.
+- **After:** files are uploaded together, recognized by content, and reviewed
+  with stated evidence before running; 21 figures across the sections; the
+  overview explains how the two sources were connected and which analyses ran.
+- **Verification:** 204 tests run, 202 pass, 2 optional real-data tests skipped
+  in the default run (both passed when their real files were supplied). Real
+  MAFFT (Windows, `C:\Tools\mafft-win`) reproduced the synthetic example's
+  categories and the real H5N1 baseline (45 comparisons, 22 candidate pairs, 0
+  strict clusters). The real Supplementary Table 2 matched the paper's record,
+  sample, state, per-sample, and D614G counts exactly. GeoNames and the Docker
+  build were not checked (no username; Docker daemon not running).
+
 ### November 1, 2026 — Integrate Sprint 2 and Sprint 3 into one reference-based analysis
 
 - **Added files:** `genomics/` package (`references.py`, `unified_schema.py`,
