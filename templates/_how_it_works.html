@@ -1,0 +1,57 @@
+{# "How this works": one simple combined pipeline diagram and the three sprints in plain words. #}
+<section id="how-it-works" class="how">
+  <details {% if step == 1 and not error and not previous_files %}open{% endif %}>
+    <summary><h2>How this works</h2></summary>
+    <p class="lead">Three project sprints feed one analysis. Each can run on its own; they connect wherever the data allow.</p>
+    <div class="flow" aria-label="Combined analysis pipeline">
+      <div class="lane s2">
+        <span class="lane-title">Sprint 2 · Individual sequences</span>
+        <span class="box">FASTA sequences + sample metadata</span><span class="arrow" aria-hidden="true">→</span>
+        <span class="box">MAFFT alignment</span><span class="arrow" aria-hidden="true">→</span>
+        <span class="box">Genetic p-distance, dates, places (GeoNames)</span><span class="arrow" aria-hidden="true">→</span>
+        <span class="box">Related-sample screening</span>
+      </div>
+      <div class="lane s3">
+        <span class="lane-title">Sprint 3 · Pooled sequencing (for example wastewater)</span>
+        <span class="box offline">Pooled sample</span><span class="arrow" aria-hidden="true">→</span>
+        <span class="box offline">Sequencing reads</span><span class="arrow" aria-hidden="true">→</span>
+        <span class="box offline">Reference alignment and variant calling <em>(done before upload, offline)</em></span><span class="arrow" aria-hidden="true">→</span>
+        <span class="box">Processed SNV table <em>(you upload this)</em></span><span class="arrow" aria-hidden="true">→</span>
+        <span class="box">Frequencies, depth, quality, trends, PCoA</span>
+      </div>
+      <div class="meet">
+        <strong>Shared reference genome = the connection</strong>
+        <span>Individual sequences are placed on the same numbered reference positions as the pooled variant calls. Each variant is then classed as <em>shared</em>, <em>individual only</em>, <em>pooled only</em>, <em>unresolved</em> (no usable coverage, so unknown) or <em>incomparable</em> (references not verified as the same).</span>
+      </div>
+      <div class="lane s4">
+        <span class="lane-title">Sprint 4 · Optional AI metadata enrichment</span>
+        <span class="box">Sample identifiers</span><span class="arrow" aria-hidden="true">→</span>
+        <span class="box">Linked publications (NCBI, PubTator)</span><span class="arrow" aria-hidden="true">→</span>
+        <span class="box">Claude reads relevant passages (only when enabled)</span><span class="arrow" aria-hidden="true">→</span>
+        <span class="box">Quotations checked; you approve</span><span class="arrow" aria-hidden="true">→</span>
+        <span class="box">GeoNames; dates and distances updated</span>
+      </div>
+    </div>
+    <details>
+      <summary>Why the files differ but the results connect</summary>
+      <ul class="notes">
+        <li><strong>An individual sequence</strong> is one genome per sample, so each reference position has one observed base.</li>
+        <li><strong>A pooled sample</strong> mixes many genomes, so each position has an allele frequency and a read depth.</li>
+        <li>They are different measurements. They are compared only where both sit on one verified reference, by position and nucleotide change.</li>
+        <li>A missing pooled row is not 0%: without coverage information the result is "unknown".</li>
+        <li>Either source can be analyzed alone; one being unavailable never stops the other.</li>
+      </ul>
+    </details>
+    <details>
+      <summary>Words used on this page</summary>
+      <dl class="glossary">{% for term, meaning in glossary %}<dt>{{ term }}</dt><dd>{{ meaning }}</dd>{% endfor %}</dl>
+    </details>
+    <details>
+      <summary>Technical notes</summary>
+      <p class="note">MAFFT aligns sequences within each pathogen and gene/segment group before genetic distances are calculated. With a reference FASTA, each sequence is also aligned to the reference so its differences receive true 1-based reference positions. MAFFT is for individual or consensus sequences; it does not process pooled short reads.</p>
+      <p class="note">When metadata has a location name but no coordinates, GeoNames may estimate them. These place coordinates can be approximate. State-only names such as USA: ND are too coarse for the kilometer cutoff or same-location fallback; their precision is reported in the pairwise output.</p>
+      <p class="note">Genomic regions come first from metadata, then explicit FASTA descriptions. MAFFT aligns only samples with the same resolved pathogen and region. An unknown region is an error unless you explicitly confirm that every sequence is a complete genome of one pathogen.</p>
+      <p class="note">Pooled variant tables list only the variants that were called. A variant missing from a pooled sample is "coverage unknown", never 0%, unless a per-position depth table shows the position was covered.</p>
+    </details>
+  </details>
+</section>

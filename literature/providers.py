@@ -170,7 +170,7 @@ class MockProvider:
         if task == "association":
             data = self.association(user, self.responses.get("association", {}).get(article_id, []))
         else:
-            empty = {"facts": [], "context_statements": [], "insufficient_evidence_samples": [], "notes": ""}
+            empty = {"facts": [], "insufficient_evidence_samples": [], "notes": ""}
             data = copy.deepcopy(self.responses.get("extraction", {}).get(article_id, empty))
         data, error = checked(data, schema)
         return result(data, approximate_tokens(system, user), 0, 0.0, self.model, error)

@@ -22,7 +22,7 @@ Rules:
 - Evidence_Quote must be copied exactly, character for character, from one passage, and Passage_ID must be that passage's id. Keep quotes short (one sentence or table row).
 - Never invent coordinates, dates, identifiers, measurements, variants, or events. Report coordinates only if numbers are written in the passage. Keep a date range as a range ("YYYY-MM-DD/YYYY-MM-DD"); write single dates as YYYY-MM-DD. Write locations from most to least specific, for example "Tempe, Arizona, USA".
 - If the passages are insufficient to determine a sample's collection site, list the sample in insufficient_evidence_samples instead of guessing. An empty facts list is a valid answer.
-- context_statements: statements the passages make about increased detections, genetic changes over time, multiple collection locations, changes in prevalence, reported clusters, population trends, or study limitations. Label each as explicitly reported, an interpretation or hypothesis, or unsupported or unclear. Do not turn a narrative statement into a confirmed event, and do not infer an outbreak from an increase in detected variants.
+- Report only sample-collection metadata. Do not summarize the article, its findings, or epidemiological trends.
 - Reasoning_Summary: one short sentence. Ambiguity: empty string or a short note."""
 
 ASSOCIATION_SYSTEM = f"""You check whether candidate facts extracted from article passages describe a specific sample (prompt {PROMPT_VERSION}, association stage).
@@ -56,7 +56,7 @@ def escape(text):
 
 def extraction_message(samples, article, passages, linkage):
     return (sample_block(samples) + "\n\n" + article_block(article, passages, linkage)
-            + "\n\nReturn the facts, context statements, and insufficient-evidence samples as JSON.")
+            + "\n\nReturn the facts and insufficient-evidence samples as JSON.")
 
 
 def association_message(samples, facts, article, passages):

@@ -250,7 +250,6 @@ def view(token, session, provider=None, explanation="", confirm=False, download_
         "shared_data": SHARED_DATA, "live": bool(provider and provider.is_live),
         "run": run, "usage": usage, "facts": facts,
         "approvable_count": sum(fact["approvable"] for fact in facts),
-        "context": [{**item, "Evidence_Quote": short(item.get("Evidence_Quote"), 300)} for item in session["context"]],
         "insufficient": session["insufficient"], "applied": applied_view,
         "download_id": download_id, "files": sorted(files),
     }

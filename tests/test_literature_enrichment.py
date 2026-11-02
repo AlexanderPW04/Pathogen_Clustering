@@ -241,7 +241,7 @@ class GeographyTest(unittest.TestCase):
 
 class SchemaTest(unittest.TestCase):
     def test_schemas_are_strict_and_checked_in_python(self):
-        empty = {"facts": [], "context_statements": [], "insufficient_evidence_samples": [], "notes": ""}
+        empty = {"facts": [], "insufficient_evidence_samples": [], "notes": ""}
         self.assertEqual(schema_problems(empty, EXTRACTION_SCHEMA), [])
         self.assertTrue(schema_problems({**empty, "extra": 1}, EXTRACTION_SCHEMA))
         bad_fact = {**empty, "facts": [{"Sample_ID": "S1", "Field": "Weather"}]}
@@ -456,7 +456,7 @@ def fake_client(message):
     return client
 
 
-EMPTY_EXTRACTION = json.dumps({"facts": [], "context_statements": [], "insufficient_evidence_samples": [],
+EMPTY_EXTRACTION = json.dumps({"facts": [], "insufficient_evidence_samples": [],
                                "notes": ""})
 
 
@@ -583,10 +583,7 @@ class WorkflowTest(unittest.TestCase):
         self.assertEqual(tucson["Second_Stage"], "Not supported")
         self.assertEqual(facts_for(session, "SYNLIT_11")[0]["Evidence_Status"], "Contradictory")
         self.assertTrue(facts_for(session, "SYNLIT_10", "Collection_Date_Range")[0]["Approvable"])
-        context = {item["Statement"]: item for item in session["context"]}
-        planted = [item for item in session["context"] if "PLANTED" in item["Statement"]][0]
-        self.assertEqual(planted["Label"], "Unsupported or unclear")
-        self.assertTrue(all(item["Quote_Verified"] for text, item in context.items() if "PLANTED" not in text))
+        self.assertNotIn("context", session)  # no article summaries or epidemiological statements
         self.assertEqual(len(status), 21)
 
     def test_cancel_and_budget_stop_between_requests(self):
@@ -698,7 +695,7 @@ class LocalModelProviderTest(unittest.TestCase):
         provider = LocalModelProvider("http://127.0.0.1:8080/extract", session)
         outcome = provider.run("extraction", "s", "u", EXTRACTION_SCHEMA, 100, "A")
         self.assertEqual(outcome["model"], "local-v0")
-        self.assertEqual(session.post.call_args.kwargs["json"]["contract"], "literature-extraction-v1")
+        self.assertEqual(session.post.call_args.kwargs["json"]["contract"], "literature-extraction-v2")
         with self.assertRaises(ValueError):
             LocalModelProvider("file:///etc/passwd")
 

@@ -6,7 +6,7 @@ A future locally hosted model must return the same shapes (see
 SPRINT4_AI_NLP_INTEGRATION_REPORT.md, "Extraction contract").
 """
 
-PROMPT_VERSION = "literature-extraction-v1"
+PROMPT_VERSION = "literature-extraction-v2"
 
 FIELDS = ["Location", "Coordinates", "Site_Identifier", "Collection_Date", "Collection_Date_Range",
           "Sample_Type", "Collection_Method", "Study_Identifier", "Study_Context"]
@@ -15,11 +15,6 @@ LOCATION_ROLES = ["Sample collection site", "General study area", "Sequencing or
 GEOGRAPHIC_LEVELS = ["Coordinates", "Facility or site", "City or town", "County",
                      "State or province", "Country", "Not geographic"]
 EVIDENCE_TYPES = ["Directly stated", "Sample-to-site table", "Inferred from broader context", "Ambiguous"]
-CONTEXT_CATEGORIES = ["Increased detections", "Genetic changes over time", "Multiple collection locations",
-                      "Change in sampling prevalence", "Reported cluster", "Population-level trend",
-                      "Study limitation"]
-CONTEXT_LABELS = ["Explicitly reported in the publication", "Interpretation or hypothesis",
-                  "Unsupported or unclear"]
 LINKAGE_DECISIONS = ["Specific to this sample", "Applies to the study, not shown to be this sample",
                      "Contradicts the original metadata", "Not supported"]
 
@@ -43,13 +38,6 @@ EXTRACTION_SCHEMA = strict_object({
         "Evidence_Type": {"type": "string", "enum": EVIDENCE_TYPES},
         "Ambiguity": STRING,
         "Reasoning_Summary": STRING,
-    })},
-    "context_statements": {"type": "array", "items": strict_object({
-        "Category": {"type": "string", "enum": CONTEXT_CATEGORIES},
-        "Statement": STRING,
-        "Label": {"type": "string", "enum": CONTEXT_LABELS},
-        "Passage_ID": STRING,
-        "Evidence_Quote": STRING,
     })},
     "insufficient_evidence_samples": {"type": "array", "items": STRING},
     "notes": STRING,

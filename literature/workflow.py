@@ -19,7 +19,7 @@ from literature.prompts import (ASSOCIATION_SYSTEM, EXTRACTION_SYSTEM, associati
                                 extraction_message)
 from literature.providers import ProviderError
 from literature.schema import ASSOCIATION_SCHEMA, EXTRACTION_SCHEMA, PROMPT_VERSION
-from literature.verification import AMBIGUOUS, CONTRADICTORY, verify_context, verify_fact
+from literature.verification import AMBIGUOUS, CONTRADICTORY, verify_fact
 
 INDIVIDUAL = "Individual sequence"
 POOLED = "Pooled sample"
@@ -77,7 +77,7 @@ def new_session(individual=None, pooled=None, pairs=None, thresholds=None, synth
     return {"samples": samples, "pairs": pairs, "thresholds": thresholds,
             "synthetic": synthetic, "label": label, "created": time.time(), "source_label": "",
             "publications": None, "articles": {}, "aliases": {}, "discovery_notes": [], "unmatched": [],
-            "plan": [], "plan_notes": [], "facts": [], "context": [], "insufficient": [],
+            "plan": [], "plan_notes": [], "facts": [], "insufficient": [],
             "run": {"state": "not started"}, "decisions": {}, "applied": None}
 
 
@@ -90,7 +90,7 @@ def find_literature(session, source, selected_ids=None, max_samples=25, max_arti
     session["selected"] = list(samples["Sample_ID"])
     table, articles, notes, unmatched = discover_publications(samples, source, max_samples, max_articles)
     session.update(publications=table, articles=articles, discovery_notes=notes, unmatched=unmatched,
-                   source_label=source.label, run={"state": "not started"}, facts=[], context=[],
+                   source_label=source.label, run={"state": "not started"}, facts=[],
                    insufficient=[], decisions={}, applied=None)
     session["aliases"] = {str(row["Sample_ID"]): sample_identifiers(row)[1] for _, row in samples.iterrows()}
     build_plan(session, max_articles)
@@ -201,7 +201,7 @@ def run_analysis(session, provider, settings, cache=None, cancel=None):
            "prompt_version": PROMPT_VERSION, "started": time.strftime("%Y-%m-%d %H:%M:%S"),
            "messages": [], "budget": budget, "fatal": False}
     session["run"] = run
-    facts, context, insufficient = [], [], []
+    facts, insufficient = [], []
     sent = {}
     for number, item in enumerate(session["plan"], start=1):
         if cancel is not None and cancel.is_set():
@@ -229,11 +229,6 @@ def run_analysis(session, provider, settings, cache=None, cancel=None):
             row = request_samples.get(str(fact["Sample_ID"]), {}).get("Row")
             checked["Original_Value"] = original_value(row, fact["Field"]) if row is not None else ""
             facts.append(checked)
-        for statement in outcome["data"]["context_statements"]:
-            checked = verify_context(statement, passages)
-            checked.update(Article_ID=item["Article_ID"], Article_Title=item["Title"],
-                           Article_URL=item["Source_URL"], Model_Name=outcome["model"])
-            context.append(checked)
         for sample_id in outcome["data"]["insufficient_evidence_samples"]:
             insufficient.append({"Sample_ID": sample_id, "Article_ID": item["Article_ID"]})
 
@@ -255,7 +250,7 @@ def run_analysis(session, provider, settings, cache=None, cancel=None):
         if fact["Approvable"] and fact["Second_Stage"] == "Not run":
             fact["Second_Stage"] = "Not run (stopped before this check)"
         fact["Review_Status"] = "Pending review" if fact["Approvable"] else "Not approvable"
-    session.update(facts=facts, context=context, insufficient=insufficient)
+    session.update(facts=facts, insufficient=insufficient)
     if run["state"] == "running":
         run["state"] = "stopped early" if (run["fatal"] or budget.stopped) else "completed"
     run["progress"] = ""
@@ -337,8 +332,6 @@ def downloads(session):
         files["literature_evidence_passages.csv"] = csv(pd.DataFrame(passages))
     if session["facts"]:
         files["literature_ai_proposals.csv"] = csv(pd.DataFrame(session["facts"]))
-    if session["context"]:
-        files["literature_surveillance_context.csv"] = csv(pd.DataFrame(session["context"]))
     applied = session.get("applied")
     if applied:
         files["literature_enriched_metadata.csv"] = csv(applied["metadata"])

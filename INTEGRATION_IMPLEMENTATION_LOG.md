@@ -212,6 +212,17 @@ locations enter the Sprint 2 date/distance rescreen only through the existing
 `enrich_pairs` / `find_related_pairs` functions and the existing geographic
 precision rules (state, county, and administrative areas stay too coarse).
 
+### Usability redesign (November 2, 2026)
+
+The website was reorganized around the three sprints without changing any
+calculation. It adds a combined pipeline diagram, analysis-mode guidance,
+top navigation with honest back navigation (deleted uploads are never
+restored), a results overview with findings taken from the actual outputs,
+progressive sections with chart-reading guides, and a step-by-step example of
+one shared variant. Sprint 4 was narrowed to sample-collection metadata (the
+surveillance-context statements were removed). See the top section of
+`PROJECT_HANDOFF.md`.
+
 ## Remaining limitations
 
 - Exact PCoA needs genome-wide A/C/G/T counts, which `mmc2.xlsx` does not

@@ -25,6 +25,7 @@
       --error-ink: #7f1d1d;
       --good-ink: #0f5d3a;
       --good-bg: #e7f6ee;
+      --sprint4: #8a4fbf;
     }
     * { box-sizing: border-box; }
     body { background: var(--page); color: var(--ink); font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; line-height: 1.5; margin: 0; }
@@ -99,29 +100,72 @@
     .sample-choices label { font-weight: normal; }
     .review-table td label { font-weight: normal; white-space: nowrap; }
     .review-table tr.not-approvable td { color: var(--ink-muted); }
-    @media (max-width: 600px) { main { padding: 0 0.75rem; } section, .card { padding: 0.9rem; } nav.sections { position: static; } }
+    /* Navigation, how-it-works diagram, upload modes, and progressive results */
+    .toolbar { align-items: center; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 1rem; padding: 0.5rem 0.75rem; }
+    .toolbar form { display: inline-flex; gap: 0; margin: 0; }
+    button.small, a.button-link { font-size: 0.9rem; padding: 0.4rem 0.7rem; }
+    a.button-link { background: var(--surface); border: 1px solid var(--accent); border-radius: 6px; color: var(--accent); display: inline-block; font-weight: bold; text-decoration: none; }
+    a.button-link:hover, button.secondary:hover { background: var(--accent-soft); }
+    .how > details > summary { list-style-position: outside; }
+    .how > details > summary h2 { display: inline; }
+    .flow { display: grid; gap: 0.6rem; margin: 0.75rem 0; }
+    .lane { align-items: stretch; border: 1px solid var(--border); border-radius: 10px; display: flex; flex-wrap: wrap; gap: 0.35rem; padding: 0.6rem; }
+    .lane.s2 { border-left: 6px solid var(--individual); }
+    .lane.s3 { border-left: 6px solid var(--pooled); }
+    .lane.s4 { border-left: 6px dashed var(--sprint4); border-style: dashed; }
+    .lane-title { color: var(--heading); flex-basis: 100%; font-weight: bold; }
+    .box { background: var(--surface-alt); border: 1px solid var(--border); border-radius: 8px; font-size: 0.88rem; padding: 0.35rem 0.55rem; }
+    .box.offline { background: var(--surface); border-style: dashed; color: var(--ink-muted); }
+    .arrow { align-self: center; color: var(--ink-muted); font-weight: bold; }
+    .meet { background: var(--accent-soft); border: 2px solid var(--accent); border-radius: 10px; display: grid; gap: 0.25rem; padding: 0.6rem 0.8rem; }
+    .glossary dt { font-weight: bold; }
+    .glossary dd { color: var(--ink-muted); margin: 0 0 0.4rem; }
+    .mode-grid { display: grid; gap: 0.5rem; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); }
+    .mode { border: 1px solid var(--border); border-radius: 8px; font-weight: normal; padding: 0.55rem 0.65rem; }
+    .mode:has(input:checked) { background: var(--accent-soft); border-color: var(--accent); }
+    .pathway { display: flex; flex-wrap: wrap; gap: 0.35rem; list-style: none; margin: 0.5rem 0; padding: 0; }
+    .pathway li { background: var(--accent-soft); border: 1px solid var(--accent); border-radius: 8px; font-size: 0.88rem; padding: 0.3rem 0.55rem; }
+    .pathway li.offline { background: var(--surface); border-style: dashed; border-color: var(--border); color: var(--ink-muted); }
+    .pathway li:not(:last-child)::after { color: var(--ink-muted); content: " →"; }
+    .dot { border-radius: 50%; display: inline-block; height: 0.7rem; margin-right: 0.35rem; width: 0.7rem; }
+    .dot.s2 { background: var(--individual); } .dot.s3 { background: var(--pooled); }
+    .dot.s23 { background: linear-gradient(90deg, var(--individual) 50%, var(--pooled) 50%); }
+    .notice-box { background: var(--accent-soft); border-color: var(--accent); }
+    .mode-banner { background: var(--good-bg); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 0.75rem; padding: 0.5rem 0.75rem; }
+    .mode-banner.warn { background: var(--warn-bg); border-color: var(--warn-border); }
+    .mode-banner p { margin: 0.2rem 0; }
+    .sprint-tag { color: var(--ink-muted); font-size: 0.78rem; font-weight: bold; letter-spacing: 0.03em; margin: 0 0 0.2rem; text-transform: uppercase; }
+    .sprint-tag.sprint4 { color: var(--sprint4); }
+    .mini-steps { color: var(--ink-muted); display: flex; flex-wrap: wrap; font-size: 0.88rem; gap: 0.25rem 1.25rem; margin: 0 0 0.75rem; padding-left: 1.2rem; }
+    .figure-title { margin: 0 0 0.4rem; }
+    .badge.origin { background: var(--accent-soft); color: var(--accent); font-weight: normal; white-space: normal; }
+    .finding { color: var(--ink); margin: 0.3rem 0; }
+    details.guide { margin: 0.3rem 0; }
+    details.more { border-top: 1px solid var(--border); margin-top: 0.75rem; padding-top: 0.5rem; }
+    .findings li { margin-bottom: 0.25rem; }
+    .story { border-left: 6px solid var(--accent); }
+    .story ol li { margin-bottom: 0.4rem; }
+    .back-top { font-size: 0.9rem; margin-bottom: 0; }
+    .nav-label { color: var(--ink-muted); font-weight: bold; }
+    .status-table td { min-width: 9rem; }
+    section[id], .story { scroll-margin-top: 6.5rem; }
+    @media (max-width: 600px) { main { padding: 0 0.75rem; } section, .card { padding: 0.9rem; } nav.sections { position: static; } .box { font-size: 0.82rem; } .mode-grid { grid-template-columns: 1fr; } }
   </style>
 </head>
 <body>
   <main>
     <header class="page">
       <h1>Integrated Genomic Surveillance</h1>
-      <p class="lead">One analysis for two kinds of genomic evidence: <span class="swatch" style="background:var(--individual)"></span>individual (consensus) sequences and <span class="swatch" style="background:var(--pooled)"></span>pooled samples such as wastewater. Both are placed on the same verified reference-genome positions, so variants can be compared across sources, over time, and among locations. Results are screening signals; they do not confirm transmission, an outbreak, or the lineage of a mixed sample.</p>
+      <p class="lead">One analysis for two kinds of genomic evidence — <span class="swatch" style="background:var(--individual)"></span>individual sequences (Sprint 2) and <span class="swatch" style="background:var(--pooled)"></span>pooled sequencing results such as wastewater (Sprint 3) — connected on one reference genome, with optional AI metadata enrichment (Sprint 4). Results are screening signals; they do not confirm transmission, an outbreak, or the lineage of a mixed sample.</p>
       <ol class="steps" aria-label="Workflow steps">
         <li {% if step == 1 %}aria-current="step"{% endif %}>1 · Upload files</li>
         <li {% if step == 2 %}aria-current="step"{% endif %}>2 · Review dataset</li>
         <li {% if step == 3 %}aria-current="step"{% endif %}>3 · Results</li>
-        <li {% if step == 4 %}aria-current="step"{% endif %}>4 · Literature enrichment (optional)</li>
+        <li {% if step == 4 %}aria-current="step"{% endif %}>4 · Metadata enrichment (Sprint 4, optional)</li>
       </ol>
     </header>
 
-    <details class="about">
-      <summary>How the analysis works</summary>
-      <p class="note">MAFFT aligns sequences within each pathogen and gene/segment group before genetic distances are calculated. With a reference FASTA, each sequence is also aligned to the reference so its differences receive true 1-based reference positions.</p>
-      <p class="note">When metadata has a location name but no coordinates, GeoNames may estimate them. These place coordinates can be approximate. State-only names such as USA: ND are too coarse for the kilometer cutoff or same-location fallback; their precision is reported in the pairwise output.</p>
-      <p class="note">Genomic regions come first from metadata, then explicit FASTA descriptions. MAFFT aligns only samples with the same resolved pathogen and region. An unknown region is an error unless you explicitly confirm that every sequence is a complete genome of one pathogen.</p>
-      <p class="note">Pooled variant tables list only the variants that were called. A variant missing from a pooled sample is "coverage unknown", never 0%, unless a per-position depth table shows the position was covered.</p>
-    </details>
+    {% if step >= 2 %}{% include "_toolbar.html" %}{% endif %}
 
     {% macro settings_fields(values) %}
       <details class="settings">
@@ -168,48 +212,25 @@
       </section>
     {% endif %}
 
-    {% if step == 1 %}
-      <div class="grid-2">
-        <section class="card">
-          <h2>Step 1 · Upload your files</h2>
-          <p class="note">Select every file at once: individual sequences, their metadata, a reference genome, pooled variant calls, and any optional tables. The next step shows what each file was recognized as, so you can correct it before anything runs.</p>
-          <form method="post" action="{{ url_for('review_upload') }}" enctype="multipart/form-data">
-            <label>Files (any mix; up to 20 files, 10 MB in total)
-              <input type="file" name="files" multiple required accept=".fasta,.fa,.fna,.csv,.tsv,.txt,.xlsx,.vcf,.gz">
-            </label>
-            <button type="submit" class="big">Review files</button>
-          </form>
-          <details>
-            <summary>Accepted file formats</summary>
-            <ul class="notes">
-              <li><strong>Sequences:</strong> FASTA (.fasta, .fa, .fna), optionally gzip-compressed (.gz). One sequence = possible reference genome; several = individual sequences.</li>
-              <li><strong>Tables:</strong> CSV, TSV/TXT (tab-separated), XLSX (first sheet); CSV/TSV may be .gz. Column names are matched flexibly (for example Sample / Sample_ID / SampleName, Date / Collection_Date, Lat / Latitude, AF / Frequency, DP / Depth).</li>
-              <li><strong>Pooled variant calls:</strong> standardized SNV tables, combined iVar variant tables, the Fontenele et al. (2021) supplementary SNV workbook, and SNV VCF files (.vcf, .vcf.gz) with allele depths or frequencies.</li>
-              <li><strong>Not accepted as results:</strong> raw reads (FASTQ) and read alignments (SAM/BAM/CRAM). Process them first with the optional offline workflow; then upload the variant table or VCF.</li>
-            </ul>
-          </details>
-        </section>
-        <section class="card example-card">
-          <h2>Try the synthetic examples</h2>
-          <p class="note">See the whole integrated workflow with an invented dataset that has known answers: a reference genome, individual sequences, and pooled samples on the same coordinates. Nothing in it is real surveillance data.</p>
-          <form method="post" action="{{ url_for('index') }}">
-            <button type="submit" name="run_integrated_example" value="1" class="big" formnovalidate>Run Integrated Example</button>
-            <button type="submit" name="run_example" value="1" class="secondary" formnovalidate>Run Example Analysis (individual sequences only)</button>
-            <button type="submit" name="run_literature_example" value="1" class="secondary" formnovalidate>Run Literature Enrichment Example (offline, no AI call)</button>
-            {{ settings_fields(values) }}
-          </form>
-          <p class="note">Run Example Analysis uses explicitly synthetic sequences and sample records, not NCBI records or real outbreaks, with the same MAFFT-backed pipeline. One record has a real place name but synthetic sample data and no coordinates so GeoNames can be demonstrated when configured.</p>
-        </section>
-      </div>
-    {% endif %}
+    {% include "_how_it_works.html" %}
+
+    {% if step == 1 %}{% include "_upload.html" %}{% endif %}
 
     {% if review %}
       {% set r = review %}
       <section class="card" id="review">
         <h2>Step 2 · Review your dataset</h2>
+        {% if mode_check %}
+          <div class="mode-banner {% if mode_check.missing %}warn{% endif %}">
+            <p><strong>Detected analysis:</strong> {{ mode_check.detected }}</p>
+            {% if mode_check.intended %}<p><strong>You chose:</strong> {{ mode_check.intended }}{% if not mode_check.missing %} — the files support it.{% endif %}</p>{% endif %}
+            {% if mode_check.missing %}<p>For that choice these files were not found: {{ mode_check.missing|join(', ') }}. The analyses below will run with the files that were found; add the missing files with <em>Back to upload</em> if you need them.</p>{% endif %}
+          </div>
+        {% endif %}
         <p class="note">Check what each file was recognized as. Change a role or choose a column wherever the evidence was not decisive; nothing is guessed silently. Press <em>Update review</em> after changes, then <em>Run analysis</em>.</p>
         <form method="post" action="{{ url_for('review_upload') }}">
           <input type="hidden" name="token" value="{{ token }}">
+          <input type="hidden" name="intended_mode" value="{{ intended_mode }}">
           <h3>Recognized files</h3>
           <div class="scroll"><table>
             <thead><tr><th>File</th><th>Detected content</th><th>Records</th><th>Role</th><th>Evidence and notes</th></tr></thead>
@@ -309,7 +330,7 @@
           </div>
           {% if not r.ready %}<p class="note">Run analysis is available once the problems above are fixed.</p>{% endif %}
         </form>
-        <p class="note"><a href="{{ url_for('index') }}">Start over with different files</a></p>
+        <p class="note">Uploaded files wait on the server for at most 30 minutes and are deleted as soon as the analysis runs.</p>
       </section>
     {% endif %}
 
@@ -329,22 +350,46 @@
 
     {% macro show_figure(item) %}
       <figure>
+        <p class="figure-title"><strong>{{ item.title }}</strong>{% if item.guide %} <span class="badge origin">{{ item.guide.origin }}</span>{% endif %}</p>
         {% if item.wide %}<div class="scroll wide-figure"><img src="{{ item.data_uri }}" alt="{{ item.title }}. {{ item.caption }}"></div>
         <p class="help">Wide figure: scroll sideways, or download the PNG.</p>
         {% else %}<img src="{{ item.data_uri }}" alt="{{ item.title }}. {{ item.caption }}">{% endif %}
-        <figcaption><strong>{{ item.title }}.</strong> {{ item.caption }}
-          <a href="{{ url_for('result_download', download_id=item.download_id, filename=item.filename) }}">Download PNG</a></figcaption>
+        <figcaption>
+          {% if item.interpretation %}<p class="finding"><strong>In these results:</strong> {{ item.interpretation }}</p>{% endif %}
+          <p>{{ item.caption }}</p>
+          {% if item.guide %}
+            <details class="guide">
+              <summary>How to read this chart</summary>
+              <dl class="facts">
+                <dt>What it measures</dt><dd>{{ item.guide.measures }}</dd>
+                <dt>Axes</dt><dd>{{ item.guide.axes }}</dd>
+                <dt>Colors and symbols</dt><dd>{{ item.guide.colors }}</dd>
+                <dt>Limitation</dt><dd>{{ item.guide.limitation }}</dd>
+              </dl>
+            </details>
+          {% endif %}
+          <a href="{{ url_for('result_download', download_id=item.download_id, filename=item.filename) }}">Download PNG</a>
+        </figcaption>
       </figure>
     {% endmacro %}
 
-    {% macro show_table(table, download_id=None) %}
+    {% macro table_rows(rows) %}{% for row in rows %}<tr>{% for value in row %}<td>{{ value }}</td>{% endfor %}</tr>{% endfor %}{% endmacro %}
+
+    {% macro show_table(table) %}
       <h3>{{ table.title }}</h3>
       {% if table.rows %}
         <div class="scroll"><table>
           <thead><tr>{% for column in table.columns %}<th>{{ column|replace('_', ' ') }}</th>{% endfor %}</tr></thead>
-          <tbody>{% for row in table.rows %}<tr>{% for value in row %}<td>{{ value }}</td>{% endfor %}</tr>{% endfor %}</tbody>
+          <tbody>{{ table_rows(table.rows) }}</tbody>
         </table></div>
+        {% if table.more_rows %}
+          <details><summary>Show {{ table.more_rows|length }} more rows</summary>
+            <div class="scroll"><table><thead><tr>{% for column in table.columns %}<th>{{ column|replace('_', ' ') }}</th>{% endfor %}</tr></thead>
+              <tbody>{{ table_rows(table.more_rows) }}</tbody></table></div>
+          </details>
+        {% endif %}
         {% if table.total > table.shown %}<p class="note">Showing {{ table.shown }} of {{ table.total }} rows; download the CSV for all rows.</p>{% endif %}
+        {% if table.filename and download_id %}<p class="help"><a href="{{ url_for('result_download', download_id=download_id, filename=table.filename) }}">Download {{ table.filename }}</a> (every row, full precision)</p>{% endif %}
       {% else %}<p class="note">No rows.</p>{% endif %}
     {% endmacro %}
 
@@ -364,11 +409,14 @@
         <p><strong>Unique samples represented in candidate pairs:</strong> {{ summary.candidate_unique_samples }}</p>
       </div>
       <p class="note">Candidate pairs are relationships among {{ summary.candidate_unique_samples }} of the {{ summary.unique_samples }} original samples, not additional samples.</p>
-      <p><strong>Sequences aligned by MAFFT:</strong> {{ summary.aligned_sequences }}<br>
-        <strong>Distinct locations resolved by GeoNames:</strong> {{ summary.geonames_resolved }}<br>
-        <strong>Distinct locations too coarse for distance comparison:</strong> {{ summary.coarse_locations }}<br>
-        <strong>Samples lacking sufficiently precise geographic metadata:</strong> {{ summary.insufficient_geography_samples }}<br>
-        <strong>Valid geographic-distance comparisons:</strong> {{ summary.valid_geographic_comparisons }}</p>
+      <details class="more">
+        <summary>Alignment and geography details</summary>
+        <p><strong>Sequences aligned by MAFFT:</strong> {{ summary.aligned_sequences }}<br>
+          <strong>Distinct locations resolved by GeoNames:</strong> {{ summary.geonames_resolved }}<br>
+          <strong>Distinct locations too coarse for distance comparison:</strong> {{ summary.coarse_locations }}<br>
+          <strong>Samples lacking sufficiently precise geographic metadata:</strong> {{ summary.insufficient_geography_samples }}<br>
+          <strong>Valid geographic-distance comparisons:</strong> {{ summary.valid_geographic_comparisons }}</p>
+      </details>
 
       <h3>Potential clusters meeting all three screening criteria</h3>
       <p class="note">A related pair meets the genetic, date, and distance cutoffs (and shares at least 20 comparable positions); clusters are connected groups of related pairs.</p>
@@ -409,8 +457,23 @@
       <p class="note">Thresholds are prototype settings, not universal biological outbreak definitions. Related pairs and clusters are screening signals, never confirmed transmission.</p>
     {% endmacro %}
 
+    {% macro shared_story(story) %}
+      <div class="story card" id="shared-variant-example">
+        <h3>Follow one shared variant: {{ story.key }}</h3>
+        <ol>
+          <li><strong>Reference nucleotide.</strong> Position {{ story.position }} of reference {{ story.reference }} is <code>{{ story.ref }}</code>.</li>
+          <li><strong>Individual sequences (Sprint 2).</strong> {{ story.individual_count }} individual sequence(s) have <code>{{ story.alt }}</code> at that position after MAFFT places them on the reference: {{ story.individual }}. Each is one observed base.</li>
+          <li><strong>Pooled samples (Sprint 3).</strong> {{ story.pooled_count }} pooled sample(s) kept after quality control report {{ story.ref }}&gt;{{ story.alt }} there, at frequencies {{ story.frequency_range }}: {{ story.pooled }}. Each is a share of sequencing reads, a different kind of measurement.</li>
+          <li><strong>Classification.</strong> Same reference, same position, same change in both sources, so the variant is <em>{{ story.category }}</em>.</li>
+          <li><strong>Time and place.</strong> First pooled report {{ story.first_pooled }}; first individual sequence {{ story.first_individual }}{% if story.days is not none %} ({% if story.days < 0 %}pooled {{ -story.days }} day(s) earlier{% elif story.days > 0 %}individual {{ story.days }} day(s) earlier{% else %}same day{% endif %}){% endif %}; {{ story.window_pairs }} individual–pooled pairs fall within the cross-source date window. Individual sequences come from {{ story.individual_places }}; pooled reports from {{ story.pooled_places }}{% if story.km is not none %}; nearest distance {{ story.km }} km{% else %}; no kilometer distance can be computed because the sites have no precise coordinates{% endif %}.</li>
+        </ol>
+        <p class="note">A shared variant shows that both kinds of surveillance saw the same nucleotide change. It does not show that the same infections, people, or lineage were sampled, or which source saw it first for a reason.</p>
+      </div>
+    {% endmacro %}
+
     {% macro render_section(s) %}
-      <section id="{{ s.id }}">
+      <section id="{{ s.id }}" class="result-section">
+        {% if s.sprint %}<p class="sprint-tag">{{ s.sprint }}</p>{% endif %}
         <h2>{{ s.number }}. {{ s.title }}</h2>
         <p class="purpose">{{ s.purpose }}</p>
         {% if s.unavailable %}<p class="unavailable">{{ s.unavailable }}</p>{% endif %}
@@ -418,24 +481,52 @@
           <div class="summary-grid">{% for item in s.stats %}<p class="stat{% if not item.available %} na{% endif %}"><strong>{{ item.label }}:</strong> {{ item.value }}{% if item.detail %} <span class="detail">({{ item.detail }})</span>{% endif %}</p>{% endfor %}</div>
         {% endif %}
         {% if s.id == 'overview' %}
-          {% if input_names %}
-            <h3>Files analyzed</h3>
-            <p>{% for key, name in input_names.items() %}<strong>{{ input_labels.get(key, key) }}:</strong> {{ name }}<br>{% endfor %}</p>
+          <p><strong>Analysis mode:</strong> {{ s.mode }}</p>
+          {% if s.findings or (analysis_complete and summary) %}
+            <h3>Major findings</h3>
+            <ul class="findings">
+              {% for item in s.findings %}<li>{{ item }}</li>{% endfor %}
+              {% if analysis_complete and summary %}<li>Sprint 2 screening: {{ related_pair_count }} related pair(s) meet all three cutoffs, forming {{ clusters|length }} potential cluster(s); {{ candidates|length }} more pair(s) pass the genetic and date cutoffs but have unresolved geography.</li>{% endif %}
+            </ul>
           {% endif %}
-          {% if s.integration %}
-            <h3>How the two sources were connected</h3>
-            <dl class="facts">{% for label, text in s.integration %}<dt>{{ label }}</dt><dd>{{ text }}</dd>{% endfor %}</dl>
-          {% endif %}
-          {% if s.analyses %}
-            <h3>Analyses in this run</h3>
-            <div class="scroll"><table><thead><tr><th>Analysis</th><th>Status</th><th>Detail</th></tr></thead>
-              <tbody>{% for row in s.analyses %}<tr><td>{{ row.Analysis }}</td><td><span class="badge {{ row.Status|lower|replace(' ', '-') }}">{{ row.Status }}</span></td><td>{{ row.Detail }}</td></tr>{% endfor %}</tbody></table></div>
-          {% endif %}
+          {% if dashboard.cross_source.story %}<p><a href="#shared-variant-example">Follow one shared variant step by step →</a></p>{% endif %}
+          <details class="more">
+            <summary>Files, connection details, and analyses that ran</summary>
+            {% if input_names %}
+              <h3>Files analyzed</h3>
+              <p>{% for key, name in input_names.items() %}<strong>{{ input_labels.get(key, key) }}:</strong> {{ name }}<br>{% endfor %}</p>
+            {% endif %}
+            {% if s.integration %}
+              <h3>How the two sources were connected</h3>
+              <dl class="facts">{% for label, text in s.integration %}<dt>{{ label }}</dt><dd>{{ text }}</dd>{% endfor %}</dl>
+            {% endif %}
+            {% if s.analyses %}
+              <h3>Analyses in this run</h3>
+              <div class="scroll"><table><thead><tr><th>Analysis</th><th>Status</th><th>Detail</th></tr></thead>
+                <tbody>{% for row in s.analyses %}<tr><td>{{ row.Analysis }}</td><td><span class="badge {{ row.Status|lower|replace(' ', '-') }}">{{ row.Status }}</span></td><td>{{ row.Detail }}</td></tr>{% endfor %}</tbody></table></div>
+            {% endif %}
+          </details>
+          <details class="more">
+            <summary>Important limitations</summary>
+            <ul class="notes">
+              <li>Results are screening signals: they do not confirm transmission, an outbreak, or a lineage.</li>
+              <li>Individual base calls and pooled allele frequencies are different measurements; they are compared only by reference position and nucleotide change.</li>
+              <li>Missing information is shown as "Not available" or "unknown", never as zero.</li>
+              <li>Each section lists its own limitations under "Uncertainty and limitations".</li>
+            </ul>
+          </details>
         {% endif %}
         {% if s.id == 'population' and s.method %}
           <p><strong>Method:</strong> {{ s.method }}{% if s.exploratory %} <span class="badge limited">Exploratory — not the paper's method</span>{% else %} <span class="badge completed">Paper method</span>{% endif %}</p>
         {% endif %}
-        {% for item in s.figures %}{{ show_figure(item) }}{% endfor %}
+        {% if s.figures %}{{ show_figure(s.figures[0]) }}{% endif %}
+        {% if s.id == 'cross-source' and s.story %}{{ shared_story(s.story) }}{% endif %}
+        {% if s.figures|length > 1 %}
+          <details class="more">
+            <summary>More figures in this section ({{ s.figures|length - 1 }})</summary>
+            {% for item in s.figures[1:] %}{{ show_figure(item) }}{% endfor %}
+          </details>
+        {% endif %}
         {% if s.id == 'quality' and s.regression %}
           <p class="note">Depth regression: n = {{ s.regression.n }}, slope = {{ '%.4f'|format(s.regression.slope) }}, R² = {{ '%.3f'|format(s.regression.r_squared) }}, permutation p = {{ '%.3f'|format(s.regression.permutation_p) }}.{% if s.regression.small_sample %} Fewer than 10 samples: descriptive only.{% endif %}</p>
         {% endif %}
@@ -444,19 +535,27 @@
           {% elif input_names and input_names.fasta %}<p class="unavailable">The sequence comparison could not be completed for the uploaded sequences; see the message at the top of the page.</p>
           {% else %}<p class="unavailable">Upload individual FASTA sequences and metadata to compare sequences with MAFFT, p-distance, dates, and locations.</p>{% endif %}
         {% endif %}
-        {% for table in s.tables %}{{ show_table(table) }}{% endfor %}
+        {% if s.tables %}
+          <details class="more">
+            <summary>Detailed tables ({{ s.tables|length }})</summary>
+            {% for table in s.tables %}{{ show_table(table) }}{% endfor %}
+          </details>
+        {% endif %}
         {% if s.limitations %}
-          <h3>Uncertainty and limitations</h3>
-          {{ show_notes(s.limitations) }}
+          <details class="more">
+            <summary>Uncertainty and limitations</summary>
+            {{ show_notes(s.limitations) }}
+          </details>
         {% endif %}
         {% if s.downloads and download_id %}
           <p class="section-downloads"><strong>Downloads:</strong> {% for name in s.downloads %}<a href="{{ url_for('result_download', download_id=download_id, filename=name) }}">{{ name }}</a>{% if not loop.last %} · {% endif %}{% endfor %}</p>
         {% endif %}
+        {% if s.id != 'overview' %}<p class="back-top"><a href="#overview">↑ Back to results overview</a></p>{% endif %}
       </section>
     {% endmacro %}
 
     {% if analysis_complete or dashboard %}
-      {% if is_synthetic_example %}
+      {% if is_synthetic_example and not is_literature_example %}
         <section class="synthetic-note">
           <h2>Synthetic example analysis</h2>
           <p>These sequences and sample records are invented for demonstration. They are not NCBI records or real outbreak data.</p>
@@ -466,6 +565,16 @@
         <section class="synthetic-note">
           <h2>SYNTHETIC integrated example</h2>
           <p>Every reference base, sequence, pooled sample, site, date, read count, and frequency below is invented to demonstrate the integrated workflow. None of it is real surveillance data.</p>
+          {% if dashboard %}
+            <p><strong>The invented inputs:</strong> {{ dashboard.summary.individual_samples }} individual sequence records (Sprint 2), {{ dashboard.summary.pooled_samples }} pooled sample records (Sprint 3), and reference {{ dashboard.summary.reference }}, which both sources share.</p>
+            <p><strong>Read the results in this order:</strong> the <a href="#overview">overview</a> (what was found), the <a href="#cross-source">cross-source evidence</a> with its step-by-step <a href="#shared-variant-example">shared-variant example</a> (how Sprint 2 and Sprint 3 connect), then the <a href="#population">population structure</a> of the pooled samples.</p>
+          {% endif %}
+        </section>
+      {% endif %}
+      {% if is_literature_example %}
+        <section class="synthetic-note">
+          <h2>SYNTHETIC literature-enrichment example</h2>
+          <p>The samples, sequences, articles, and model responses are invented to demonstrate Sprint 4. Use the Sprint 4 section below; nothing is sent to Claude.</p>
         </section>
       {% endif %}
 
@@ -479,8 +588,9 @@
 
       {% if dashboard %}
         <nav class="sections" aria-label="Dashboard sections">
+          <span class="nav-label">Jump to:</span>
           {% for s in dashboard.sections %}<a href="#{{ s.id }}">{{ s.number }}. {{ s.title }}</a>{% endfor %}
-          {% if enrichment %}<a href="#literature">9. Literature enrichment</a>{% endif %}
+          {% if enrichment %}<a href="#literature">Sprint 4 enrichment</a>{% endif %}
           <a href="#provenance">Provenance &amp; downloads</a>
         </nav>
         {% for s in dashboard.sections %}{{ render_section(s) }}{% endfor %}
@@ -500,12 +610,15 @@
         {% endif %}
         {% if downloads %}
           <p class="note">Result files are kept in this server's memory for up to 10 minutes (sooner if several newer analyses run); uploaded files were deleted after the analysis.</p>
-          <ul class="downloads">
-            {% for name in downloads %}<li><a href="{{ url_for('result_download', download_id=download_id, filename=name) }}">{{ name }}</a></li>{% endfor %}
-          </ul>
+          <details>
+            <summary>All result files ({{ downloads|length }})</summary>
+            <ul class="downloads">
+              {% for name in downloads %}<li><a href="{{ url_for('result_download', download_id=download_id, filename=name) }}">{{ name }}</a></li>{% endfor %}
+            </ul>
+          </details>
           {% if skipped_downloads %}<p class="note">Too large for the hosted download: {{ skipped_downloads|join(', ') }}. Use run_integrated_analysis.py locally.</p>{% endif %}
         {% endif %}
-        <p><a href="{{ url_for('index') }}">Start a new analysis</a></p>
+        <p class="back-top"><a href="#overview">↑ Back to results overview</a> · <a href="{{ url_for('index') }}">Start a new analysis</a></p>
       </section>
     {% endif %}
 
@@ -516,34 +629,11 @@
           <p>The samples, sequences, articles, and model responses are invented to demonstrate the workflow. None of it describes real samples or publications.</p>
         </section>
       {% endif %}
+      <p class="note">The earlier results page is not stored; run the analysis again to see it. Sprint 4 keeps its own session for 30 minutes.</p>
       {% include "_literature.html" %}
-      <p><a href="{{ url_for('index') }}">Start a new analysis</a></p>
     {% endif %}
 
-    <section>
-      <h2>System status</h2>
-      <p class="note">Check that this server can align two invented sequences with MAFFT, contact GeoNames for an approximate Tempe, Arizona place location, and run one PubTator3 literature search. The Claude line only reads the server's settings; no request is sent to Claude unless you press its own check button. No upload is needed. Recent results are reused for five minutes.</p>
-      <form method="post" action="{{ url_for('system_status') }}">
-        <button type="submit" class="secondary">Check MAFFT &amp; GeoNames (and PubTator)</button>
-      </form>
-      {% if system_status %}
-        <p><strong>MAFFT: {{ system_status.mafft.status }}</strong> — {{ system_status.mafft.message }}
-          {% if system_status.mafft.version %}Version: {{ system_status.mafft.version }}.{% endif %}</p>
-        <p><strong>GeoNames: {{ system_status.geonames.status }}</strong> — {{ system_status.geonames.message }}</p>
-        {% if system_status.pubtator %}<p><strong>PubTator3: {{ system_status.pubtator.status }}</strong> — {{ system_status.pubtator.message }}</p>{% endif %}
-        {% if system_status.ai %}<p><strong>Claude API configuration: {{ system_status.ai.status }}</strong> — {{ system_status.ai.message }}</p>{% endif %}
-        {% if system_status.claude_check %}<p><strong>Claude API check: {{ system_status.claude_check.status }}</strong> — {{ system_status.claude_check.message }}</p>{% endif %}
-        {% if system_status.ai and system_status.ai.status == 'Configured' %}
-          <form method="post" action="{{ url_for('claude_status') }}">
-            <input type="text" name="access_code" placeholder="Access code (if required)" autocomplete="off" aria-label="Access code">
-            <button type="submit" class="secondary">Check Claude API access (token count only, no text generated)</button>
-          </form>
-        {% endif %}
-        {% if status_cached %}<p class="note">Showing a recent cached check.</p>{% endif %}
-      {% endif %}
-    </section>
-
-    <p class="note">Earlier single-source Sprint 3 pages remain available for comparison: <a href="{{ url_for('wastewater_page') }}">Wastewater Surveillance (processed SNV summary)</a> and <a href="{{ url_for('wastewater_data_page') }}">Wastewater Data Analysis (processed measurement tables)</a>.</p>
+    {% include "_status.html" %}
   </main>
 </body>
 </html>

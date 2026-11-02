@@ -2,6 +2,8 @@
 
 Integration report for the BMI 461 genomic surveillance prototype, branch `sprint4-integration`, written November 2, 2026.
 
+> **Update (usability redesign, November 2, 2026).** The section is now called **Sprint 4 — AI Metadata Enrichment** and is limited to sample-collection metadata. The general "surveillance context" statements (Phase 7: increases, clusters, trends, limitations drawn from articles) were **removed from the main workflow**. They are no longer requested from the model, shown on the page, or offered as a download, and the extraction prompt now says not to summarize articles or epidemiological trends. The prompt version is now `literature-extraction-v2`, so earlier cached results are not reused. Discovery, Claude extraction, verification, approval, GeoNames, rescreening, provenance, and cost controls are unchanged. Sections below that mention context statements describe the first version.
+
 ## Status at a glance
 
 - **Built and tested (offline):** the whole pipeline, from sample metadata through literature discovery, passage selection, Claude-compatible structured extraction, deterministic evidence checks, human review, GeoNames resolution and derived metadata, to the before/after rescreen. It is section 9 of the existing Flask dashboard, not a separate site.
@@ -201,8 +203,7 @@ Dates (`verification.dates_in`) are recognized in ISO form, "5 March 2026", "Mar
 
 - **Site identifier, sample type, collection method, study identifier, study context:** after verification and approval, these go into `Enriched_*` columns. No calculation uses them.
 - **Study-level facts** (`Sample_ID = STUDY`) are shown as context and are never assigned to a sample.
-- **Surveillance context (Phase 7):** statements about increased detections, genetic change, multiple sites, prevalence change, reported clusters, population trends, and limitations. Each is labeled "explicitly reported", "interpretation or hypothesis", or "unsupported or unclear", and cited by article and passage. A statement whose quotation cannot be found becomes "unsupported or unclear".
-- These statements are listed separately and change no calculation. The interface says the authors' statements are not confirmed events and that the tool does not detect outbreaks.
+- **Surveillance context (Phase 7): removed in the usability redesign.** The first version extracted labeled statements about detections, clusters, and trends. They were outside the project's purpose (improving sample metadata), so they are no longer requested, shown, or downloaded.
 
 ## 8. Evidence verification and ambiguity handling
 

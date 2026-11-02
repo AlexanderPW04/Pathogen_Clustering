@@ -27,7 +27,7 @@ ROOT = Path(__file__).resolve().parents[1]
 EXAMPLE = ROOT / "examples" / "literature"
 FIRST_SEQUENCE = (EXAMPLE / "synthetic_literature_sequences.fasta").read_text(encoding="utf-8").split("\n")[1]
 SECRET = "fake-test-key-NEVER-SHOW-THIS"
-EMPTY = '{"facts": [], "context_statements": [], "insufficient_evidence_samples": [], "notes": ""}'
+EMPTY = '{"facts": [], "insufficient_evidence_samples": [], "notes": ""}'
 
 
 def token_of(page):
@@ -64,14 +64,14 @@ class LiteratureWebTest(unittest.TestCase):
     def test_example_button_and_section_appear_without_any_model_call(self):
         home = self.client.get("/").get_data(as_text=True)
         self.assertIn("Run Literature Enrichment Example", home)
-        self.assertIn("4 · Literature enrichment (optional)", home)
+        self.assertIn("4 · Metadata enrichment (Sprint 4, optional)", home)
         with patch("literature.providers.MockProvider.run") as mock_run, \
                 patch("literature.providers.ClaudeProvider.run") as claude_run:
             page, token = self.run_example()
         mock_run.assert_not_called()
         claude_run.assert_not_called()
         self.assertIsNotNone(token)
-        self.assertIn("9. AI Literature &amp; Metadata Enrichment", page)
+        self.assertIn("Sprint 4 — AI Metadata Enrichment", page)
         self.assertIn("Pairwise comparisons:", page)  # the Sprint 2 analysis still ran
         self.assertIn("SYNTHETIC demonstration", page)
 

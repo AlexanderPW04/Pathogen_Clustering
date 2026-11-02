@@ -1,0 +1,26 @@
+{# Navigation controls at the top of the review, results, and enrichment pages.
+   "Back" requests carry only the settings and earlier file names; uploaded files
+   are never kept after an analysis, so they cannot be restored. #}
+<nav class="toolbar" aria-label="Page navigation">
+  <form method="post" action="{{ url_for('go_back') }}">
+    <input type="hidden" name="target" value="upload">
+    {% for key in ['max_p_distance', 'max_days_apart', 'max_km_apart', 'genomic_region_mode', 'qc_mode', 'date_window_days'] %}<input type="hidden" name="{{ key }}" value="{{ values[key] }}">{% endfor %}
+    <input type="hidden" name="intended_mode" value="{{ intended_mode }}">
+    {% if token %}<input type="hidden" name="token" value="{{ token }}">{% endif %}
+    {% for name in toolbar_files %}<input type="hidden" name="previous_file" value="{{ name }}">{% endfor %}
+    <button type="submit" class="secondary small">← Back to upload</button>
+  </form>
+  {% if step >= 3 %}
+    <form method="post" action="{{ url_for('go_back') }}">
+      <input type="hidden" name="target" value="review">
+      {% for key in ['max_p_distance', 'max_days_apart', 'max_km_apart', 'genomic_region_mode', 'qc_mode', 'date_window_days'] %}<input type="hidden" name="{{ key }}" value="{{ values[key] }}">{% endfor %}
+      <input type="hidden" name="intended_mode" value="{{ intended_mode }}">
+      {% if is_synthetic_example or is_integrated_example %}<input type="hidden" name="example" value="1">{% endif %}
+      {% for name in toolbar_files %}<input type="hidden" name="previous_file" value="{{ name }}">{% endfor %}
+      <button type="submit" class="secondary small">← Back to file review</button>
+    </form>
+  {% endif %}
+  {% if step == 3 and (dashboard or analysis_complete) %}<a class="button-link" href="#overview">Results overview</a>{% endif %}
+  {% if step == 4 %}<a class="button-link" href="#literature">Sprint 4 steps</a>{% endif %}
+  <a class="button-link" href="{{ url_for('index') }}">Start new analysis</a>
+</nav>

@@ -41,6 +41,7 @@ from genomics.input_inspection import (
     ROLE_LABELS, empty_info, inspect_file, prepare_inputs, review_dataset, suggest_roles,
 )
 from genomics.integrated_analysis import run_integrated_analysis
+from dashboard_guide import GLOSSARY
 from integrated_view import build_dashboard, download_files
 from literature.config import ai_status
 from literature.pubtator import check_pubtator
@@ -97,6 +98,28 @@ INPUT_LABELS = {
     "masked_sites": "Masked-site list",
     "signatures": "Variant profiles",
 }
+# Optional "what do you want to analyze?" choice on the upload page. File roles
+# are still detected automatically; the choice only lets the review step say
+# which files that analysis would need.
+MODES = {
+    "auto": {"label": "Detect from my files", "files": "Upload any mix; the next step recognizes each file."},
+    "individual": {"label": "Individual sequences (Sprint 2)",
+                   "files": "FASTA sequences + sample metadata."},
+    "pooled": {"label": "Pooled sequencing results (Sprint 3)",
+               "files": "A processed SNV table (results of upstream variant calling)."},
+    "combined": {"label": "Combined (Sprint 2 + Sprint 3)",
+                 "files": "Both of the above + one shared reference genome FASTA."},
+}
+MODE_NEEDS = {
+    "individual": [("fasta", "individual sequences (FASTA)"), ("metadata", "sample metadata")],
+    "pooled": [("snv", "processed pooled SNV table")],
+    "combined": [("fasta", "individual sequences (FASTA)"), ("metadata", "sample metadata"),
+                 ("reference", "reference genome FASTA"), ("snv", "processed pooled SNV table")],
+}
+# Synthetic example files that visitors may download as format examples.
+EXAMPLE_DOWNLOADS = {name: INTEGRATED_FOLDER / name for name in INTEGRATED_EXAMPLE_FILES.values()}
+EXAMPLE_DOWNLOADS.update({name: EXAMPLE_FOLDER / name
+                          for name in ["synthetic_sequences.fasta", "synthetic_metadata.csv"]})
 RESULT_DOWNLOADS = {}  # Short-lived integrated-result files; no database.
 RESULT_LOCK = Lock()
 RESULT_DOWNLOAD_SECONDS = 600
@@ -683,7 +706,8 @@ def new_page():
         "integrated_error": None, "download_id": None, "downloads": [],
         "skipped_downloads": [], "review": None, "token": None, "step": 1,
         "analysis_plan": None, "declared_pathogen": "", "enrichment": None, "refresh_url": None,
-        "is_literature_example": False,
+        "is_literature_example": False, "intended_mode": "auto", "mode_check": None,
+        "previous_files": [], "info": None,
     }
 
 
@@ -823,8 +847,67 @@ def run_genomic_analyses(paths, names, values, thresholds, date_window, temporar
 
 
 def render_page(values, page):
+    if page.get("review"):
+        toolbar_files = [entry["info"]["name"] for entry in page["review"]["files"]]
+    else:
+        toolbar_files = list((page.get("input_names") or {}).values()) or page.get("previous_files", [])
     return render_template("index.html", values=values, input_labels=INPUT_LABELS,
-                           role_labels=ROLE_LABELS, **page)
+                           role_labels=ROLE_LABELS, toolbar_files=toolbar_files[:MAX_GUIDED_FILES],
+                           **page)
+
+
+EXAMPLE_FACTS = {}
+
+
+@app.context_processor
+def shared_page_values():
+    """Values every page uses: the glossary, analysis modes, and example facts."""
+
+    if not EXAMPLE_FACTS:
+        EXAMPLE_FACTS.update(integrated_example_facts())
+    return {"glossary": GLOSSARY, "modes": MODES, "example_facts": EXAMPLE_FACTS or None}
+
+
+def integrated_example_facts():
+    """Counts read from the bundled integrated example files (not hard-coded)."""
+
+    try:
+        sequences = (INTEGRATED_FOLDER / INTEGRATED_EXAMPLE_FILES["fasta"]).read_text(encoding="utf-8")
+        reference = (INTEGRATED_FOLDER / INTEGRATED_EXAMPLE_FILES["reference"]).read_text(encoding="utf-8")
+        pooled = pd.read_csv(INTEGRATED_FOLDER / INTEGRATED_EXAMPLE_FILES["snv"])
+    except (OSError, ValueError):
+        return {}
+    bases = "".join(line.strip() for line in reference.splitlines() if not line.startswith(">"))
+    return {"individual": sequences.count(">"), "pooled": int(pooled["Sample_ID"].nunique()),
+            "sites": int(pooled["Location_Name"].nunique()), "reference_length": len(bases)}
+
+
+def mode_check(review, intended):
+    """Which analysis the reviewed files support, and what the chosen mode would still need."""
+
+    roles = set(review["by_role"])
+    individual = {"fasta", "metadata"} <= roles
+    if individual and "snv" in roles and "reference" in roles:
+        detected = MODES["combined"]["label"]
+    elif individual and "snv" in roles:
+        detected = "Individual and pooled analyses, run separately (add a shared reference FASTA to connect them)"
+    elif individual:
+        detected = MODES["individual"]["label"]
+    elif "snv" in roles:
+        detected = MODES["pooled"]["label"]
+    elif "reference" in roles:
+        detected = "Reference genome only (add sequences or a pooled SNV table)"
+    else:
+        detected = "No analysis yet (no sequences or pooled SNV table recognized)"
+    if intended not in MODE_NEEDS:
+        return {"detected": detected, "intended": None, "missing": []}
+    missing = [label for role, label in MODE_NEEDS[intended] if role not in roles]
+    return {"detected": detected, "intended": MODES[intended]["label"], "missing": missing}
+
+
+def intended_mode(form):
+    choice = form.get("intended_mode", "auto")
+    return choice if choice in MODES else "auto"
 
 
 @app.route("/", methods=["GET", "POST"])
@@ -1044,6 +1127,7 @@ def review_upload():
     values = default_values(request.form)
     page = new_page()
     page["step"] = 2
+    page["intended_mode"] = intended_mode(request.form)
     token = request.form.get("token")
     uploads = [upload for upload in request.files.getlist("files") if upload and upload.filename]
     try:
@@ -1055,6 +1139,7 @@ def review_upload():
                              "30 minutes while you review them.")
         roles, choices, options = review_choices(request.form, item["inspections"])
         page["review"] = review_dataset(item["files"], item["inspections"], roles, choices, options)
+        page["mode_check"] = mode_check(page["review"], page["intended_mode"])
         page["token"] = token
         page["declared_pathogen"] = options["declared_pathogen"]
     except ValueError as problem:
@@ -1068,12 +1153,60 @@ def review_upload():
     return render_page(values, page)
 
 
+@app.route("/back", methods=["POST"])
+def go_back():
+    """Back to the upload or review step, keeping settings but never the deleted files.
+
+    A review can only be shown again while its staged files still exist
+    (before the analysis runs, and for at most 30 minutes). After an analysis
+    the uploads are gone, so the visitor is asked to select them again.
+    """
+
+    values = default_values(request.form)
+    page = new_page()
+    page["intended_mode"] = intended_mode(request.form)
+    page["previous_files"] = [name for name in request.form.getlist("previous_file") if name][:MAX_GUIDED_FILES]
+    token = request.form.get("token")
+    item = staged_item(token) if token else None
+    if request.form.get("target") == "review":
+        if item is not None:
+            roles, choices, options = review_choices({}, item["inspections"])
+            page["review"] = review_dataset(item["files"], item["inspections"], roles, choices, options)
+            page["mode_check"] = mode_check(page["review"], page["intended_mode"])
+            page.update(step=2, token=token, previous_files=[])
+            return render_page(values, page)
+        if request.form.get("example"):
+            page["previous_files"] = []
+            page["info"] = ("The example used bundled files, so there is no file review to return to. "
+                            "Run the example again from the examples card.")
+        else:
+            page["info"] = ("Your uploaded files are no longer on the server: they are deleted as soon as "
+                            "an analysis runs (and after 30 minutes at the latest), and they are never "
+                            "kept. Select them again below to return to the file review.")
+    elif item is not None:
+        with STAGED_LOCK:
+            remove_staged(token)  # leaving the review discards its staged files
+        page["info"] = "The files you were reviewing were removed from the server. Select files again below."
+    return render_page(values, page)
+
+
+@app.route("/examples/<name>")
+def example_file(name):
+    """Download one bundled synthetic example file as a format example."""
+
+    path = EXAMPLE_DOWNLOADS.get(name)
+    if path is None or not path.is_file():
+        abort(404)
+    return send_file(path, as_attachment=True, download_name=name)
+
+
 @app.route("/run", methods=["POST"])
 def run_reviewed():
     """Step 3: run the applicable analyses on the reviewed files."""
 
     values = default_values(request.form)
     page = new_page()
+    page["intended_mode"] = intended_mode(request.form)
     token = request.form.get("token")
     item = staged_item(token)
     if item is None:

@@ -11,10 +11,14 @@ from base64 import b64encode
 
 import pandas as pd
 
+from dashboard_guide import FIGURE_GUIDE, interpretation
+
 
 MISSING = "—"  # an em dash marks a value that is not available
 NOT_AVAILABLE = "Not available"  # a statistic the inputs cannot provide (not zero)
 WIDE_FIGURE_PIXELS = 1400
+TABLE_ROWS = 25  # rows shown at first; up to EXPANDED_ROWS more behind "Show all"; CSVs keep everything
+EXPANDED_ROWS = 200
 
 
 def format_value(value, digits=4):
@@ -34,18 +38,23 @@ def format_value(value, digits=4):
     return str(value)
 
 
-def table_view(table, columns=None, limit=None, title="", filename=None):
-    """Return {'title', 'columns', 'rows', 'total', 'shown', 'filename'} for the template."""
+def table_view(table, columns=None, limit=None, title="", filename=None, expand=0):
+    """Return {'title', 'columns', 'rows', 'more_rows', 'total', 'shown', 'filename'}.
+
+    `limit` rows are shown at first; up to `expand` further rows can be opened
+    on the page. Downloads always contain every row at full precision.
+    """
 
     if table is None:
         return None
     data = table if columns is None else table[[name for name in columns if name in table.columns]]
     total = len(data)
-    if limit is not None:
-        data = data.head(limit)
-    rows = [[format_value(value) for value in row] for row in data.itertuples(index=False)]
-    return {"title": title, "columns": list(data.columns), "rows": rows,
-            "total": total, "shown": len(rows), "filename": filename}
+    first = data if limit is None else data.head(limit)
+    more = data.iloc[len(first):len(first) + expand] if expand else data.iloc[0:0]
+    rows = [[format_value(value) for value in row] for row in first.itertuples(index=False)]
+    more_rows = [[format_value(value) for value in row] for row in more.itertuples(index=False)]
+    return {"title": title, "columns": list(data.columns), "rows": rows, "more_rows": more_rows,
+            "total": total, "shown": len(rows) + len(more_rows), "filename": filename}
 
 
 def png_width(png):
@@ -59,6 +68,7 @@ def figure_view(result, name, download_id):
     if figure is None:
         return None
     return {
+        "name": name,
         "title": figure["title"],
         "caption": figure["caption"],
         "data_uri": "data:image/png;base64," + b64encode(figure["png"]).decode("ascii"),
@@ -66,6 +76,8 @@ def figure_view(result, name, download_id):
         "download_id": download_id,
         # Wider than the page: shown at full size in a scrolling box so labels stay readable.
         "wide": png_width(figure["png"]) > WIDE_FIGURE_PIXELS,
+        "guide": FIGURE_GUIDE.get(name),
+        "interpretation": interpretation(result, name),
     }
 
 
@@ -85,10 +97,101 @@ def short_category(name):
     return label
 
 
+SECTION_SPRINTS = {
+    "overview": "Sprint 2 + Sprint 3", "cross-source": "Sprint 2 + Sprint 3 (integration)",
+    "variation": "Sprint 2 + Sprint 3", "temporal": "Sprint 3 (with Sprint 2 dates)",
+    "geography": "Sprint 2 + Sprint 3", "quality": "Sprint 2 + Sprint 3",
+    "population": "Sprint 3 (Fontenele et al. 2021)", "relationships": "Sprint 2",
+}
+
+
 def section(identifier, number, title, purpose):
     return {"id": identifier, "number": number, "title": title, "purpose": purpose,
+            "sprint": SECTION_SPRINTS.get(identifier, ""),
             "stats": [], "figures": [], "tables": [], "limitations": [], "downloads": [],
             "unavailable": None}
+
+
+def analysis_mode(result):
+    """Plain description of which kinds of evidence this run had."""
+
+    individual, pooled = result["individual"] is not None, result["pooled"] is not None
+    if result["comparison"] is not None:
+        return "Combined analysis (Sprint 2 + Sprint 3) on one verified reference"
+    if individual and pooled:
+        return "Individual and pooled evidence, analyzed separately (no shared verified reference)"
+    if pooled:
+        return "Pooled sequencing analysis (Sprint 3)"
+    return "Individual sequence analysis (Sprint 2)"
+
+
+def major_findings(result):
+    """Short plain-language findings built from the actual summary values."""
+
+    summary = result["summary"]
+    findings = []
+    if "individual_samples" in summary:
+        findings.append(f"{summary['individual_samples']} individual sequence records were analyzed; "
+                        f"{summary.get('individual_mapped', 0)} could be placed on the reference genome.")
+    if "pooled_samples" in summary:
+        findings.append(f"{summary['pooled_samples']} pooled sample records were analyzed; "
+                        f"{summary.get('pooled_samples_included', 0)} were kept after quality control.")
+    counts = summary.get("category_counts")
+    if result["comparison"] is not None and counts:
+        others = ", ".join(f"{value} {short_category(name).lower()}" for name, value in counts.items()
+                           if not name.startswith("Shared"))
+        findings.append(f"{summary.get('shared_variants', 0)} variant(s) were observed in both sources"
+                        + (f"; the others: {others}." if others else "."))
+    if summary.get("population_method"):
+        findings.append(f"Population structure: {summary['population_method']}.")
+    if "date_start" in summary:
+        findings.append(f"Collection dates run from {summary['date_start']} to {summary['date_end']}.")
+    return findings
+
+
+def shared_variant_story(result):
+    """Follow one shared variant from the reference to both sources (built from the results)."""
+
+    comparison = result["comparison"]
+    if comparison is None:
+        return None
+    table = comparison["table"]
+    shared = table[table["Category"].str.startswith("Shared")]
+    if shared.empty:
+        return None
+    row = shared.sort_values(["Pooled_Reported", "Individual_Carriers"], ascending=False).iloc[0]
+    key = row["Variant_Key"]
+    people = result["tables"].get("individual_variants.csv")
+    pools = result["tables"].get("pooled_variants_with_qc.csv")
+    people = people[people["Variant_Key"].eq(key)] if people is not None else pd.DataFrame()
+    if pools is not None:
+        pools = pools[pools["Variant_Key"].eq(key) & pools["Analysis_Included"].astype(bool)]
+    else:
+        pools = pd.DataFrame()
+
+    def listing(frame):
+        return "; ".join(f"{item['Sample_ID']} ({format_value(item['Collection_Date'])}, "
+                         f"{format_value(item['Location_Name'])})" for item in frame.to_dict("records"))
+
+    frequencies = pools["Alt_Frequency"].dropna() if not pools.empty else pd.Series(dtype=float)
+    days = row["Days_Pooled_Minus_Individual"]
+    km = row["Nearest_Km_Between_Carriers"]
+    return {
+        "key": key, "reference": row["Reference_ID"], "position": int(row["Position"]),
+        "ref": row["Ref"], "alt": row["Alt"],
+        "individual": listing(people) or MISSING, "individual_count": len(people),
+        "pooled": listing(pools) or MISSING, "pooled_count": len(pools),
+        "frequency_range": (f"{frequencies.min():.3g} to {frequencies.max():.3g} "
+                            f"(median {frequencies.median():.3g})") if not frequencies.empty else MISSING,
+        "category": row["Category"],
+        "first_individual": format_value(row["First_Individual_Date"]),
+        "first_pooled": format_value(row["First_Pooled_Date"]),
+        "days": None if pd.isna(days) else int(days),
+        "window_pairs": format_value(row["Date_Pairs_Within_Window"]),
+        "individual_places": format_value(row["Individual_Carrier_Locations"]),
+        "pooled_places": format_value(row["Pooled_Reporting_Locations"]),
+        "km": None if pd.isna(km) else round(float(km), 1),
+    }
 
 
 def build_dashboard(result, download_id, available=None):
@@ -106,6 +209,8 @@ def build_dashboard(result, download_id, available=None):
         return [view for view in (figure_view(result, name, download_id) for name in names) if view]
 
     def table(name, title, **options):
+        options.setdefault("limit", TABLE_ROWS)
+        options.setdefault("expand", EXPANDED_ROWS)
         return table_view(tables.get(name), title=title, filename=name if name in tables else None,
                           **options)
 
@@ -144,6 +249,8 @@ def build_dashboard(result, download_id, available=None):
     ]
     overview["integration"] = result.get("integration", [])
     overview["analyses"] = result.get("analyses", [])
+    overview["mode"] = analysis_mode(result)
+    overview["findings"] = major_findings(result)
     finish(overview, ["completeness"], [
         table_view(pd.DataFrame(result.get("completeness", [])), title="Metadata completeness by source")
         if result.get("completeness") else None,
@@ -316,6 +423,11 @@ def build_dashboard(result, download_id, available=None):
         table("nucleotide_diversity.csv",
               "Mean per-position nucleotide diversity (1 - sum of squared A/C/G/T frequencies)"),
     ], ["population"], ["pcoa_coordinates.csv", "dissimilarity_matrix.csv", "nucleotide_diversity.csv"])
+    if structure.get("exploratory"):
+        for item in structure["figures"]:
+            if item["name"] == "pcoa" and item["guide"]:
+                item["guide"] = {**item["guide"],
+                                 "origin": "Exploratory alternative (not the paper's Yue–Clayton method)"}
 
     # 8. Individual sequence relationships (Sprint 2) -------------------------
     relationships = section("relationships", 8, "Individual sequence relationships",
@@ -328,6 +440,7 @@ def build_dashboard(result, download_id, available=None):
             "Geographic_Precision_1", "Geographic_Precision_2"]),
     ], ["relationships"], ["pairwise_distances.csv"])
 
+    cross["story"] = shared_variant_story(result)
     view = {"summary": summary, "notes": notes, "download_id": download_id,
             "sections": [overview, cross, variation, temporal, geography, quality, structure,
                          relationships]}

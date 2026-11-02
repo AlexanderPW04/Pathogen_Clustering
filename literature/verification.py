@@ -220,17 +220,3 @@ def compare_with_original(fact, row):
         return compare_date(row, start, end)
     return "Fills missing value", "Descriptive field; it does not change any calculation."
 
-
-def verify_context(statement, passages):
-    """Check a surveillance-context statement's quotation; unverifiable ones become unsupported."""
-
-    checked = dict(statement)
-    passage = passages.get(statement["Passage_ID"])
-    span = locate_quote(statement["Evidence_Quote"], passage["Text"]) if passage else None
-    if span is None:
-        checked["Label"] = "Unsupported or unclear"
-        checked["Check_Notes"] = "The quotation was not found in the cited passage."
-    else:
-        checked["Check_Notes"] = "Quotation found in the cited passage."
-    checked["Quote_Verified"] = span is not None
-    return checked

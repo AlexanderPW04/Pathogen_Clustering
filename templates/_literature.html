@@ -1,8 +1,12 @@
-{# Section 9: optional AI literature & metadata enrichment. All article text is autoescaped. #}
+{# Sprint 4: optional AI metadata enrichment. All article text is autoescaped. #}
 {% set lit = enrichment %}
 <section id="literature">
-  <h2>9. AI Literature &amp; Metadata Enrichment <span class="badge limited">Optional prototype</span></h2>
-  <p class="purpose">Looks for publications linked to your samples, asks a language model to read short passages, and proposes more complete or more specific metadata (collection place, date or date range, sampling site). Every proposal keeps its quoted evidence, is checked against the article text, and changes nothing until you approve it. The genomic analyses never depend on this section.</p>
+  <p class="sprint-tag sprint4">Sprint 4 · optional</p>
+  <h2>Sprint 4 — AI Metadata Enrichment</h2>
+  <p class="purpose">Find information in scientific publications that may help improve missing or imprecise collection details (collection place, date or date range, sampling site). Every suggestion keeps its quoted evidence, is checked against the article text, and changes nothing until you approve it. The genomic analyses never depend on this section.</p>
+  <ol class="mini-steps" aria-label="Sprint 4 steps">
+    <li>Find publications linked to your samples</li><li>Claude reads only the relevant passages</li><li>Quotations and the sample link are checked</li><li>You approve or reject each suggestion</li><li>GeoNames places approved locations; affected date and distance results are recomputed</li>
+  </ol>
   {% if lit.synthetic %}
     <p class="synthetic-note" style="padding:0.5rem 0.75rem;border-radius:8px;border:1px solid var(--warn-border)"><strong>SYNTHETIC demonstration:</strong> the samples and the articles are invented, and the "model" answers are fixed fixture responses (some deliberately wrong, to show the checks). No AI model is called and nothing is billed.</p>
   {% endif %}
@@ -125,14 +129,6 @@
       <p class="unavailable">No candidate metadata was proposed. Insufficient evidence is an acceptable answer.</p>
     {% endif %}
     {% if lit.insufficient %}<p class="note"><strong>Reported as insufficient evidence:</strong> {% for item in lit.insufficient %}{{ item.Sample_ID }} ({{ item.Article_ID }}){% if not loop.last %}, {% endif %}{% endfor %}</p>{% endif %}
-    {% if lit.context %}
-      <details>
-        <summary>Surveillance context from the publications ({{ lit.context|length }})</summary>
-        <p class="note">What the articles say about detections, trends, sites, clusters, and limitations. These are the authors' statements, labeled by type; they are not independently confirmed events and do not change any calculation.</p>
-        <div class="scroll"><table><thead><tr><th>Category</th><th>Statement</th><th>Label</th><th>Evidence</th><th>Citation</th></tr></thead>
-          <tbody>{% for item in lit.context %}<tr><td>{{ item.Category }}</td><td>{{ item.Statement }}</td><td>{{ item.Label }}</td><td>“{{ item.Evidence_Quote }}”<br><span class="help">{{ item.Check_Notes }}</span></td><td>{{ item.Article_ID }}<br><span class="help">{{ item.Article_Title }}</span></td></tr>{% endfor %}</tbody></table></div>
-      </details>
-    {% endif %}
   {% endif %}
 
   {% if lit.applied %}
@@ -173,6 +169,6 @@
     <li>No numerical confidence is shown: model judgments are not calibrated probabilities.</li>
     <li>City-level GeoNames coordinates are approximate place locations, not specimen coordinates; state-level and county-level areas stay too coarse for the distance cutoff.</li>
     <li>Date ranges are kept as ranges and do not change exact-day comparisons.</li>
-    <li>Statements about increases, clusters, or spread come from the publications and are labeled; this tool does not detect outbreaks.</li>
+    <li>This section only looks for sample-collection details; it does not summarize articles, interpret epidemiological trends, or detect outbreaks.</li>
   </ul>
 </section>

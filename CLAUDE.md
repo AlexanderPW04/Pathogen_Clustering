@@ -23,7 +23,7 @@ Read `PROJECT_HANDOFF.md`, `README.md`, and the actual code/tests before plannin
 
 ## Existing code to locate and verify
 Core files on `sprint4-integration` (verified November 1, 2026):
-- `app.py` (guided `/` → `/review` → `/run` workflow, named-field `POST /` kept for scripts/tests, legacy Sprint 3 routes), `integrated_view.py`, `templates/index.html`, `run_pipeline.py`, `run_integrated_analysis.py`
+- `app.py` (guided `/` → `/review` → `/run` workflow, `/back` navigation, `/examples/<name>` downloads, named-field `POST /` kept for scripts/tests, legacy Sprint 3 routes), `integrated_view.py`, `dashboard_guide.py` (figure reading guides, glossary), `templates/index.html` with partials `_how_it_works.html`, `_upload.html`, `_toolbar.html`, `_status.html`, `_literature.html`, `run_pipeline.py`, `run_integrated_analysis.py`
 - Sprint 2 backbone: `validate_inputs.py`, `genomic_regions.py`, `align_sequences.py`, `compare_genetic_distances.py`, `add_temporal_geographic.py`, `detect_potential_clusters.py`, `geocode_locations.py`, `system_diagnostics.py`
 - Sprint 3: `wastewater/processed_snv.py`, `environmental_analysis.py` (legacy pages)
 - Sprint 2 + Sprint 3 integration: `genomics/` (references, unified_schema, pooled_observations, sequence_variants, quality_control, temporal_analysis, diversity_analysis, variant_matching, figures, integrated_analysis, file_formats, column_detection, input_inspection), `offline_workflow/`, `validation/check_fontenele_2021.py`, `ARTICLE_METHOD_VALIDATION.md`

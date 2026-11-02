@@ -2,6 +2,17 @@
 
 **Purpose:** Transfer working context for a biomedical informatics class coding project. This handoff was prepared from discussion, Codex-reported summaries, and screenshots. It is **not** a code audit or an assertion that every file exists in the present repository. Verify the current files before editing.
 
+## Usability redesign (November 2, 2026, after Sprint 4)
+
+- **Interface only; no scientific calculation changed.** Checkpoint tag before it: `checkpoint/before-ui-redesign`.
+- **Home page:** a "How this works" diagram with one lane per sprint. The shared reference genome is shown as the connection, and the steps done before upload (sequencing reads, variant calling) are drawn dashed. Also an optional "What do you want to analyze?" choice (Detect / Sprint 2 / Sprint 3 / Combined), per-analysis file guides with downloadable example files (`/examples/<name>`, an allow-list), an "unlocks" table, and a glossary.
+- **Review step:** shows the detected analysis mode and, when a mode was chosen, which files that mode would still need. File-role detection is unchanged.
+- **Navigation:** every review, results, and Sprint 4 page has a top toolbar: Back to upload, Back to file review, Results overview, Start new analysis. `POST /back` restores a review only while its staged files still exist. After an analysis, files are already deleted (unchanged privacy rule), so the page explains this and lists the earlier file names to select again.
+- **Results:** section 1 is the results overview (mode, major findings from the actual outputs, data quality, collapsed details and limitations). Each section shows its sprint, its key figure, a "How to read this chart" guide (`dashboard_guide.py`), and an "In these results" sentence. Further figures, tables (25 rows, up to 200 more on demand, full CSV download), and limitations are collapsible. The cross-source section follows one shared variant from the reference base to both sources.
+- **Sprint 4:** renamed **Sprint 4 — AI Metadata Enrichment**. The article "surveillance context" statements were removed (prompt version `literature-extraction-v2`).
+- **System status:** a table of each external dependency, what it does, and what still works without it. Legacy Sprint 3 pages moved into a collapsed footer.
+- **Tests:** 296 run; with real MAFFT 294 pass, 2 optional skip. New: `tests/test_ui_navigation.py` (15). The 33-check real-MAFFT matrix still passes. Desktop and 375-px phone layouts were checked in the browser; no horizontal page scrolling.
+
 ## Sprint 4 update: AI literature and metadata enrichment (November 2, 2026)
 
 - **What was built:** an optional section 9 of the same dashboard (and optional workflow step 4) that finds publications linked to uploaded samples (NCBI E-utilities record links, metadata publication fields, exact identifiers in PubTator3 text), sends a few relevant passages to a replaceable extraction provider (Claude API with structured outputs; an offline mock; a documented local-model HTTP contract for a future ASU SOL model), verifies every quotation against the retrieved text, and applies only person-approved values to a derived metadata table with a before/after rescreen of dates and distances. Code: `literature/`, `literature_view.py`, `templates/_literature.html`, routes at the end of `app.py`. Full details: `SPRINT4_AI_NLP_INTEGRATION_REPORT.md`.
