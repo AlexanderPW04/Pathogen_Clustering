@@ -1,14 +1,36 @@
 {# Sprint 4: optional AI metadata enrichment. All article text is autoescaped. #}
+{% macro skip_form(lit, label) %}
+  <form method="post" action="{{ url_for('enrich_run') }}" class="inline-form">
+    <input type="hidden" name="token" value="{{ lit.token }}">
+    <input type="hidden" name="skip" value="1">
+    <button type="submit" class="secondary">{{ label }}</button>
+  </form>
+{% endmacro %}
 {% set lit = enrichment %}
 <section id="literature">
-  <p class="sprint-tag sprint4">Sprint 4 · optional</p>
+  <p class="sprint-tag sprint4">Sprint 4 · optional{% if lit.pre_analysis %} · before the analysis{% endif %}</p>
   <h2>Sprint 4 — AI Metadata Enrichment</h2>
   <p class="purpose">Find information in scientific publications that may help improve missing or imprecise collection details (collection place, date or date range, sampling site). Every suggestion keeps its quoted evidence, is checked against the article text, and changes nothing until you approve it. The genomic analyses never depend on this section.</p>
   <ol class="mini-steps" aria-label="Sprint 4 steps">
-    <li>Find publications linked to your samples</li><li>Claude reads only the relevant passages</li><li>Quotations and the sample link are checked</li><li>You approve or reject each suggestion</li><li>GeoNames places approved locations; affected date and distance results are recomputed</li>
+    <li>Find publications linked to your samples</li><li>Claude reads only the relevant passages</li><li>Quotations and the sample link are checked</li><li>You approve or reject each suggestion</li><li>{% if lit.pre_analysis %}The analysis runs with the approved values (GeoNames places approved locations){% else %}GeoNames places approved locations; affected date and distance results are recomputed{% endif %}</li>
   </ol>
   {% if lit.synthetic %}
     <p class="synthetic-note" style="padding:0.5rem 0.75rem;border-radius:8px;border:1px solid var(--warn-border)"><strong>SYNTHETIC demonstration:</strong> the samples and the articles are invented, and the "model" answers are fixed fixture responses (some deliberately wrong, to show the checks). No AI model is called and nothing is billed.</p>
+  {% endif %}
+
+  {% if lit.pre_analysis %}
+    <div class="card pre-analysis">
+      <h3 style="margin-top:0">Metadata that could be improved</h3>
+      <p>{{ lit.gaps|length }} of {{ lit.gap_total }} samples have missing or broad collection details. Approved improvements are applied <strong>before</strong> the genomic analysis runs; your original files and values are kept unchanged.</p>
+      {% if lit.gaps %}
+        <details><summary>Show the samples and their gaps ({{ lit.gaps|length }})</summary>
+          <div class="scroll"><table><thead><tr><th>Sample</th><th>Source</th><th>Location</th><th>Date</th><th>What could be improved</th></tr></thead>
+            <tbody>{% for row in lit.gaps %}<tr><td>{{ row.Sample_ID }}</td><td>{{ row.Sample_Source }}</td><td>{{ row.Location or '—' }}</td><td>{{ row.Collection_Date or '—' }}</td><td>{{ row.Gaps|join('; ') }}</td></tr>{% endfor %}</tbody></table></div>
+        </details>
+      {% endif %}
+      {% if lit.dataset_identifiers %}<p class="help">Identifiers entered for the whole dataset: {% for kind, value in lit.dataset_identifiers %}{{ kind }} {{ value }}{% if not loop.last %}, {% endif %}{% endfor %} (used as study-level links).</p>{% endif %}
+      {{ skip_form(lit, "Skip enrichment and run the analysis with the original metadata") }}
+    </div>
   {% endif %}
 
   <h3>A. Find evidence</h3>
@@ -39,7 +61,7 @@
         </table></div>
       </details>
     {% else %}
-      <p class="unavailable">No publication with a traceable link was found. This is an acceptable result: nothing will be proposed.</p>
+      <p class="unavailable">No publication with a traceable link was found. This is an acceptable result: nothing will be proposed.{% if lit.pre_analysis %} Continue the analysis with the original metadata below.{% endif %}</p>
     {% endif %}
     {% if lit.notes %}<ul class="notes">{% for item in lit.notes %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
   {% endif %}
@@ -106,7 +128,7 @@
     {% if lit.run.messages %}<ul class="warnings">{% for item in lit.run.messages %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
     <p class="note">Status comes from deterministic checks of the quoted text, not from the model's confidence. Only "Directly stated" or table-supported evidence that adds information can be approved. A second model check (when run) can only lower a status; two model answers agreeing are not independent verification.</p>
     {% if lit.facts %}
-      <form method="post" action="{{ url_for('literature_apply') }}">
+      <form method="post" action="{{ url_for('enrich_run') if lit.pre_analysis else url_for('literature_apply') }}">
         <input type="hidden" name="token" value="{{ lit.token }}">
         <div class="scroll"><table class="review-table">
           <thead><tr><th>Sample</th><th>Field</th><th>Original</th><th>Proposed</th><th>Evidence</th><th>Strength</th><th>Review</th></tr></thead>
@@ -122,8 +144,13 @@
               {% else %}<span class="note">Cannot be approved</span>{% endif %}</td>
           </tr>{% endfor %}</tbody>
         </table></div>
-        <button type="submit">Save decisions and apply approved changes</button>
-        <p class="note">Approved places are resolved with GeoNames when it is configured (approximate place coordinates, never exact specimen coordinates). Only date and distance screening is recomputed from the existing genetic distances; sequences are not realigned.</p>
+        {% if lit.pre_analysis %}
+          <button type="submit">Apply approved changes and run the analysis</button>
+          <p class="note">Approved values are written into a copy of the analysis inputs; GeoNames then resolves approved place names (approximate place coordinates, never exact specimen coordinates). Rejected or unresolved suggestions change nothing.</p>
+        {% else %}
+          <button type="submit">Save decisions and apply approved changes</button>
+          <p class="note">Approved places are resolved with GeoNames when it is configured (approximate place coordinates, never exact specimen coordinates). Only date and distance screening is recomputed from the existing genetic distances; sequences are not realigned.</p>
+        {% endif %}
       </form>
     {% else %}
       <p class="unavailable">No candidate metadata was proposed. Insufficient evidence is an acceptable answer.</p>
@@ -160,6 +187,11 @@
 
   {% if lit.download_id and lit.files %}
     <p class="section-downloads"><strong>Evidence downloads:</strong> {% for name in lit.files %}<a href="{{ url_for('result_download', download_id=lit.download_id, filename=name) }}">{{ name }}</a>{% if not loop.last %} · {% endif %}{% endfor %}</p>
+  {% endif %}
+
+  {% if lit.pre_analysis %}
+    <p>{{ skip_form(lit, "Continue with the original metadata (skip enrichment)") }}</p>
+    {% if lit.explanation and not lit.provider_name %}<p class="note">{{ lit.explanation }} The genomic analysis can run without it.</p>{% endif %}
   {% endif %}
 
   <h3>Uncertainty and limitations</h3>

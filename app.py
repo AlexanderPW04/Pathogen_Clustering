@@ -25,6 +25,7 @@ from time import monotonic, time
 
 import pandas as pd
 from flask import Flask, abort, redirect, render_template, request, send_file, url_for
+from werkzeug.datastructures import FileStorage
 
 from compare_genetic_distances import read_pair_table
 from detect_potential_clusters import enough_overlap
@@ -46,7 +47,12 @@ from dashboard_guide import GLOSSARY
 from integrated_view import build_dashboard, download_files
 from literature.config import ai_status
 from literature.pubtator import check_pubtator
-from literature.workflow import new_session
+from literature.identifiers import parse_identifiers
+from literature.preanalysis import (
+    approved_changes, before_after, contribution, pooled_overrides, preview_session, sections_using,
+    write_individual_metadata,
+)
+from literature.workflow import new_session, record_decisions
 from literature_view import (
     LITERATURE_EXAMPLE_FILES, LITERATURE_FOLDER, check_claude, choose_provider, enrichment_downloads,
     find, get_session, live_request_allowed, prepare, review_and_apply, run_settings, start,
@@ -767,7 +773,8 @@ def new_page():
         "skipped_downloads": [], "review": None, "token": None, "step": 1,
         "analysis_plan": None, "declared_pathogen": "", "enrichment": None, "refresh_url": None,
         "is_literature_example": False, "intended_mode": "auto", "mode_check": None,
-        "previous_files": [], "info": None,
+        "previous_files": [], "info": None, "enrichment_report": None, "enrichment_preview": None,
+        "enrich": False, "publication_ids": "",
     }
 
 
@@ -796,10 +803,16 @@ def relationship_tables(relationship, thresholds):
             "candidates": relationship["candidates"], "clusters": relationship["clusters"]}
 
 
-def run_analyses(paths, names, values, thresholds, date_window, temporary_folder, page):
-    """Run every analysis the saved inputs allow, then offer literature enrichment."""
+def run_analyses(paths, names, values, thresholds, date_window, temporary_folder, page,
+                 pooled_overrides=None, outcome=None):
+    """Run every analysis the saved inputs allow, then offer literature enrichment.
 
-    outcome = {}
+    `pooled_overrides` carries approved Sprint 4 values for pooled samples;
+    `outcome`, when given, receives the Sprint 2 and integrated results.
+    """
+
+    outcome = {} if outcome is None else outcome
+    outcome["pooled_overrides"] = pooled_overrides
     run_genomic_analyses(paths, names, values, thresholds, date_window, temporary_folder, page, outcome)
     attach_enrichment(page, paths, thresholds, outcome)
     return page
@@ -882,6 +895,7 @@ def run_genomic_analyses(paths, names, values, thresholds, date_window, temporar
             input_labels=names,
             relationship=relationship_tables(relationship, thresholds) if completed else None,
             input_notes=page.get("input_notes"),
+            pooled_overrides=outcome.get("pooled_overrides"),
         )
     except (ValueError, RuntimeError) as problem:
         page["integrated_error"] = str(problem).replace(str(temporary_folder), "[temporary upload]")
@@ -1051,6 +1065,16 @@ def index():
         if error is None:
             thresholds, date_window, error = check_settings(values)
 
+        if error is None and use_integrated and request.form.get("enrich_example") == "on":
+            # Offline Sprint 4 demonstration: the example files go through the
+            # same review and enrichment steps as uploads, before the analysis.
+            token = stage_example("combined", INTEGRATED_FOLDER, list(INTEGRATED_EXAMPLE_FILES.values()),
+                                  "integrated")
+            item = staged_item(token)
+            review = review_dataset(item["files"], item["inspections"], {}, {}, {})
+            form = {**request.form.to_dict(), "intended_mode": "combined"}
+            return start_enrichment(item, token, form, values, {}, review, example="integrated")
+
         if error is None:
             # Every request gets its own folder, which is deleted automatically.
             with TemporaryDirectory() as temporary_folder:
@@ -1119,7 +1143,7 @@ def uploads_from_form(files):
     return uploads
 
 
-def stage_uploads(uploads):
+def stage_uploads(uploads, enrich=False, publication_ids="", synthetic=None):
     """Save, decompress, and inspect the uploaded files; return a staging token.
 
     `uploads` holds (file, declared role or None); a declared role is kept
@@ -1170,7 +1194,8 @@ def stage_uploads(uploads):
         clean_staged()
         token = token_urlsafe(16)
         STAGED[token] = {"folder": folder, "created": monotonic(), "files": staged,
-                         "inspections": inspections}
+                         "inspections": inspections, "enrich": enrich,
+                         "publication_ids": publication_ids[:500], "synthetic": synthetic}
     return token
 
 
@@ -1213,16 +1238,23 @@ def review_upload():
     uploads = uploads_from_form(request.files)
     try:
         if uploads:
-            token = stage_uploads(uploads)
+            token = stage_uploads(uploads, request.form.get("enrich") == "on",
+                                  request.form.get("publication_ids", ""))
         item = staged_item(token)
         if item is None:
             raise ValueError("Choose one or more files to upload. Uploaded files are kept for "
                              "30 minutes while you review them.")
+        if not uploads and "enrich_shown" in request.form:
+            item["enrich"] = request.form.get("enrich") == "on"
+            item["publication_ids"] = request.form.get("publication_ids", "")[:500]
         roles, choices, options = review_choices(request.form, item["inspections"])
         page["review"] = review_dataset(item["files"], item["inspections"], roles, choices, options)
         page["mode_check"] = mode_check(page["review"], page["intended_mode"])
         page["token"] = token
         page["declared_pathogen"] = options["declared_pathogen"]
+        page["enrich"], page["publication_ids"] = item["enrich"], item["publication_ids"]
+        if item["enrich"] and page["review"]["ready"]:
+            page["enrichment_preview"] = enrichment_preview(item, page["review"], options)
     except ValueError as problem:
         page["error"] = str(problem)
         page["step"] = 1
@@ -1232,6 +1264,181 @@ def review_upload():
                          "valid FASTA, CSV/TSV, XLSX, or VCF file and try again.")
         page["step"] = 1
     return render_page(values, page)
+
+
+# ----------------------------------------------------------------------------
+# Optional Sprint 4 before the analysis (upload-page toggle)
+# ----------------------------------------------------------------------------
+
+INTEGRATED_CORPUS = INTEGRATED_FOLDER / "synthetic_integrated_articles.json"
+INTEGRATED_MOCK = INTEGRATED_FOLDER / "synthetic_integrated_mock_responses.json"
+FILES_GONE = ("The uploaded files are no longer on the server (they are kept for at most 30 minutes "
+              "and never after an analysis). Please upload them again.")
+
+
+def enrichment_preview(item, review, options):
+    """Metadata gaps and linkable identifiers shown on the review page (nothing is sent anywhere)."""
+
+    try:
+        with TemporaryDirectory() as folder:
+            paths, _ = prepare_inputs(item["files"], review, folder, options)
+            session = preview_session(paths, parse_identifiers(item["publication_ids"]))
+    except Exception:
+        app.logger.exception("Could not preview metadata gaps")
+        return {"error": "The metadata gaps could not be listed; enrichment can still be skipped."}
+    counts = {}
+    for row in session["gaps"]:
+        for gap in row["Gaps"]:
+            counts[gap] = counts.get(gap, 0) + 1
+    return {"samples": len(session["gaps"]), "eligible": len(session["eligible"]), "counts": counts,
+            "rows": [row for row in session["gaps"] if row["Gaps"]][:15],
+            "dataset_identifiers": session["dataset_identifiers"]}
+
+
+def start_enrichment(item, token, form, values, options, review, example=None):
+    """Create the pre-analysis enrichment session and show its first step."""
+
+    with TemporaryDirectory() as folder:
+        paths, names = prepare_inputs(item["files"], review, folder, options)
+        session = preview_session(paths, parse_identifiers(item["publication_ids"]),
+                                  synthetic=bool(item.get("synthetic")),
+                                  label=", ".join(str(name) for key, name in names.items() if key != "_notes"))
+    session.update(staged_token=token, form=form, example=example)
+    if item.get("synthetic") == "integrated":
+        session.update(corpus=INTEGRATED_CORPUS, mock=INTEGRATED_MOCK)
+    return literature_page(store_session(session), session)
+
+
+@app.route("/enrich/start", methods=["POST"])
+def enrich_start():
+    """Sprint 4 before the analysis: list metadata gaps and offer literature discovery."""
+
+    values = default_values(request.form)
+    page = new_page()
+    token = request.form.get("token")
+    item = staged_item(token)
+    if item is None:
+        page["error"] = FILES_GONE
+        return render_page(values, page)
+    roles, choices, options = review_choices(request.form, item["inspections"])
+    review = review_dataset(item["files"], item["inspections"], roles, choices, options)
+    thresholds, date_window, error = check_settings(values)
+    if error is None and not review["ready"]:
+        error = "Resolve the problems listed in Step 2 before continuing."
+    if error is not None:
+        page.update(error=error, review=review, token=token, step=2, enrich=item["enrich"],
+                    publication_ids=item["publication_ids"], declared_pathogen=options["declared_pathogen"])
+        return render_page(values, page)
+    try:
+        return start_enrichment(item, token, request.form.to_dict(), values, options, review)
+    except Exception:
+        app.logger.exception("Starting metadata enrichment failed")
+        page.update(error="Metadata enrichment could not be prepared; you can run the analysis without it.",
+                    review=review, token=token, step=2)
+        return render_page(values, page)
+
+
+def stage_example(intended, folder, files, synthetic):
+    """Stage bundled example files as if they had been uploaded (for the enrichment demo)."""
+
+    uploads = []
+    handles = [(folder / name).open("rb") for name in files]
+    try:
+        uploads = [(FileStorage(stream=handle, filename=name), None) for handle, name in zip(handles, files)]
+        return stage_uploads(uploads, enrich=True, synthetic=synthetic)
+    finally:
+        for handle in handles:
+            handle.close()
+
+
+@app.route("/enrich/run", methods=["POST"])
+def enrich_run():
+    """Apply approved values (or none) and run the analysis on the reviewed files."""
+
+    session_token = request.form.get("token")
+    session = get_session(session_token)
+    if session is None:
+        return expired_page()
+    item = staged_item(session.get("staged_token"))
+    if item is None:
+        page = new_page()
+        page["error"] = FILES_GONE
+        return render_page(default_values({}), page)
+    if session["run"].get("state") == "running":
+        return literature_page(session_token, session, "An analysis is running; wait for it or stop it first.")
+    skip = request.form.get("skip") == "1"
+    derived, log = None, []
+    if not skip and session["facts"]:
+        record_decisions(session, {key[len("review_"):]: value for key, value in request.form.items()
+                                   if key.startswith("review_")})
+        derived, log = approved_changes(session)
+    form = session["form"]
+    values = default_values(form)
+    page = new_page()
+    page.update(intended_mode=intended_mode(form), is_integrated_example=session.get("example") == "integrated",
+                is_synthetic_example=session["synthetic"])
+    roles, choices, options = review_choices(form, item["inspections"])
+    review = review_dataset(item["files"], item["inspections"], roles, choices, options)
+    if "fasta" not in review["by_role"]:
+        values["genomic_region_mode"] = "automatic"
+    thresholds, date_window, error = check_settings(values)
+    outcome = {}
+    if error is None:
+        with TemporaryDirectory() as temporary_folder:
+            try:
+                paths, names = prepare_inputs(item["files"], review, temporary_folder, options)
+                overrides = None
+                if derived is not None:
+                    if "metadata" in paths:
+                        write_individual_metadata(paths["metadata"], derived)
+                    overrides = pooled_overrides(derived) or None
+            except ValueError as problem:
+                error = str(problem).replace(str(temporary_folder), "[temporary upload]")
+            else:
+                page["input_notes"] = names.pop("_notes", [])
+                run_analyses(paths, names, values, thresholds, date_window, temporary_folder, page,
+                             pooled_overrides=overrides, outcome=outcome)
+    if error is not None:
+        page["error"] = error
+    with STAGED_LOCK:
+        remove_staged(session["staged_token"])  # uploads are deleted after the analysis, as before
+    session["stage"] = "analysis finished"
+    if derived is not None and error is None:
+        page["enrichment_report"] = enrichment_report(session, derived, log, outcome, thresholds, page)
+    page["analysis_plan"] = review["analyses"]
+    return render_page(values, page)
+
+
+def enrichment_report(session, derived, log, outcome, thresholds, page):
+    """What Sprint 4 contributed to this analysis, with evidence downloads."""
+
+    relationship = outcome.get("relationship")
+    run_samples = relationship["analysis_data"].get("samples") if relationship and relationship["complete"] else None
+    pairs = relationship.get("pairs") if relationship and relationship["complete"] else None
+    comparison, screening = before_after(session, derived, run_samples, pairs, thresholds)
+    sections = sections_using(derived)
+    files = enrichment_downloads(session)
+    files["literature_enriched_metadata.csv"] = (derived.to_csv(index=False).encode("utf-8"), "text/csv")
+    if comparison is not None:
+        files["literature_before_after_pairs.csv"] = (comparison.to_csv(index=False).encode("utf-8"), "text/csv")
+    download_id = page.get("download_id")
+    with RESULT_LOCK:
+        if download_id in RESULT_DOWNLOADS:
+            RESULT_DOWNLOADS[download_id][1].update(files)
+            page["downloads"] = sorted(RESULT_DOWNLOADS[download_id][1])
+    by_id = {fact["Fact_ID"]: fact for fact in session["facts"]}
+    changes = [{"sample": item["Sample_ID"], "field": item["Field"].replace("_", " "),
+                "original": by_id.get(item["Fact_ID"], {}).get("Original_Value", ""), "value": item["Value"],
+                "article": by_id.get(item["Fact_ID"], {}).get("Article_ID", ""),
+                "quote": by_id.get(item["Fact_ID"], {}).get("Evidence_Quote", ""), "outcome": item["Outcome"]}
+               for item in log]
+    changed_pairs = []
+    if comparison is not None:
+        changed_pairs = comparison[comparison["Change"] != "Unchanged"].fillna("").astype(str).to_dict("records")
+    return {"summary": contribution(session, derived, log, sections), "changes": changes,
+            "screening": screening, "changed_pairs": changed_pairs[:40],
+            "changed_pair_total": len(changed_pairs), "files": sorted(files),
+            "download_id": download_id, "synthetic": session["synthetic"]}
 
 
 @app.route("/back", methods=["POST"])
@@ -1341,8 +1548,11 @@ def literature_page(token, session, error=None, confirm=False):
     """Render the enrichment section on its own results page."""
 
     page = new_page()
+    pre_analysis = session.get("stage") == "pre-analysis"
     page.update(step=4, error=error, is_synthetic_example=session["synthetic"],
-                is_literature_example=session["synthetic"])
+                is_literature_example=session["synthetic"] and not session.get("example"))
+    if pre_analysis:
+        page["token"] = session.get("staged_token")  # Back to file review keeps the staged files
     provider, explanation = (choose_provider(session, run_settings(session)) if session["plan"]
                              else (None, ""))
     state = session["run"].get("state")

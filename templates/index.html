@@ -148,6 +148,12 @@
     .back-top { font-size: 0.9rem; margin-bottom: 0; }
     .nav-label { color: var(--ink-muted); font-weight: bold; }
     .status-table td { min-width: 9rem; }
+    .enrich-toggle { border-color: var(--sprint4); }
+    .enrich-toggle legend { color: var(--sprint4); }
+    .inline-form { display: inline-block; margin: 0.25rem 0; }
+    .card.pre-analysis { border-left: 6px solid var(--sprint4); }
+    .revisit { align-items: center; display: flex; flex-wrap: wrap; gap: 0.75rem; justify-content: space-between; }
+    .revisit p { margin: 0; }
     .upload-fields { display: grid; gap: 0.6rem; margin: 0.5rem 0 0.75rem; }
     .upload-fields [hidden] { display: none !important; }  /* the grid style must not reveal hidden fields */
     .upload-field { background: var(--surface-alt); border: 1px solid var(--border); border-radius: 8px; display: grid; gap: 0.35rem; padding: 0.6rem 0.7rem; }
@@ -167,8 +173,8 @@
       <ol class="steps" aria-label="Workflow steps">
         <li {% if step == 1 %}aria-current="step"{% endif %}>1 · Upload files</li>
         <li {% if step == 2 %}aria-current="step"{% endif %}>2 · Review dataset</li>
-        <li {% if step == 3 %}aria-current="step"{% endif %}>3 · Results</li>
-        <li {% if step == 4 %}aria-current="step"{% endif %}>4 · Metadata enrichment (Sprint 4, optional)</li>
+        <li {% if step == 4 %}aria-current="step"{% endif %}>3 · Metadata enrichment (Sprint 4, optional)</li>
+        <li {% if step == 3 %}aria-current="step"{% endif %}>4 · Results</li>
       </ol>
     </header>
 
@@ -329,11 +335,37 @@
           <div class="scroll"><table><thead><tr><th>Analysis</th><th>Status</th><th>Needs</th><th>With these files</th></tr></thead>
             <tbody>{% for row in r.analyses %}<tr><td>{{ row.Analysis }}</td><td><span class="badge {{ row.Status|lower|replace(' ', '-') }}">{{ row.Status }}</span></td><td>{{ row.Needs }}</td><td>{{ row.Reason }}</td></tr>{% endfor %}</tbody></table></div>
 
+          <h3>Sprint 4 · Metadata enrichment (optional)</h3>
+          <input type="hidden" name="enrich_shown" value="1">
+          <label><span><input type="checkbox" name="enrich" {% if enrich %}checked{% endif %}> Use PubTator + Claude AI to find missing or more precise sample information</span></label>
+          {% if enrich %}
+            <label>Publication or study identifiers for the whole dataset (optional)
+              <input type="text" name="publication_ids" value="{{ publication_ids }}" maxlength="500" placeholder="a PMID, PMCID, DOI, or BioProject (PRJNA…)"></label>
+            {% if enrichment_preview %}
+              {% set p = enrichment_preview %}
+              {% if p.error %}<p class="warnings">{{ p.error }}</p>
+              {% else %}
+                <p><strong>{{ p.eligible }} of {{ p.samples }} samples</strong> have collection details that publications might improve:{% if not p.counts %} none.{% endif %}</p>
+                {% if p.counts %}<ul class="notes">{% for gap, count in p.counts.items() %}<li>{{ gap }}: {{ count }}</li>{% endfor %}</ul>{% endif %}
+                {% if p.rows %}<details><summary>Samples with gaps (first {{ p.rows|length }})</summary>
+                  <div class="scroll"><table><thead><tr><th>Sample</th><th>Source</th><th>Location</th><th>Date</th><th>Gaps</th></tr></thead>
+                    <tbody>{% for row in p.rows %}<tr><td>{{ row.Sample_ID }}</td><td>{{ row.Sample_Source }}</td><td>{{ row.Location or '—' }}</td><td>{{ row.Collection_Date or '—' }}</td><td>{{ row.Gaps|join('; ') }}</td></tr>{% endfor %}</tbody></table></div></details>{% endif %}
+                <p class="note">Nothing has been sent anywhere yet. <em>Continue to metadata enrichment</em> lets you search linked publications (sample or study identifiers go to NCBI and PubTator) and, only with your cost approval, ask Claude. You can skip at any point.</p>
+              {% endif %}
+            {% elif not r.ready %}<p class="note">Fix the problems above to see which metadata could be improved.</p>
+            {% endif %}
+          {% else %}<p class="help">Off: the analysis runs with your metadata as uploaded. Tick the box and press <em>Update review</em> to add the enrichment step.</p>{% endif %}
+
           <h3>Step 3 · Run</h3>
           {{ settings_fields(values) }}
           <div class="button-row">
             <button type="submit" class="secondary">Update review</button>
-            <button type="submit" class="big" formaction="{{ url_for('run_reviewed') }}" {% if not r.ready %}disabled{% endif %}>Run analysis</button>
+            {% if enrich %}
+              <button type="submit" class="big" formaction="{{ url_for('enrich_start') }}" {% if not r.ready %}disabled{% endif %}>Continue to metadata enrichment</button>
+              <button type="submit" class="secondary" formaction="{{ url_for('run_reviewed') }}" {% if not r.ready %}disabled{% endif %}>Skip enrichment and run analysis</button>
+            {% else %}
+              <button type="submit" class="big" formaction="{{ url_for('run_reviewed') }}" {% if not r.ready %}disabled{% endif %}>Run analysis</button>
+            {% endif %}
           </div>
           {% if not r.ready %}<p class="note">Run analysis is available once the problems above are fixed.</p>{% endif %}
         </form>
@@ -489,10 +521,11 @@
         {% endif %}
         {% if s.id == 'overview' %}
           <p><strong>Analysis mode:</strong> {{ s.mode }}</p>
-          {% if s.findings or (analysis_complete and summary) %}
+          {% if s.findings or (analysis_complete and summary) or enrichment_report %}
             <h3>Major findings</h3>
             <ul class="findings">
               {% for item in s.findings %}<li>{{ item }}</li>{% endfor %}
+              {% if enrichment_report %}<li>Sprint 4 metadata enrichment was enabled: {{ enrichment_report.summary['Approved'] }} of {{ enrichment_report.summary['Proposed metadata improvements'] }} proposed improvement(s) approved; {{ enrichment_report.summary['Values changed'] }} value(s) used in this analysis (<a href="#enrichment-report">report</a>).</li>{% endif %}
               {% if analysis_complete and summary %}<li>Sprint 2 screening: {{ related_pair_count }} related pair(s) meet all three cutoffs, forming {{ clusters|length }} potential cluster(s); {{ candidates|length }} more pair(s) pass the genetic and date cutoffs but have unresolved geography.</li>{% endif %}
             </ul>
           {% endif %}
@@ -597,7 +630,7 @@
         <nav class="sections" aria-label="Dashboard sections">
           <span class="nav-label">Jump to:</span>
           {% for s in dashboard.sections %}<a href="#{{ s.id }}">{{ s.number }}. {{ s.title }}</a>{% endfor %}
-          {% if enrichment %}<a href="#literature">Sprint 4 enrichment</a>{% endif %}
+          {% if enrichment_report %}<a href="#enrichment-report">Sprint 4 report</a>{% elif enrichment and is_literature_example %}<a href="#literature">Sprint 4 enrichment</a>{% endif %}
           <a href="#provenance">Provenance &amp; downloads</a>
         </nav>
         {% for s in dashboard.sections %}{{ render_section(s) }}{% endfor %}
@@ -608,7 +641,14 @@
         </section>
       {% endif %}
 
-      {% if enrichment %}{% include "_literature.html" %}{% endif %}
+      {% if enrichment_report %}{% include "_enrichment_report.html" %}{% endif %}
+      {% if enrichment and is_literature_example %}{% include "_literature.html" %}
+      {% elif enrichment %}
+        <section id="revisit-enrichment" class="revisit">
+          <p><strong>Sprint 4 (optional):</strong> look for publications that could improve missing or broad collection details for these samples. Only date and distance results would be recomputed.</p>
+          <a class="button-link" href="{{ url_for('literature_status', token=enrichment.token) }}">{% if enrichment_report %}Revisit metadata enrichment{% else %}Open metadata enrichment for these results{% endif %}</a>
+        </section>
+      {% endif %}
 
       <section id="provenance">
         <h2>Provenance and downloads</h2>
@@ -632,11 +672,11 @@
     {% if enrichment and not (analysis_complete or dashboard) %}
       {% if is_synthetic_example %}
         <section class="synthetic-note">
-          <h2>SYNTHETIC literature-enrichment example</h2>
-          <p>The samples, sequences, articles, and model responses are invented to demonstrate the workflow. None of it describes real samples or publications.</p>
+          <h2>SYNTHETIC offline demonstration</h2>
+          <p>The samples, sequences, articles, and model responses are invented to demonstrate Sprint 4. Nothing is sent to Claude or any external service, and nothing is billed.</p>
         </section>
       {% endif %}
-      <p class="note">The earlier results page is not stored; run the analysis again to see it. Sprint 4 keeps its own session for 30 minutes.</p>
+      {% if not enrichment.pre_analysis %}<p class="note">The earlier results page is not stored; run the analysis again to see it. Sprint 4 keeps its own session for 30 minutes.</p>{% endif %}
       {% include "_literature.html" %}
     {% endif %}
 

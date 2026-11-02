@@ -31,6 +31,25 @@
         </div>
       </fieldset>
 
+      <fieldset class="enrich-toggle">
+        <legend>Sprint 4 · optional</legend>
+        <label><span><input type="checkbox" name="enrich" id="enrich" {% if enrich %}checked{% endif %}> <strong>Use PubTator + Claude AI to find missing or more precise sample information</strong></span></label>
+        <p class="help">When enabled, the application can search scientific publications associated with your uploaded records and use AI to identify documented collection locations, dates, sampling sites, and other relevant metadata.</p>
+        <div data-enrich {% if not enrich %}hidden{% endif %}>
+          <ul class="notes">
+            <li>Enrichment is offered after the file review; nothing is searched when this page opens.</li>
+            <li>Finding publications (NCBI, PubTator) sends sample or study identifiers to those external services.</li>
+            <li>Claude analyzes only selected supporting passages, never your sequences or the whole dataset.</li>
+            <li>Paid Claude analysis needs your explicit cost approval.</li>
+            <li>Every suggested value must be reviewed before it is applied.</li>
+            <li>If nothing is found, or you skip, the analysis runs with your original metadata.</li>
+          </ul>
+          <label>Publication or study identifiers for the whole dataset (optional)
+            <input type="text" name="publication_ids" value="{{ publication_ids }}" maxlength="500" placeholder="a PMID, PMCID, DOI, or BioProject (PRJNA…)">
+            <span class="help">Only needed when your files do not already contain them. Accessions in FASTA names and metadata, and BioSample, BioProject, SRA, PMID, or DOI columns, are used automatically.</span></label>
+        </div>
+      </fieldset>
+
       <div class="upload-fields">
         <div class="upload-field" data-modes="auto" {% if mode != 'auto' %}hidden{% endif %}>
           <label for="files"><span><strong>Files</strong> <span class="badge needs" data-badge>Required</span></span></label>
@@ -76,6 +95,8 @@
               badge.className = "badge " + (status === "required" ? "needs" : "skipped");
             }
           });
+          var enrich = document.getElementById("enrich");
+          form.querySelectorAll("[data-enrich]").forEach(function (block) { block.hidden = !enrich.checked; });
           note.hidden = kept.length === 0;
           note.textContent = kept.length ? "Kept but not uploaded in this mode: " + kept.join(", ") +
             ". Switch back to that mode to use them." : "";
@@ -149,6 +170,7 @@
     <h2>Try the synthetic examples</h2>
     <form method="post" action="{{ url_for('index') }}">
       <button type="submit" name="run_integrated_example" value="1" class="big" formnovalidate>Run Integrated Example</button>
+      <label><span><input type="checkbox" name="enrich_example"> Include Sprint 4 metadata enrichment before the analysis (offline synthetic demonstration; no AI call)</span></label>
       {% if example_facts %}
         <p class="note"><strong>Recommended first.</strong> Invented data with known answers: {{ example_facts.individual }} individual sequence records, {{ example_facts.pooled }} pooled samples from {{ example_facts.sites }} sites, and a {{ example_facts.reference_length }}-base reference genome that both sources share. The results page then follows one shared variant step by step.</p>
       {% endif %}

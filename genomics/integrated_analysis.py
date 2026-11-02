@@ -151,7 +151,8 @@ def add_figure(result, name, title, caption, make):
 def run_integrated_analysis(individual_data=None, mafft_path=None, reference_path=None,
                             snv_path=None, pooled_metadata_path=None, position_path=None,
                             masked_sites_path=None, signature_path=None, settings=None,
-                            input_labels=None, relationship=None, input_notes=None):
+                            input_labels=None, relationship=None, input_notes=None,
+                            pooled_overrides=None):
     """Return a dictionary of tables, figures, summaries, notes, and provenance.
 
     `relationship` optionally carries the Sprint 2 pairwise results
@@ -208,6 +209,8 @@ def run_integrated_analysis(individual_data=None, mafft_path=None, reference_pat
     pooled = None
     if snv_path:
         snv_data, warnings = load_processed_snvs(snv_path, pooled_metadata_path)
+        if pooled_overrides:
+            override_pooled_records(snv_data, pooled_overrides)
         input_format = snv_data.attrs.get("input_format", "Processed SNV table")
         metadata = load_pooled_metadata(pooled_metadata_path) if pooled_metadata_path else None
         position_table = load_position_table(position_path) if position_path else None
@@ -216,6 +219,8 @@ def run_integrated_analysis(individual_data=None, mafft_path=None, reference_pat
         variants = pooled_variant_records(snv_data, source)
         samples = pooled_sample_records(snv_data, source, metadata, position_table, lengths,
                                         settings["coverage_depth"])
+        if pooled_overrides:
+            samples = override_pooled_samples(samples, pooled_overrides)
         masked = load_masked_sites(masked_sites_path) if masked_sites_path else None
         variants, samples, report = apply_pooled_quality_control(
             variants, samples, settings["qc_mode"], masked, settings, reference, registry
@@ -595,6 +600,33 @@ def passes_all(row, thresholds):
     if pd.notna(row["Km_Apart"]):
         return row["Km_Apart"] <= max_km
     return str(row.get("Same_Location")).strip().casefold() == "true"
+
+
+def override_pooled_records(snv_data, overrides):
+    """Approved Sprint 4 values (person-reviewed literature evidence) for pooled records.
+
+    Only collection site names and dates are replaced; measurements are not touched.
+    """
+
+    for sample_id, values in overrides.items():
+        rows = snv_data["Sample_ID"].astype(str).eq(sample_id)
+        for column in ["Location_Name", "Collection_Date"]:
+            if column in values and column in snv_data:
+                snv_data.loc[rows, column] = values[column]
+
+
+def override_pooled_samples(samples, overrides):
+    """Approved coordinates and their source/precision labels for pooled samples."""
+
+    samples = samples.copy()
+    for column in ["Latitude", "Longitude", "Coordinate_Source", "Geographic_Precision"]:
+        samples[column] = samples[column].astype(object)
+    for sample_id, values in overrides.items():
+        rows = samples["Sample_ID"].astype(str).eq(sample_id)
+        for column in ["Location_Name", "Latitude", "Longitude", "Coordinate_Source", "Geographic_Precision"]:
+            if column in values:
+                samples.loc[rows, column] = values[column]
+    return samples
 
 
 def analysis_status(result, individual_data, relationship):

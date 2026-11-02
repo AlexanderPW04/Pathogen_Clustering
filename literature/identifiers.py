@@ -95,6 +95,24 @@ def sample_identifiers(row):
     return unique, sorted(alias for alias in aliases if alias)
 
 
+def parse_identifiers(text, limit=10):
+    """Publication or study identifiers typed by the user: [(type, value)].
+
+    PMIDs, PMCIDs, DOIs, BioProject, BioSample, SRA, and nucleotide accessions
+    are recognized; anything else is kept as a project-specific publication ID.
+    """
+
+    found = []
+    for value in re.split(r"[\s,;]+", str(text or "")):
+        value = re.sub(r"^(pmid|pmcid|doi|bioproject):", "", value.strip().rstrip("."), flags=re.IGNORECASE)
+        if not value or value.casefold() in {"pmid", "pmcid", "doi", "bioproject", "and"}:
+            continue  # labels, not identifiers
+        kind = classify_value(value) or ("PMID" if PATTERNS["PMID"].match(value) else "Publication")
+        if (kind, value) not in found:
+            found.append((kind, value))
+    return found[:limit]
+
+
 def mentions(text, alias):
     """True when an alias appears in text as a whole identifier, not inside a longer one."""
 

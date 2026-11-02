@@ -83,6 +83,9 @@ class LocalCorpusSource:
             elif kind == "BioProject" and value in record_links.get("study", []):
                 links.append((article_id, "study", f"Study record {value} links {article_id}.",
                               "Study record link (synthetic)"))
+            elif value in record_links.get("study_samples", []):
+                links.append((article_id, "study", f"Sample {value} belongs to the study described in {article_id}.",
+                              "Study record lists the sample (synthetic)"))
             elif value in record_links.get("direct", []):
                 links.append((article_id, "direct", f"Sample record {value} links {article_id}.",
                               "Sample record link (synthetic)"))

@@ -29,10 +29,33 @@ PUBLICATION_COLUMNS = [
 ]
 
 
-def discover_publications(samples, source, max_samples=25, max_articles=5):
-    """Return (publication table, fetched articles, notes) for the selected samples."""
+def dataset_links(source, identifiers, notes):
+    """Study-level links from identifiers entered for the whole dataset."""
+
+    links = []
+    for kind, value in identifiers:
+        try:
+            for article_id, _, evidence, method in source.record_links(kind, value):
+                links.append({"Article_ID": article_id, "Relationship": "study",
+                              "Evidence": f"{kind} {value} was entered for the whole dataset. {evidence}",
+                              "Method": "Dataset identifier entered by the user"})
+        except (ServiceUnavailable, RequestLimitReached) as problem:
+            notes.append(str(problem))
+    if identifiers and not links:
+        notes.append("The dataset identifier(s) entered did not resolve to a publication.")
+    return links
+
+
+def discover_publications(samples, source, max_samples=25, max_articles=5, dataset_identifiers=()):
+    """Return (publication table, fetched articles, notes) for the selected samples.
+
+    `dataset_identifiers` are (type, value) pairs entered for the whole
+    dataset; they link the study's publication to every selected sample at
+    the study level, never as sample-specific evidence.
+    """
 
     notes = []
+    shared = dataset_links(source, dataset_identifiers, notes)
     selected = samples.head(max_samples)
     if len(samples) > max_samples:
         notes.append(f"Only the first {max_samples} selected samples were searched (request limit).")
@@ -54,6 +77,7 @@ def discover_publications(samples, source, max_samples=25, max_articles=5):
             except (ServiceUnavailable, RequestLimitReached) as problem:
                 notes.append(str(problem))
                 stopped = isinstance(problem, RequestLimitReached)
+        found += [dict(link) for link in shared]
         if not found and not stopped:
             for alias in aliases:
                 if not source.searchable(alias):

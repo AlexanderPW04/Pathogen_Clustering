@@ -1,0 +1,31 @@
+{
+  "label": "SYNTHETIC articles for the integrated example (offline Sprint 4 demonstration)",
+  "dataset_version": "integrated-enrichment-v1",
+  "articles": [
+    {
+      "Article_ID": "SYNPUB-INT-1",
+      "Title": "SYNTHETIC ARTICLE: Clinical sequencing of a synthetic respiratory virus in Arizona",
+      "Publication_Date": "2026 Apr",
+      "Source_URL": "",
+      "Text_Status": "Synthetic full text",
+      "Record_Links": {"direct": ["IND_D"], "study": [], "study_samples": []},
+      "Passages": [
+        {"Passage_ID": "p1", "Section": "AFFILIATION", "Type": "affiliation", "Text": "Author affiliation: Synthetic Public Health Laboratory, Phoenix, Arizona, USA."},
+        {"Passage_ID": "p2", "Section": "METHODS", "Text": "Sequence IND_D was obtained from a respiratory specimen collected in Tempe, Arizona on 23 March 2026 at a synthetic university health clinic."}
+      ]
+    },
+    {
+      "Article_ID": "SYNPUB-INT-2",
+      "Title": "SYNTHETIC ARTICLE: Weekly wastewater sequencing at two synthetic treatment plants",
+      "Publication_Date": "2026 Apr",
+      "Source_URL": "",
+      "Text_Status": "Synthetic full text",
+      "Record_Links": {"direct": [], "study": [],
+                       "study_samples": ["WW_N1", "WW_N2", "WW_N3", "WW_N4", "WW_S1", "WW_S2", "WW_S3", "WW_S4"]},
+      "Passages": [
+        {"Passage_ID": "p1", "Section": "METHODS", "Text": "Composite influent samples were collected weekly from two synthetic wastewater treatment plants between 1 and 24 March 2026."},
+        {"Passage_ID": "p2", "Section": "TABLE", "Type": "table", "Text": "Table 1. Sampling sites (sample | site | latitude | longitude)\nWW_N1 | North Synthetic Sewershed influent | 33.4150 | -111.9100\nWW_N2 | North Synthetic Sewershed influent | 33.4150 | -111.9100\nWW_N3 | North Synthetic Sewershed influent | 33.4150 | -111.9100\nWW_N4 | North Synthetic Sewershed influent | 33.4150 | -111.9100\nWW_S1 | South Synthetic Sewershed influent | 33.3800 | -111.9400\nWW_S2 | South Synthetic Sewershed influent | 33.3800 | -111.9400\nWW_S3 | South Synthetic Sewershed influent | 33.3800 | -111.9400\nWW_S4 | South Synthetic Sewershed influent | 33.3800 | -111.9400"}
+      ]
+    }
+  ]
+}

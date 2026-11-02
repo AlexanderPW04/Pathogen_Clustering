@@ -88,7 +88,8 @@ def find_literature(session, source, selected_ids=None, max_samples=25, max_arti
     if selected_ids:
         samples = samples[samples["Sample_ID"].isin(selected_ids)]
     session["selected"] = list(samples["Sample_ID"])
-    table, articles, notes, unmatched = discover_publications(samples, source, max_samples, max_articles)
+    table, articles, notes, unmatched = discover_publications(
+        samples, source, max_samples, max_articles, session.get("dataset_identifiers", ()))
     session.update(publications=table, articles=articles, discovery_notes=notes, unmatched=unmatched,
                    source_label=source.label, run={"state": "not started"}, facts=[],
                    insufficient=[], decisions={}, applied=None)

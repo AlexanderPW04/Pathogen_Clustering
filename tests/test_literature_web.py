@@ -64,7 +64,7 @@ class LiteratureWebTest(unittest.TestCase):
     def test_example_button_and_section_appear_without_any_model_call(self):
         home = self.client.get("/").get_data(as_text=True)
         self.assertIn("Run Literature Enrichment Example", home)
-        self.assertIn("4 · Metadata enrichment (Sprint 4, optional)", home)
+        self.assertIn("3 · Metadata enrichment (Sprint 4, optional)", home)
         with patch("literature.providers.MockProvider.run") as mock_run, \
                 patch("literature.providers.ClaudeProvider.run") as claude_run:
             page, token = self.run_example()
@@ -138,7 +138,7 @@ class LiteratureWebTest(unittest.TestCase):
             review = self.client.post("/review", data=files, content_type="multipart/form-data").get_data(as_text=True)
             page = self.client.post("/run", data={"token": token_of(review)}).get_data(as_text=True)
         self.assertIn("Pairwise comparisons:", page)
-        token = re.findall(r'name="token" value="([^"]+)"', page)[-1]
+        token = re.search(r'href="/literature/session/([^"]+)"', page).group(1)  # the revisit link
         with patch("literature_view.LiveSource", return_value=fake_source), \
                 patch("literature.providers.ClaudeProvider.run") as claude_run:
             page = self.client.post("/literature/find", data={"token": token}).get_data(as_text=True)

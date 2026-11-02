@@ -13,6 +13,7 @@
   {% if step >= 3 %}
     <form method="post" action="{{ url_for('go_back') }}">
       <input type="hidden" name="target" value="review">
+      {% if token %}<input type="hidden" name="token" value="{{ token }}">{% endif %}
       {% for key in ['max_p_distance', 'max_days_apart', 'max_km_apart', 'genomic_region_mode', 'qc_mode', 'date_window_days'] %}<input type="hidden" name="{{ key }}" value="{{ values[key] }}">{% endfor %}
       <input type="hidden" name="intended_mode" value="{{ intended_mode }}">
       {% if is_synthetic_example or is_integrated_example %}<input type="hidden" name="example" value="1">{% endif %}

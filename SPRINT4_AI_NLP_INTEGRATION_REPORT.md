@@ -2,6 +2,15 @@
 
 Integration report for the BMI 461 genomic surveillance prototype, branch `sprint4-integration`, written November 2, 2026.
 
+> **Update (Sprint 4 from the upload page, November 2, 2026).** Sprint 4 is now chosen with an upload-page toggle (off by default) and runs **before** the genomic analysis.
+> - **Steps:** the review step lists metadata gaps; you then find linked publications, approve a cost estimate before any Claude call, and review each proposal. The analysis runs once with the approved values, and genetic distances are unchanged.
+> - **Individual values** are written into a copy of the prepared metadata, so the pipeline's GeoNames step places approved names (approximate).
+> - **Pooled values** (site names, dates, publication-reported coordinates) are applied inside the integrated analysis without changing any measurement.
+> - **Dataset-wide identifiers** (PMID, PMCID, DOI, BioProject, or a study reference) give study-level links only.
+> - **Results** gain a Sprint 4 report with counts, changed values, evidence, and Sprint 2 screening before and after.
+> - **Unchanged:** the post-analysis flow remains as "Revisit metadata enrichment".
+> - **Code:** `literature/preanalysis.py`, `/enrich/start`, `/enrich/run`.
+
 > **Update (usability redesign, November 2, 2026).** The section is now called **Sprint 4 — AI Metadata Enrichment** and is limited to sample-collection metadata. The general "surveillance context" statements (Phase 7: increases, clusters, trends, limitations drawn from articles) were **removed from the main workflow**. They are no longer requested from the model, shown on the page, or offered as a download, and the extraction prompt now says not to summarize articles or epidemiological trends. The prompt version is now `literature-extraction-v2`, so earlier cached results are not reused. Discovery, Claude extraction, verification, approval, GeoNames, rescreening, provenance, and cost controls are unchanged. Sections below that mention context statements describe the first version.
 
 ## Status at a glance

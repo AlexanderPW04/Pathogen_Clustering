@@ -2,6 +2,18 @@
 
 **Purpose:** Transfer working context for a biomedical informatics class coding project. This handoff was prepared from discussion, Codex-reported summaries, and screenshots. It is **not** a code audit or an assertion that every file exists in the present repository. Verify the current files before editing.
 
+## Sprint 4 from the upload page, before the analysis (November 2, 2026)
+
+- **Toggle.** The upload page has a toggle, off by default: "Use PubTator + Claude AI to find missing or more precise sample information". There is an optional field for dataset-wide publication or study identifiers. It works in every analysis mode.
+- **When it is on:** the review step lists metadata gaps without sending anything. "Continue to metadata enrichment" then leads through literature discovery, cost-approved Claude analysis, and review. "Apply approved changes and run the analysis" runs the genomic analysis once, with the approved values:
+  - individual values are written into a copy of the prepared metadata, so the pipeline's own GeoNames step resolves place names;
+  - pooled values reach the integrated analysis through `pooled_overrides` (site names, dates, publication coordinates).
+- **Skipping:** available at every step; the analysis then runs with the original metadata.
+- **Code:** `literature/preanalysis.py`, routes `/enrich/start` and `/enrich/run`, `templates/_enrichment_report.html`. Discovery now accepts dataset identifiers as study-level links.
+- **Results:** a Sprint 4 report (counts, changed values with evidence, Sprint 2 screening before and after, evidence downloads) and an overview line. Without enrichment there is only a "revisit" link, no empty section.
+- **Offline demo:** "Run Integrated Example" with the Sprint 4 box ticked uses `examples/integrated/synthetic_integrated_articles.json` and `synthetic_integrated_mock_responses.json`. IND_D gets Tempe; eight pooled samples get publication site coordinates; one fabricated quote is rejected. Result: one more pair meets the screening, and the shared variant gains a 2.5 km distance.
+- **Tests:** `tests/test_upload_enrichment.py` (13). Checkpoint tag before this change: `checkpoint/before-upload-enrichment`.
+
 ## Mode-specific upload fields (November 2, 2026)
 
 - The upload card now shows the fields of the chosen mode (`UPLOAD_FIELDS` in `app.py`, a small script in `templates/_upload.html`). Automatic detection keeps the single multi-file box.

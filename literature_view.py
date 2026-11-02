@@ -69,14 +69,16 @@ def run_settings(session):
 
 
 def literature_source(session):
-    return LocalCorpusSource(SYNTHETIC_CORPUS) if session["synthetic"] else LiveSource()
+    if session["synthetic"]:
+        return LocalCorpusSource(session.get("corpus") or SYNTHETIC_CORPUS)
+    return LiveSource()
 
 
 def choose_provider(session, settings):
     """(provider, explanation) — provider is None when analysis is not possible."""
 
     if session["synthetic"]:
-        return MockProvider(MOCK_RESPONSES), ("Offline demonstration: fixture responses written for the "
+        return MockProvider(session.get("mock") or MOCK_RESPONSES), ("Offline demonstration: fixture responses written for the "
                                               "synthetic articles. No AI model is called and nothing is billed.")
     if not settings["enabled"]:
         return None, ("AI analysis is disabled on this server. An administrator can enable it by setting "
@@ -238,7 +240,12 @@ def view(token, session, provider=None, explanation="", confirm=False, download_
         "token": token, "stage": stage, "synthetic": session["synthetic"], "label": session["label"],
         "source_label": session["source_label"], "samples": list(session["samples"]["Sample_ID"]),
         "sample_sources": dict(zip(session["samples"]["Sample_ID"], session["samples"]["Sample_Source"])),
-        "selected": set(session.get("selected", session["samples"]["Sample_ID"])),
+        "selected": set(session.get("selected") or (session.get("eligible") if session.get("stage") == "pre-analysis"
+                                                     else session["samples"]["Sample_ID"])),
+        "pre_analysis": session.get("stage") == "pre-analysis",
+        "gaps": [row for row in session.get("gaps", []) if row["Gaps"]],
+        "gap_total": len(session.get("gaps", [])),
+        "dataset_identifiers": session.get("dataset_identifiers", []),
         "stats": stats, "publications": publication_rows, "notes": session["discovery_notes"] + session["plan_notes"],
         "plan": [{"article": item["Article_ID"], "title": short(item["Title"], 120),
                   "samples": ", ".join(sample["Sample_ID"] for sample in item["Samples"]),

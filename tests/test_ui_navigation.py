@@ -205,8 +205,9 @@ class UiNavigationTest(unittest.TestCase):
 
     def test_sprint4_is_optional_and_has_no_article_summaries(self):
         page = self.integrated_example()
-        self.assertIn("Sprint 4 — AI Metadata Enrichment", page)
-        self.assertIn("Find information in scientific publications that may help improve missing or imprecise", page)
+        # Enrichment was not chosen: no empty Sprint 4 section, only a link to revisit it.
+        self.assertNotIn('id="literature"', page)
+        self.assertIn("Open metadata enrichment for these results", page)
         self.assertNotIn("Surveillance context", page)
         self.assertNotIn("literature_surveillance_context.csv", page)
 
