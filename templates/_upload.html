@@ -8,22 +8,82 @@
 <div class="grid-2">
   <section class="card" id="upload">
     <h2>Step 1 · Choose your files</h2>
-    <form method="post" action="{{ url_for('review_upload') }}" enctype="multipart/form-data">
+    {% set mode = intended_mode or 'auto' %}
+    {% macro upload_field(field) %}
+      <div class="upload-field" data-modes="{{ field.modes|join(' ') }}" data-status="{{ field.modes|tojson|forceescape }}" {% if mode not in field.modes %}hidden{% endif %}>
+        <label for="file_{{ field.role }}"><span><strong>{{ field.label }}</strong>
+          <span class="badge {% if field.modes.get(mode) == 'required' %}needs{% else %}skipped{% endif %}" data-badge>{{ 'Required' if field.modes.get(mode) == 'required' else 'Optional' }}</span></span></label>
+        <input id="file_{{ field.role }}" type="file" name="file_{{ field.role }}" accept="{{ field.accept }}" {% if field.multiple %}multiple{% endif %} {% if field.modes.get(mode) == 'required' %}required{% endif %}>
+        <details class="field-help"><summary>{{ field.summary }}</summary>
+          <p class="help">{{ field.help }}{% if field.example %} <a href="{{ url_for('example_file', name=field.example) }}">Example file</a>{% endif %}</p>
+        </details>
+      </div>
+    {% endmacro %}
+    <form id="upload-form" method="post" action="{{ url_for('review_upload') }}" enctype="multipart/form-data">
       <fieldset class="modes">
         <legend>What do you want to analyze?</legend>
-        <p class="help">Optional. The next step recognizes every file automatically and shows which analysis your files support.</p>
+        <p class="help">The upload fields below change with your choice. Automatic detection accepts any mix of files and recognizes each one from its content.</p>
         <div class="mode-grid">
-          {% for key, mode in modes.items() %}
-            <label class="mode"><span><input type="radio" name="intended_mode" value="{{ key }}" {% if (intended_mode or 'auto') == key %}checked{% endif %}> <strong>{{ mode.label }}</strong></span>
-              <span class="help">{{ mode.files }}</span></label>
+          {% for key, item in modes.items() %}
+            <label class="mode"><span><input type="radio" name="intended_mode" value="{{ key }}" {% if mode == key %}checked{% endif %}> <strong>{{ item.label }}</strong></span>
+              <span class="help">{{ item.files }}</span></label>
           {% endfor %}
         </div>
       </fieldset>
-      <label>Files — select them all at once (up to 20 files, 10 MB in total)
-        <input type="file" name="files" multiple required accept=".fasta,.fa,.fna,.csv,.tsv,.txt,.xlsx,.vcf,.gz">
-      </label>
+
+      <div class="upload-fields">
+        <div class="upload-field" data-modes="auto" {% if mode != 'auto' %}hidden{% endif %}>
+          <label for="files"><span><strong>Files</strong> <span class="badge needs" data-badge>Required</span></span></label>
+          <input id="files" type="file" name="files" multiple {% if mode == 'auto' %}required{% endif %} accept=".fasta,.fa,.fna,.csv,.tsv,.txt,.xlsx,.vcf,.gz">
+          <p class="help">Select all files at once (up to 20 files, 10 MB in total). Each file's role is proposed from its content; you can correct it in the review.</p>
+        </div>
+        {% for field in upload_fields if not field.advanced %}{{ upload_field(field) }}{% endfor %}
+        <details class="advanced-inputs" data-modes="pooled combined" {% if mode not in ['pooled', 'combined'] %}hidden{% endif %}>
+          <summary>Advanced inputs (optional)</summary>
+          {% for field in upload_fields if field.advanced %}{{ upload_field(field) }}{% endfor %}
+        </details>
+        <p class="note" data-modes="pooled combined" {% if mode not in ['pooled', 'combined'] %}hidden{% endif %}>Pooled results are uploaded <em>after</em> sequencing reads were aligned to a reference and variants were called elsewhere. This website analyzes those processed results; it does not accept raw FASTQ reads or call variants.</p>
+        <p class="note" data-modes="combined" {% if mode != 'combined' %}hidden{% endif %}>Cross-source matching needs both sources on the <strong>same verified reference</strong>: the pooled table must name the uploaded reference (same ID and bases). Otherwise each source is still analyzed, but their variants are marked incomparable.</p>
+        <p class="warnings" id="other-mode-files" role="status" hidden></p>
+      </div>
+      <noscript><style>.upload-fields [hidden] { display: block !important; }</style><p class="help">JavaScript is off, so every upload field is shown; leave the ones you do not need empty.</p></noscript>
       <button type="submit" class="big">Review files</button>
     </form>
+    <script>
+      // Show the upload fields of the selected mode. Fields of other modes keep
+      // their files but are disabled, so they are not uploaded.
+      (function () {
+        var form = document.getElementById("upload-form");
+        if (!form) { return; }
+        var note = document.getElementById("other-mode-files");
+        function update() {
+          var checked = form.querySelector("input[name=intended_mode]:checked");
+          var mode = checked ? checked.value : "auto";
+          var kept = [];
+          form.querySelectorAll("[data-modes]").forEach(function (block) {
+            var show = block.dataset.modes.split(" ").indexOf(mode) >= 0;
+            block.hidden = !show;
+            var status = block.dataset.status ? JSON.parse(block.dataset.status)[mode] : (show ? "required" : null);
+            block.querySelectorAll("input[type=file]").forEach(function (input) {
+              if (input.closest("[data-modes]") !== block) { return; }
+              input.disabled = !show;
+              input.required = show && status === "required";
+              if (!show) { Array.prototype.forEach.call(input.files, function (file) { kept.push(file.name); }); }
+            });
+            var badge = block.querySelector("[data-badge]");
+            if (badge && badge.closest("[data-modes]") === block && status) {
+              badge.textContent = status === "required" ? "Required" : "Optional";
+              badge.className = "badge " + (status === "required" ? "needs" : "skipped");
+            }
+          });
+          note.hidden = kept.length === 0;
+          note.textContent = kept.length ? "Kept but not uploaded in this mode: " + kept.join(", ") +
+            ". Switch back to that mode to use them." : "";
+        }
+        form.addEventListener("change", update);
+        update();
+      })();
+    </script>
 
     <h3>Which files do I need?</h3>
     <details>

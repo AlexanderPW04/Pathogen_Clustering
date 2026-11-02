@@ -38,7 +38,8 @@ from genomics.file_formats import (
     read_table, split_name,
 )
 from genomics.input_inspection import (
-    ROLE_LABELS, empty_info, inspect_file, prepare_inputs, review_dataset, suggest_roles,
+    ROLE_LABELS, apply_declared_role, empty_info, inspect_file, prepare_inputs, review_dataset,
+    suggest_roles,
 )
 from genomics.integrated_analysis import run_integrated_analysis
 from dashboard_guide import GLOSSARY
@@ -116,6 +117,65 @@ MODE_NEEDS = {
     "combined": [("fasta", "individual sequences (FASTA)"), ("metadata", "sample metadata"),
                  ("reference", "reference genome FASTA"), ("snv", "processed pooled SNV table")],
 }
+# Upload fields shown for each chosen mode: "required" or "optional" per mode.
+# They follow the backend rules: individual metadata needs only Accession and
+# Pathogen; a reference is required only to connect the two sources.
+FASTA_ACCEPT = ".fasta,.fa,.fna,.gz"
+TABLE_ACCEPT = ".csv,.tsv,.txt,.xlsx,.gz"
+UPLOAD_FIELDS = [
+    {"role": "fasta", "label": "Individual sequences (FASTA)", "accept": FASTA_ACCEPT, "multiple": True,
+     "modes": {"individual": "required", "combined": "required"},
+     "summary": "One record per sample",
+     "help": "One FASTA record per sample; record names must match the Accession column of the metadata. "
+             "Several FASTA files are combined. MAFFT aligns them on the server.",
+     "example": "synthetic_individual_sequences.fasta"},
+    {"role": "metadata", "label": "Individual sample metadata (CSV, TSV, or XLSX)", "accept": TABLE_ACCEPT,
+     "multiple": False, "modes": {"individual": "required", "combined": "required"},
+     "summary": "Required columns: Accession and Pathogen",
+     "help": "Required columns: Accession (matching the FASTA names) and Pathogen. Optional: Collection_Date "
+             "(date comparisons), Location_Name or Latitude/Longitude (distance screening; GeoNames can "
+             "estimate coordinates for place names), and Gene_Segment. Missing optional columns only switch "
+             "off the analyses that need them.",
+     "example": "synthetic_individual_metadata.csv"},
+    {"role": "reference", "label": "Reference genome (one-sequence FASTA)", "accept": FASTA_ACCEPT,
+     "multiple": False, "modes": {"individual": "optional", "pooled": "optional", "combined": "required"},
+     "summary": "Shared genome coordinates",
+     "help": "Individual sequences: places them on numbered reference positions (reference-based variants). "
+             "Pooled results: checks the reported reference bases and genome coverage. Combined: required, "
+             "because both sources must use this same verified reference to be compared.",
+     "example": "synthetic_reference.fasta"},
+    {"role": "snv", "label": "Processed pooled SNV results (table or VCF)",
+     "accept": ".csv,.tsv,.txt,.xlsx,.vcf,.gz", "multiple": True,
+     "modes": {"pooled": "required", "combined": "required"},
+     "summary": "Variant calls already made from sequencing reads",
+     "help": "Sample, reference position, reference and alternative base, frequency, and read depth. Accepted: "
+             "standardized tables, iVar variant tables, SNV VCF files, and the Fontenele et al. (2021) "
+             "supplementary workbook; several iVar or VCF files are combined. Raw FASTQ reads are not accepted.",
+     "example": "synthetic_pooled_snvs.csv"},
+    {"role": "pooled_metadata", "label": "Pooled-sample metadata", "accept": TABLE_ACCEPT, "multiple": False,
+     "modes": {"pooled": "optional", "combined": "optional"},
+     "summary": "Dates, sites, coverage, mean depth",
+     "help": "Sample_ID plus collection dates, sites, coordinates, genome coverage, or mean depth. Enables the "
+             "paper's genome-coverage filter, the depth-versus-SNV regression, and dates or sites missing "
+             "from the SNV table."},
+    {"role": "positions", "label": "Per-position depth or A/C/G/T counts", "accept": TABLE_ACCEPT,
+     "multiple": False, "modes": {"pooled": "optional", "combined": "optional"},
+     "summary": "Coverage-aware results and the paper's PCoA",
+     "help": "Depth at every listed position lets unreported variants be called 'not detected at adequate "
+             "depth' instead of 'unknown'. A/C/G/T counts also enable the paper's Yue–Clayton PCoA "
+             "(population structure).",
+     "example": "synthetic_pooled_base_counts.csv"},
+    {"role": "masked_sites", "label": "Masked problematic sites", "accept": TABLE_ACCEPT, "multiple": False,
+     "advanced": True, "modes": {"pooled": "optional", "combined": "optional"},
+     "summary": "Positions excluded by quality control",
+     "help": "Reference positions to exclude, as in the paper's masked-site quality check."},
+    {"role": "signatures", "label": "Documented variant profiles", "accept": TABLE_ACCEPT, "multiple": False,
+     "advanced": True, "modes": {"pooled": "optional", "combined": "optional"},
+     "summary": "Known variant sets for an overlap table",
+     "help": "Lists of variants that define documented profiles; the results show their overlap with the "
+             "data (never a lineage assignment).",
+     "example": "synthetic_variant_signatures.csv"},
+]
 # Synthetic example files that visitors may download as format examples.
 EXAMPLE_DOWNLOADS = {name: INTEGRATED_FOLDER / name for name in INTEGRATED_EXAMPLE_FILES.values()}
 EXAMPLE_DOWNLOADS.update({name: EXAMPLE_FOLDER / name
@@ -865,7 +925,8 @@ def shared_page_values():
 
     if not EXAMPLE_FACTS:
         EXAMPLE_FACTS.update(integrated_example_facts())
-    return {"glossary": GLOSSARY, "modes": MODES, "example_facts": EXAMPLE_FACTS or None}
+    return {"glossary": GLOSSARY, "modes": MODES, "example_facts": EXAMPLE_FACTS or None,
+            "upload_fields": UPLOAD_FIELDS}
 
 
 def integrated_example_facts():
@@ -1045,8 +1106,25 @@ def clean_staged():
 PLAIN_EXTENSIONS = {FASTA_KIND: ".fasta", VCF_KIND: ".vcf", EXCEL_KIND: ".xlsx"}
 
 
+# Role-specific upload fields shown for a chosen analysis mode, in page order.
+ROLE_FIELDS = [field["role"] for field in UPLOAD_FIELDS]
+
+
+def uploads_from_form(files):
+    """(upload, declared role or None) for the automatic box and every role field."""
+
+    uploads = [(upload, None) for upload in files.getlist("files") if upload and upload.filename]
+    for role in ROLE_FIELDS:
+        uploads += [(upload, role) for upload in files.getlist(f"file_{role}") if upload and upload.filename]
+    return uploads
+
+
 def stage_uploads(uploads):
-    """Save, decompress, and inspect the uploaded files; return a staging token."""
+    """Save, decompress, and inspect the uploaded files; return a staging token.
+
+    `uploads` holds (file, declared role or None); a declared role is kept
+    unless the file's content rules it out.
+    """
 
     if len(uploads) > MAX_GUIDED_FILES:
         raise ValueError(f"Choose at most {MAX_GUIDED_FILES} files at a time.")
@@ -1058,7 +1136,7 @@ def stage_uploads(uploads):
     # together expand to gigabytes on disk.
     remaining = MAX_DECOMPRESSED_BYTES
     try:
-        for index, upload in enumerate(uploads):
+        for index, (upload, _) in enumerate(uploads):
             name = Path(upload.filename).name
             raw = folder / f"raw_{index}"
             upload.save(raw)
@@ -1085,6 +1163,9 @@ def stage_uploads(uploads):
         rmtree(folder, ignore_errors=True)
         raise
     suggest_roles(inspections)
+    for info, (_, role) in zip(inspections, uploads):
+        if role is not None:
+            apply_declared_role(info, role)
     with STAGED_LOCK:
         clean_staged()
         token = token_urlsafe(16)
@@ -1129,7 +1210,7 @@ def review_upload():
     page["step"] = 2
     page["intended_mode"] = intended_mode(request.form)
     token = request.form.get("token")
-    uploads = [upload for upload in request.files.getlist("files") if upload and upload.filename]
+    uploads = uploads_from_form(request.files)
     try:
         if uploads:
             token = stage_uploads(uploads)

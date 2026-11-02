@@ -2,6 +2,16 @@
 
 **Purpose:** Transfer working context for a biomedical informatics class coding project. This handoff was prepared from discussion, Codex-reported summaries, and screenshots. It is **not** a code audit or an assertion that every file exists in the present repository. Verify the current files before editing.
 
+## Mode-specific upload fields (November 2, 2026)
+
+- The upload card now shows the fields of the chosen mode (`UPLOAD_FIELDS` in `app.py`, a small script in `templates/_upload.html`). Automatic detection keeps the single multi-file box.
+- **Individual (Sprint 2):** sequences FASTA and sample metadata (Accession + Pathogen) are required; a reference FASTA is optional.
+- **Pooled (Sprint 3):** a processed SNV table or VCF is required. Pooled metadata, per-position depth or A/C/G/T counts, and a reference are optional. Masked sites and variant profiles sit under Advanced inputs.
+- **Combined:** the Sprint 2 fields plus the SNV results and a reference are required; the other pooled files are optional.
+- Switching modes keeps chosen files but uploads only the current mode's fields, and the page names any kept files that will not be uploaded.
+- A role declared through a field is kept when the content fits (`apply_declared_role`). Otherwise the review shows "Conflict — please choose" and runs nothing until a role is chosen. Ambiguous files in the automatic box still need a choice.
+- Tests: `tests/test_mode_upload.py` (12). Checkpoint tag before this change: `checkpoint/before-mode-upload`.
+
 ## Usability redesign (November 2, 2026, after Sprint 4)
 
 - **Interface only; no scientific calculation changed.** Checkpoint tag before it: `checkpoint/before-ui-redesign`.

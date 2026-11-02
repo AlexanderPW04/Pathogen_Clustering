@@ -348,6 +348,32 @@ def suggest_roles(inspections):
     return inspections
 
 
+def apply_declared_role(info, role):
+    """Keep the role a person chose with a role-specific upload field.
+
+    The choice is kept when the file's content fits it. When the content
+    rules it out, no role is guessed: the conflict is explained and the
+    person must choose in the review step.
+    """
+
+    info["declared_role"] = role
+    label = ROLE_LABELS[role]
+    if info["refused"]:
+        info["role_evidence"] = f"Uploaded as '{label}', but this file type is not accepted."
+        return info
+    if role in info["candidates"] or (role in FASTA_ROLES and info["kind"] == FASTA_KIND):
+        info["suggested_role"] = role
+        info["role_status"] = "declared"
+        info["role_evidence"] = f"Uploaded as '{label}'; the content fits this role."
+        return info
+    detected = ", ".join(ROLE_LABELS[name] for name in info["candidates"]) or "none of the supported roles"
+    info["suggested_role"] = None
+    info["role_status"] = "conflict"
+    info["role_evidence"] = (f"Uploaded as '{label}', but the content looks like: {detected}. "
+                             "Choose the correct role.")
+    return info
+
+
 def choose(info, role, evidence):
     info["suggested_role"] = role
     info["role_status"] = "clear"

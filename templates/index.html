@@ -148,6 +148,13 @@
     .back-top { font-size: 0.9rem; margin-bottom: 0; }
     .nav-label { color: var(--ink-muted); font-weight: bold; }
     .status-table td { min-width: 9rem; }
+    .upload-fields { display: grid; gap: 0.6rem; margin: 0.5rem 0 0.75rem; }
+    .upload-fields [hidden] { display: none !important; }  /* the grid style must not reveal hidden fields */
+    .upload-field { background: var(--surface-alt); border: 1px solid var(--border); border-radius: 8px; display: grid; gap: 0.35rem; padding: 0.6rem 0.7rem; }
+    .upload-field input[type="file"] { padding: 0.6rem; }
+    .advanced-inputs { border: 1px dashed var(--border); border-radius: 8px; padding: 0.5rem 0.7rem; }
+    .advanced-inputs[open] { display: grid; gap: 0.6rem; }
+    .field-help summary { color: var(--ink-muted); font-size: 0.88rem; font-weight: normal; }
     section[id], .story { scroll-margin-top: 6.5rem; }
     @media (max-width: 600px) { main { padding: 0 0.75rem; } section, .card { padding: 0.9rem; } nav.sections { position: static; } .box { font-size: 0.82rem; } .mode-grid { grid-template-columns: 1fr; } }
   </style>
@@ -237,9 +244,9 @@
             <tbody>
             {% for entry in r.files %}{% set info = entry.info %}
               <tr>
-                <td><strong>{{ info.name }}</strong>{% if info.compressed %}<br><span class="help">gzip-compressed</span>{% endif %}</td>
+                <td><strong>{{ info.name }}</strong>{% if info.declared_role %}<br><span class="help">uploaded as: {{ role_labels[info.declared_role] }}</span>{% endif %}{% if info.compressed %}<br><span class="help">gzip-compressed</span>{% endif %}</td>
                 <td>{{ info.format or info.kind }}</td>
-                <td>{{ info.records }}</td>
+                <td>{{ info.records }}{% if info.ids %}<br><span class="help">{{ info.ids|length }} sample ID{{ 's' if info.ids|length != 1 }}</span>{% endif %}</td>
                 <td>
                   {% if info.refused %}<span class="badge refused">Not accepted</span>
                   {% else %}
@@ -247,7 +254,7 @@
                       {% if not entry.role %}<option value="" selected>Choose a role…</option>{% endif %}
                       {% for key, label in role_labels.items() %}<option value="{{ key }}" {% if entry.role == key %}selected{% endif %}>{{ label }}</option>{% endfor %}
                     </select>
-                    {% if info.role_status == 'clear' %}<span class="badge completed">Detected</span>{% else %}<span class="badge needs">Please choose</span>{% endif %}
+                    {% if info.role_status == 'clear' %}<span class="badge completed">Detected</span>{% elif info.role_status == 'declared' %}<span class="badge completed">Your choice</span>{% elif info.role_status == 'conflict' %}<span class="badge needs">Conflict — please choose</span>{% else %}<span class="badge needs">Please choose</span>{% endif %}
                   {% endif %}
                 </td>
                 <td>{{ info.role_evidence }}
