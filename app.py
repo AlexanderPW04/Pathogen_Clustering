@@ -6,6 +6,10 @@ analysis the files allow. The original Sprint 2 sequence-relationship
 pipeline runs for individual sequences, and the reference-based integrated
 analysis (genomics.integrated_analysis) connects them with pooled samples.
 The earlier Sprint 3 single-source pages remain available.
+
+An optional literature-enrichment section (Sprint 4, literature/ and
+literature_view.py) can propose metadata from linked publications; nothing
+from it changes an analysis until a person approves each proposal.
 """
 
 from base64 import b64encode
@@ -20,7 +24,7 @@ from threading import Lock
 from time import monotonic, time
 
 import pandas as pd
-from flask import Flask, abort, render_template, request, send_file
+from flask import Flask, abort, redirect, render_template, request, send_file, url_for
 
 from compare_genetic_distances import read_pair_table
 from detect_potential_clusters import enough_overlap
@@ -31,13 +35,21 @@ from validate_inputs import FASTA_EXTENSIONS, METADATA_EXTENSIONS
 from environmental_analysis import load_measurements, make_charts, summarize_measurements, table_records
 from genomics.file_formats import (
     EXCEL_KIND, FASTA_KIND, MAX_DECOMPRESSED_BYTES, VCF_KIND, detect_kind, plain_copy,
-    split_name,
+    read_table, split_name,
 )
 from genomics.input_inspection import (
     ROLE_LABELS, empty_info, inspect_file, prepare_inputs, review_dataset, suggest_roles,
 )
 from genomics.integrated_analysis import run_integrated_analysis
 from integrated_view import build_dashboard, download_files
+from literature.config import ai_status
+from literature.pubtator import check_pubtator
+from literature.workflow import new_session
+from literature_view import (
+    LITERATURE_EXAMPLE_FILES, LITERATURE_FOLDER, check_claude, choose_provider, enrichment_downloads,
+    find, get_session, live_request_allowed, prepare, review_and_apply, run_settings, start,
+    store_session, view,
+)
 from wastewater.processed_snv import load_processed_snvs, summarize_snvs
 
 
@@ -164,7 +176,14 @@ def get_system_status():
                 "message": "The GeoNames check could not finish.",
             }
 
-        results = {"mafft": mafft_status, "geonames": geonames_status}
+        try:
+            pubtator_status = check_pubtator()
+        except Exception:
+            app.logger.warning("PubTator diagnostic failed unexpectedly")
+            pubtator_status = {"status": "Check failed", "message": "The PubTator check could not finish."}
+
+        results = {"mafft": mafft_status, "geonames": geonames_status,
+                   "pubtator": pubtator_status}
         STATUS_CACHE["checked_at"] = now
         STATUS_CACHE["results"] = results
         return results, False
@@ -175,10 +194,23 @@ def system_status():
     """Check external dependencies only when the visitor presses the button."""
 
     results, cached = get_system_status()
+    # The AI line only reads server settings: no request is sent to Claude here.
+    results = {**results, "ai": ai_status()}
     values = default_values({})
     return render_template(
         "index.html", values=values, system_status=results, status_cached=cached, step=1
     )
+
+
+@app.route("/system-status/claude", methods=["POST"])
+def claude_status():
+    """Check Claude API access only when explicitly requested (token count; no text generated)."""
+
+    results, cached = get_system_status()
+    results = {**results, "ai": ai_status(),
+               "claude_check": check_claude(request.remote_addr, request.form.get("access_code"))}
+    return render_template("index.html", values=default_values({}), system_status=results,
+                           status_cached=cached, step=1)
 
 
 @app.route("/wastewater-data", methods=["GET", "POST"], endpoint="wastewater_data_page")
@@ -609,11 +641,18 @@ def save_upload(upload, folder, key):
     return path, name
 
 
-def save_inputs(folder, use_example, use_integrated, fasta_upload, metadata_upload, uploads):
+def save_inputs(folder, use_example, use_integrated, fasta_upload, metadata_upload, uploads,
+                use_literature=False):
     """Copy example files or save uploads; return (paths, display names)."""
 
     paths = {}
     names = {}
+    if use_literature:
+        for key, name in LITERATURE_EXAMPLE_FILES.items():
+            paths[key] = folder / name
+            copyfile(LITERATURE_FOLDER / name, paths[key])
+            names[key] = name
+        return paths, names
     if use_example:
         for key, name in [("fasta", "synthetic_sequences.fasta"),
                           ("metadata", "synthetic_metadata.csv")]:
@@ -643,7 +682,8 @@ def new_page():
         "is_synthetic_example": False, "is_integrated_example": False, "dashboard": None,
         "integrated_error": None, "download_id": None, "downloads": [],
         "skipped_downloads": [], "review": None, "token": None, "step": 1,
-        "analysis_plan": None, "declared_pathogen": "",
+        "analysis_plan": None, "declared_pathogen": "", "enrichment": None, "refresh_url": None,
+        "is_literature_example": False,
     }
 
 
@@ -673,6 +713,49 @@ def relationship_tables(relationship, thresholds):
 
 
 def run_analyses(paths, names, values, thresholds, date_window, temporary_folder, page):
+    """Run every analysis the saved inputs allow, then offer literature enrichment."""
+
+    outcome = {}
+    run_genomic_analyses(paths, names, values, thresholds, date_window, temporary_folder, page, outcome)
+    attach_enrichment(page, paths, thresholds, outcome)
+    return page
+
+
+def read_raw_table(path):
+    """The uploaded table as text (for identifier columns that validation drops), or None."""
+
+    if path is None:
+        return None
+    try:
+        return read_table(path)
+    except Exception:
+        return None
+
+
+def attach_enrichment(page, paths, thresholds, outcome):
+    """Create an optional enrichment session from the finished analysis (never fails the run)."""
+
+    relationship, result = outcome.get("relationship"), outcome.get("result")
+    individual = pairs = pooled = None
+    if relationship is not None and relationship["complete"]:
+        individual = relationship["analysis_data"].get("samples")
+        pairs = relationship.get("pairs")
+    if result is not None and result.get("pooled") is not None:
+        pooled = result["pooled"]["samples"]
+    if individual is None and pooled is None:
+        return
+    try:
+        session = new_session(individual, pooled, pairs, thresholds,
+                              synthetic=page["is_literature_example"],
+                              label=", ".join(str(name) for name in (page["input_names"] or {}).values()),
+                              individual_metadata=read_raw_table(paths.get("metadata")),
+                              pooled_metadata=read_raw_table(paths.get("pooled_metadata")))
+        page["enrichment"] = view(store_session(session), session)
+    except Exception:
+        app.logger.exception("Could not prepare literature enrichment")
+
+
+def run_genomic_analyses(paths, names, values, thresholds, date_window, temporary_folder, page, outcome):
     """Run every analysis the saved inputs allow and fill the results page."""
 
     page["input_names"] = names
@@ -690,6 +773,7 @@ def run_analyses(paths, names, values, thresholds, date_window, temporary_folder
         page["related_pair_count"] = relationship["related_pair_count"]
         page["candidates"] = relationship["candidates"]
         page["summary"] = relationship["summary"]
+        outcome["relationship"] = relationship
 
     relationship_files = relationship["files"] if relationship else {}
     completed = relationship is not None and relationship["complete"]
@@ -724,6 +808,7 @@ def run_analyses(paths, names, values, thresholds, date_window, temporary_folder
             "pooled-sample files."
         )
     else:
+        outcome["result"] = result
         files, skipped = download_files(result, relationship_files)
         page["download_id"] = store_result_files(files)
         page["dashboard"] = build_dashboard(result, page["download_id"], set(files))
@@ -756,12 +841,14 @@ def index():
     if request.method == "POST":
         use_example = "run_example" in request.form
         use_integrated = "run_integrated_example" in request.form
-        page["is_synthetic_example"] = use_example
+        use_literature = "run_literature_example" in request.form
+        page["is_synthetic_example"] = use_example or use_literature
         page["is_integrated_example"] = use_integrated
+        page["is_literature_example"] = use_literature
         uploads = {}
         fasta_upload = None
         metadata_upload = None
-        if use_example or use_integrated:
+        if use_example or use_integrated or use_literature:
             values["genomic_region_mode"] = "automatic"
         else:
             fasta_upload = request.files.get("fasta_file")
@@ -789,7 +876,11 @@ def index():
             (INTEGRATED_FOLDER / name).is_file() for name in INTEGRATED_EXAMPLE_FILES.values()
         ):
             error = "The bundled synthetic integrated example files are missing."
-        elif not (use_example or use_integrated) and not (has_fasta or has_metadata or "snv" in uploads):
+        elif use_literature and not all(
+            (LITERATURE_FOLDER / name).is_file() for name in LITERATURE_EXAMPLE_FILES.values()
+        ):
+            error = "The bundled synthetic literature example files are missing."
+        elif not (use_example or use_integrated or use_literature) and not (has_fasta or has_metadata or "snv" in uploads):
             error = ("Please choose a FASTA sequence file with its metadata, a pooled SNV "
                      "table, or both.")
         elif has_metadata and not has_fasta:
@@ -822,7 +913,8 @@ def index():
                 folder = Path(temporary_folder)
                 try:
                     paths, names = save_inputs(folder, use_example, use_integrated,
-                                               fasta_upload, metadata_upload, uploads)
+                                               fasta_upload, metadata_upload, uploads,
+                                               use_literature)
                 except ValueError as problem:
                     error = str(problem)
                 else:
@@ -1021,6 +1113,140 @@ def run_reviewed():
         remove_staged(token)
     page["analysis_plan"] = review["analyses"]
     return render_page(values, page)
+
+
+# ----------------------------------------------------------------------------
+# Optional Step 4: literature and metadata enrichment
+# ----------------------------------------------------------------------------
+
+EXPIRED_ENRICHMENT = ("This enrichment session has expired (sessions last 30 minutes). "
+                      "Run the analysis again to start a new one.")
+
+
+def literature_page(token, session, error=None, confirm=False):
+    """Render the enrichment section on its own results page."""
+
+    page = new_page()
+    page.update(step=4, error=error, is_synthetic_example=session["synthetic"],
+                is_literature_example=session["synthetic"])
+    provider, explanation = (choose_provider(session, run_settings(session)) if session["plan"]
+                             else (None, ""))
+    state = session["run"].get("state")
+    if state not in {None, "not started", "running"} and not session.get("download_id"):
+        files = enrichment_downloads(session)
+        session["download_id"], session["download_files"] = store_result_files(files), list(files)
+    page["enrichment"] = view(token, session, provider, explanation, confirm,
+                              session.get("download_id"), session.get("download_files", []))
+    if state == "running":
+        page["refresh_url"] = url_for("literature_status", token=token)
+    return render_page(default_values({}), page)
+
+
+def expired_page():
+    page = new_page()
+    page["error"] = EXPIRED_ENRICHMENT
+    return render_page(default_values({}), page)
+
+
+@app.route("/literature/find", methods=["POST"])
+def literature_find():
+    """Step A: find publications linked to the selected samples (free public services, no AI)."""
+
+    token = request.form.get("token")
+    session = get_session(token)
+    if session is None:
+        return expired_page()
+    if session["run"].get("state") == "running":
+        return literature_page(token, session, "An analysis is running; wait for it or cancel it first.")
+    try:
+        find(session, request.form.getlist("sample") or None)
+    except Exception:
+        app.logger.exception("Literature search failed")
+        return literature_page(token, session, "The literature search could not be completed.")
+    session["download_id"] = None
+    return literature_page(token, session)
+
+
+@app.route("/literature/analyze", methods=["POST"])
+def literature_analyze():
+    """Step B: show the cost estimate, then run only after explicit approval."""
+
+    token = request.form.get("token")
+    session = get_session(token)
+    if session is None:
+        return expired_page()
+    if not session["plan"]:
+        return literature_page(token, session, "No article passages are ready for analysis.")
+    if session["run"].get("state") == "running":
+        return redirect(url_for("literature_status", token=token))
+    try:
+        provider, explanation, estimate = prepare(session)
+    except Exception:
+        app.logger.exception("Preparing the literature analysis failed")
+        return literature_page(token, session, "The analysis could not be prepared.")
+    if provider is None:
+        return literature_page(token, session, explanation)
+    if request.form.get("confirm") != "1":
+        return literature_page(token, session, confirm=True)
+    if provider.is_live:
+        problem = None
+        if request.form.get("acknowledge") != "on":
+            problem = "Tick the box to confirm that this analysis uses a paid API before starting it."
+        elif not live_request_allowed(request.remote_addr, request.form.get("access_code")):
+            problem = ("Paid analysis can only be started on the server computer itself or with the "
+                       "access code set in AI_ACCESS_CODE.")
+        elif not estimate["fits"]:
+            problem = ("The planned analysis could exceed the configured request, token, or spending "
+                       "limits. Select fewer samples, or raise the limits on the server.")
+        if problem:
+            return literature_page(token, session, problem, confirm=True)
+    session["download_id"] = None
+    start(session, provider, inline=app.config.get("LITERATURE_INLINE_JOBS", False))
+    return redirect(url_for("literature_status", token=token))
+
+
+@app.route("/literature/session/<token>")
+def literature_status(token):
+    """Progress while the analysis runs; the review table when it is finished."""
+
+    session = get_session(token)
+    if session is None:
+        return expired_page()
+    return literature_page(token, session)
+
+
+@app.route("/literature/cancel", methods=["POST"])
+def literature_cancel():
+    """Stop launching new requests; the request already in progress finishes."""
+
+    token = request.form.get("token")
+    session = get_session(token)
+    if session is None:
+        return expired_page()
+    if session.get("cancel") is not None:
+        session["cancel"].set()
+    return redirect(url_for("literature_status", token=token))
+
+
+@app.route("/literature/apply", methods=["POST"])
+def literature_apply():
+    """Steps C-D: save review decisions, apply approved values, and recompute affected results."""
+
+    token = request.form.get("token")
+    session = get_session(token)
+    if session is None:
+        return expired_page()
+    if session["run"].get("state") == "running" or not session["facts"]:
+        return literature_page(token, session, "There are no finished proposals to review.")
+    choices = {key[len("review_"):]: value for key, value in request.form.items()
+               if key.startswith("review_")}
+    try:
+        review_and_apply(session, choices)
+    except Exception:
+        app.logger.exception("Applying literature enrichment failed")
+        return literature_page(token, session, "The approved changes could not be applied.")
+    session["download_id"] = None
+    return literature_page(token, session)
 
 
 if __name__ == "__main__":

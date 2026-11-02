@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Integrated Genomic Surveillance</title>
+  {% if refresh_url %}<meta http-equiv="refresh" content="3;url={{ refresh_url }}">{% endif %}
   <style>
     :root {
       --page: #f3f5f7;
@@ -94,6 +95,10 @@
     .facts dd { margin: 0 0 0.5rem; }
     .example-card { border: 2px solid var(--accent); }
     code { background: var(--surface-alt); border-radius: 4px; padding: 0 0.25rem; }
+    .sample-choices { columns: 3 12rem; margin: 0.5rem 0; }
+    .sample-choices label { font-weight: normal; }
+    .review-table td label { font-weight: normal; white-space: nowrap; }
+    .review-table tr.not-approvable td { color: var(--ink-muted); }
     @media (max-width: 600px) { main { padding: 0 0.75rem; } section, .card { padding: 0.9rem; } nav.sections { position: static; } }
   </style>
 </head>
@@ -106,6 +111,7 @@
         <li {% if step == 1 %}aria-current="step"{% endif %}>1 · Upload files</li>
         <li {% if step == 2 %}aria-current="step"{% endif %}>2 · Review dataset</li>
         <li {% if step == 3 %}aria-current="step"{% endif %}>3 · Results</li>
+        <li {% if step == 4 %}aria-current="step"{% endif %}>4 · Literature enrichment (optional)</li>
       </ol>
     </header>
 
@@ -189,6 +195,7 @@
           <form method="post" action="{{ url_for('index') }}">
             <button type="submit" name="run_integrated_example" value="1" class="big" formnovalidate>Run Integrated Example</button>
             <button type="submit" name="run_example" value="1" class="secondary" formnovalidate>Run Example Analysis (individual sequences only)</button>
+            <button type="submit" name="run_literature_example" value="1" class="secondary" formnovalidate>Run Literature Enrichment Example (offline, no AI call)</button>
             {{ settings_fields(values) }}
           </form>
           <p class="note">Run Example Analysis uses explicitly synthetic sequences and sample records, not NCBI records or real outbreaks, with the same MAFFT-backed pipeline. One record has a real place name but synthetic sample data and no coordinates so GeoNames can be demonstrated when configured.</p>
@@ -473,6 +480,7 @@
       {% if dashboard %}
         <nav class="sections" aria-label="Dashboard sections">
           {% for s in dashboard.sections %}<a href="#{{ s.id }}">{{ s.number }}. {{ s.title }}</a>{% endfor %}
+          {% if enrichment %}<a href="#literature">9. Literature enrichment</a>{% endif %}
           <a href="#provenance">Provenance &amp; downloads</a>
         </nav>
         {% for s in dashboard.sections %}{{ render_section(s) }}{% endfor %}
@@ -482,6 +490,8 @@
           {{ sprint2_results() }}
         </section>
       {% endif %}
+
+      {% if enrichment %}{% include "_literature.html" %}{% endif %}
 
       <section id="provenance">
         <h2>Provenance and downloads</h2>
@@ -499,16 +509,36 @@
       </section>
     {% endif %}
 
+    {% if enrichment and not (analysis_complete or dashboard) %}
+      {% if is_synthetic_example %}
+        <section class="synthetic-note">
+          <h2>SYNTHETIC literature-enrichment example</h2>
+          <p>The samples, sequences, articles, and model responses are invented to demonstrate the workflow. None of it describes real samples or publications.</p>
+        </section>
+      {% endif %}
+      {% include "_literature.html" %}
+      <p><a href="{{ url_for('index') }}">Start a new analysis</a></p>
+    {% endif %}
+
     <section>
       <h2>System status</h2>
-      <p class="note">Check that this server can align two invented sequences with MAFFT and contact GeoNames for an approximate Tempe, Arizona place location. No upload is needed. Recent results are reused for five minutes.</p>
+      <p class="note">Check that this server can align two invented sequences with MAFFT, contact GeoNames for an approximate Tempe, Arizona place location, and run one PubTator3 literature search. The Claude line only reads the server's settings; no request is sent to Claude unless you press its own check button. No upload is needed. Recent results are reused for five minutes.</p>
       <form method="post" action="{{ url_for('system_status') }}">
-        <button type="submit" class="secondary">Check MAFFT &amp; GeoNames</button>
+        <button type="submit" class="secondary">Check MAFFT &amp; GeoNames (and PubTator)</button>
       </form>
       {% if system_status %}
         <p><strong>MAFFT: {{ system_status.mafft.status }}</strong> — {{ system_status.mafft.message }}
           {% if system_status.mafft.version %}Version: {{ system_status.mafft.version }}.{% endif %}</p>
         <p><strong>GeoNames: {{ system_status.geonames.status }}</strong> — {{ system_status.geonames.message }}</p>
+        {% if system_status.pubtator %}<p><strong>PubTator3: {{ system_status.pubtator.status }}</strong> — {{ system_status.pubtator.message }}</p>{% endif %}
+        {% if system_status.ai %}<p><strong>Claude API configuration: {{ system_status.ai.status }}</strong> — {{ system_status.ai.message }}</p>{% endif %}
+        {% if system_status.claude_check %}<p><strong>Claude API check: {{ system_status.claude_check.status }}</strong> — {{ system_status.claude_check.message }}</p>{% endif %}
+        {% if system_status.ai and system_status.ai.status == 'Configured' %}
+          <form method="post" action="{{ url_for('claude_status') }}">
+            <input type="text" name="access_code" placeholder="Access code (if required)" autocomplete="off" aria-label="Access code">
+            <button type="submit" class="secondary">Check Claude API access (token count only, no text generated)</button>
+          </form>
+        {% endif %}
         {% if status_cached %}<p class="note">Showing a recent cached check.</p>{% endif %}
       {% endif %}
     </section>

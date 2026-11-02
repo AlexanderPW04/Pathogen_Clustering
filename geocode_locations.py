@@ -140,15 +140,7 @@ def fill_missing_coordinates(data):
                 valid_latitude = math.isfinite(latitude) and -90 <= latitude <= 90
                 valid_longitude = math.isfinite(longitude) and -180 <= longitude <= 180
                 if valid_latitude and valid_longitude:
-                    feature_code = str(places[0].get("fcode", "")).upper()
-                    feature_class = str(places[0].get("fcl", "")).upper()
-                    # A = countries/states/regions; L = continents, areas, regions.
-                    if feature_class in {"A", "L"} or feature_code.startswith(
-                        ("ADM", "PCL", "CONT", "RGN", "AREA")
-                    ):
-                        precision = "Administrative area (too coarse for distance cutoff)"
-                    else:
-                        precision = "GeoNames place (approximate)"
+                    precision = place_precision(places[0])
                     cache[cache_key] = (latitude, longitude, precision)
 
         coordinates = cache[cache_key]
@@ -179,6 +171,65 @@ def fill_missing_coordinates(data):
             file=sys.stderr,
         )
     return samples
+
+
+def place_precision(place, label="GeoNames place (approximate)"):
+    """Precision label for one GeoNames result; areas are too coarse for distances."""
+
+    feature_code = str(place.get("fcode", "")).upper()
+    feature_class = str(place.get("fcl", "")).upper()
+    # A = countries/states/regions; L = continents, areas, regions.
+    if feature_class in {"A", "L"} or feature_code.startswith(("ADM", "PCL", "CONT", "RGN", "AREA")):
+        return "Administrative area (too coarse for distance cutoff)"
+    return label
+
+
+class GeoNamesUnavailable(RuntimeError):
+    """GeoNames is not configured or could not answer."""
+
+
+def lookup_place(query, label="GeoNames place (approximate)"):
+    """Look up one place name; return its approximate coordinates and context, or None.
+
+    Used for place names a person has approved (for example from literature
+    enrichment). Raises GeoNamesUnavailable when no lookup can be made.
+    """
+
+    username = os.getenv("GEONAMES_USERNAME", "").strip()
+    if not username:
+        raise GeoNamesUnavailable("GEONAMES_USERNAME is not set.")
+    try:
+        response = requests.get(
+            GEONAMES_URL,
+            params={"q": " ".join(str(query).split()), "maxRows": 1, "username": username},
+            timeout=8,
+            verify=True,
+        )
+        response.raise_for_status()
+        result = response.json()
+    except (requests.RequestException, ValueError):
+        raise GeoNamesUnavailable("GeoNames could not be reached.") from None
+    if not isinstance(result, dict) or "status" in result:
+        raise GeoNamesUnavailable("GeoNames rejected the lookup.")
+    places = result.get("geonames", [])
+    if not places:
+        return None
+    try:
+        latitude = float(places[0]["lat"])
+        longitude = float(places[0]["lng"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if not (math.isfinite(latitude) and -90 <= latitude <= 90
+            and math.isfinite(longitude) and -180 <= longitude <= 180):
+        return None
+    return {
+        "latitude": latitude, "longitude": longitude,
+        "precision": place_precision(places[0], label),
+        "name": str(places[0].get("name", "")),
+        "state": str(places[0].get("adminName1", "")),
+        "country": str(places[0].get("countryName", "")),
+        "country_code": str(places[0].get("countryCode", "")),
+    }
 
 
 def check_geonames():

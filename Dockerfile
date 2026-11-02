@@ -17,8 +17,9 @@ COPY app.py run_pipeline.py validate_inputs.py genomic_regions.py ./
 COPY environmental_analysis.py ./
 COPY geocode_locations.py align_sequences.py compare_genetic_distances.py ./
 COPY add_temporal_geographic.py detect_potential_clusters.py ./
-COPY system_diagnostics.py integrated_view.py ./
+COPY system_diagnostics.py integrated_view.py literature_view.py ./
 COPY genomics/ ./genomics/
+COPY literature/ ./literature/
 COPY wastewater/ ./wastewater/
 COPY templates/ ./templates/
 COPY examples/ ./examples/

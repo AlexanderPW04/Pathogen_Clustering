@@ -11,6 +11,12 @@ from app import STATUS_CACHE, app, find_geography_unresolved_candidates
 
 
 class FlaskInterfaceTest(unittest.TestCase):
+    def setUp(self) -> None:
+        # The diagnostics also try PubTator3 (Sprint 4); keep these tests offline.
+        pubtator = patch("app.check_pubtator", return_value={"status": "Operational", "message": "Mocked."})
+        pubtator.start()
+        self.addCleanup(pubtator.stop)
+
     def test_system_button_runs_only_on_click_and_reuses_recent_result(self) -> None:
         mafft_result = {"status": "Operational", "message": "MAFFT works.", "version": "v7.505"}
         geonames_result = {"status": "Operational", "message": "GeoNames works."}

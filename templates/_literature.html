@@ -1,0 +1,178 @@
+{# Section 9: optional AI literature & metadata enrichment. All article text is autoescaped. #}
+{% set lit = enrichment %}
+<section id="literature">
+  <h2>9. AI Literature &amp; Metadata Enrichment <span class="badge limited">Optional prototype</span></h2>
+  <p class="purpose">Looks for publications linked to your samples, asks a language model to read short passages, and proposes more complete or more specific metadata (collection place, date or date range, sampling site). Every proposal keeps its quoted evidence, is checked against the article text, and changes nothing until you approve it. The genomic analyses never depend on this section.</p>
+  {% if lit.synthetic %}
+    <p class="synthetic-note" style="padding:0.5rem 0.75rem;border-radius:8px;border:1px solid var(--warn-border)"><strong>SYNTHETIC demonstration:</strong> the samples and the articles are invented, and the "model" answers are fixed fixture responses (some deliberately wrong, to show the checks). No AI model is called and nothing is billed.</p>
+  {% endif %}
+
+  <h3>A. Find evidence</h3>
+  <form method="post" action="{{ url_for('literature_find') }}">
+    <input type="hidden" name="token" value="{{ lit.token }}">
+    <details>
+      <summary>Samples to search ({{ lit.samples|length }} available{% if lit.stats %}; {{ lit.selected|length }} searched{% endif %})</summary>
+      <div class="sample-choices">
+        {% for sample in lit.samples %}<label><span><input type="checkbox" name="sample" value="{{ sample }}" {% if sample in lit.selected %}checked{% endif %}> {{ sample }} <span class="help" style="display:inline">({{ lit.sample_sources[sample] }})</span></span></label>{% endfor %}
+      </div>
+    </details>
+    <p class="note">{% if lit.synthetic %}Searches the bundled synthetic article collection.{% else %}Uses NCBI E-utilities record links and PubTator3 (free public services, no AI). Sample identifiers are sent to NCBI; requests are rate-limited and capped. A sample can have zero, one, or several candidate publications, and the top search result is never accepted automatically.{% endif %}</p>
+    <button type="submit" class="secondary">Find Relevant Literature</button>
+  </form>
+
+  {% if lit.stats %}
+    <div class="summary-grid">{% for label, value in lit.stats %}<p class="stat"><strong>{{ label }}:</strong> {{ value }}</p>{% endfor %}</div>
+    {% if lit.publications %}
+      <details {% if lit.stage == 'found' %}open{% endif %}>
+        <summary>Publication candidates ({{ lit.publications|length }})</summary>
+        <div class="scroll"><table>
+          <thead><tr><th>Sample</th><th>Article</th><th>Relationship</th><th>Verification</th><th>Text</th><th>Notes</th></tr></thead>
+          <tbody>{% for row in lit.publications %}<tr>
+            <td>{{ row.sample }}</td>
+            <td>{% if row.url %}<a href="{{ row.url }}" rel="noopener noreferrer" target="_blank">{{ row.article }}</a>{% else %}{{ row.article }}{% endif %}<br><span class="help">{{ row.title }}{% if row.date %} ({{ row.date }}){% endif %}</span></td>
+            <td>{{ row.relationship }}{% if row.eligible %} <span class="badge completed">used</span>{% else %} <span class="badge skipped">not used</span>{% endif %}</td>
+            <td>{{ row.status }}</td><td>{{ row.text }}</td><td>{{ row.notes }}</td></tr>{% endfor %}</tbody>
+        </table></div>
+      </details>
+    {% else %}
+      <p class="unavailable">No publication with a traceable link was found. This is an acceptable result: nothing will be proposed.</p>
+    {% endif %}
+    {% if lit.notes %}<ul class="notes">{% for item in lit.notes %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
+  {% endif %}
+
+  {% if lit.plan %}
+    <h3>B. Analyze literature</h3>
+    <div class="scroll"><table>
+      <thead><tr><th>Article</th><th>Samples</th><th>Passages sent</th><th>Characters</th></tr></thead>
+      <tbody>{% for item in lit.plan %}<tr><td>{{ item.article }}<br><span class="help">{{ item.title }}</span></td><td>{{ item.samples }}</td><td>{{ item.passages }}</td><td>{{ item.characters }}</td></tr>{% endfor %}</tbody>
+    </table></div>
+    <p class="note">Only these passages are sent (methods, sample tables, and sentences naming a sample or describing collection). References, acknowledgements, and author affiliations are never sent.</p>
+    {% if lit.explanation %}<p><strong>Extraction engine:</strong> {{ lit.explanation }}</p>{% endif %}
+    {% if lit.stage in ['found', 'analyzed', 'applied'] and lit.provider_name %}
+      {% if lit.confirm and lit.estimate %}
+        <div class="card warn">
+          <h3 style="margin-top:0">Before you start</h3>
+          <ul>
+            <li><strong>Requests:</strong> {{ lit.estimate.requests }} extraction request(s), then at most one association check per article with approvable proposals, sent only while the limits below still allow it.</li>
+            <li><strong>Model:</strong> {{ lit.provider_name }}{% if lit.live %} — {{ lit.settings.model }} (effort {{ lit.settings.effort }}){% endif %}</li>
+            <li><strong>Input tokens:</strong> about {{ '{:,}'.format(lit.estimate.input_tokens) }} — {{ lit.estimate.token_method }}; output limit {{ '{:,}'.format(lit.estimate.max_output_tokens) }} per request.</li>
+            {% if lit.live %}
+              <li><strong>Worst-case cost of the extraction requests:</strong> ${{ '%.4f'|format(lit.estimate.worst_case_cost) }} (every request is checked against the spending cap ${{ '%.2f'|format(lit.estimate.cost_limit) }} per run, ${{ '%.2f'|format(lit.settings.max_cost_usd_per_day) }} per day; prices: {{ lit.settings.price_source }}). Actual cost is usually lower.</li>
+              <li><strong>Data sharing:</strong> this sends {{ lit.shared_data }} to Anthropic's API. Only continue if you are permitted to share them.</li>
+            {% else %}
+              <li><strong>Cost:</strong> none (no paid service is used).</li>
+            {% endif %}
+          </ul>
+          {% if lit.live and not lit.estimate.fits %}<p class="problems">The plan could exceed the configured limits; select fewer samples first.</p>{% endif %}
+          <form method="post" action="{{ url_for('literature_analyze') }}">
+            <input type="hidden" name="token" value="{{ lit.token }}">
+            <input type="hidden" name="confirm" value="1">
+            {% if lit.live %}
+              <label><span><input type="checkbox" name="acknowledge"> I understand this uses the Anthropic API and may incur charges up to the cap above.</span></label>
+              {% if lit.settings.access_code_set %}<label>Access code <input type="text" name="access_code" autocomplete="off"></label>{% endif %}
+            {% endif %}
+            <button type="submit">{% if lit.live %}Run paid analysis{% else %}Run offline demonstration{% endif %}</button>
+          </form>
+        </div>
+      {% else %}
+        <form method="post" action="{{ url_for('literature_analyze') }}">
+          <input type="hidden" name="token" value="{{ lit.token }}">
+          <button type="submit">{% if lit.stage in ['analyzed', 'applied'] %}Run the analysis again{% else %}Analyze Literature with Claude AI{% endif %}</button>
+          <span class="help">The next screen shows the estimated tokens, cost, and data sharing before anything is sent.</span>
+        </form>
+      {% endif %}
+    {% endif %}
+  {% endif %}
+
+  {% if lit.stage == 'running' %}
+    <p><strong>Running:</strong> {{ lit.run.progress }}. This page refreshes every few seconds.</p>
+    <form method="post" action="{{ url_for('literature_cancel') }}">
+      <input type="hidden" name="token" value="{{ lit.token }}">
+      <button type="submit" class="secondary">Stop after the current request</button>
+    </form>
+  {% endif %}
+
+  {% if lit.stage in ['analyzed', 'applied'] %}
+    <h3>C. Review proposed metadata</h3>
+    <div class="summary-grid">
+      <p class="stat"><strong>Run status:</strong> {{ lit.run.state }}</p>
+      <p class="stat"><strong>Proposals:</strong> {{ lit.facts|length }} <span class="detail">{{ lit.approvable_count }} approvable</span></p>
+      {% for label, value in lit.usage.items() %}{% if value != '' %}<p class="stat"><strong>{{ label }}:</strong> {{ value }}</p>{% endif %}{% endfor %}
+    </div>
+    {% if lit.run.messages %}<ul class="warnings">{% for item in lit.run.messages %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
+    <p class="note">Status comes from deterministic checks of the quoted text, not from the model's confidence. Only "Directly stated" or table-supported evidence that adds information can be approved. A second model check (when run) can only lower a status; two model answers agreeing are not independent verification.</p>
+    {% if lit.facts %}
+      <form method="post" action="{{ url_for('literature_apply') }}">
+        <input type="hidden" name="token" value="{{ lit.token }}">
+        <div class="scroll"><table class="review-table">
+          <thead><tr><th>Sample</th><th>Field</th><th>Original</th><th>Proposed</th><th>Evidence</th><th>Strength</th><th>Review</th></tr></thead>
+          <tbody>{% for fact in lit.facts %}<tr class="{% if fact.approvable %}approvable{% else %}not-approvable{% endif %}">
+            <td>{{ fact.sample }}</td><td>{{ fact.field }}</td><td>{{ fact.original }}</td><td><strong>{{ fact.proposed }}</strong></td>
+            <td><details><summary>“{{ fact.quote[:90] }}{% if fact.quote|length > 90 %}…{% endif %}”</summary>
+              <p class="help">“{{ fact.quote }}”<br>{{ fact.article }} · {{ fact.section or 'section unknown' }} · passage {{ fact.passage }}{% if fact.url %} · <a href="{{ fact.url }}" rel="noopener noreferrer" target="_blank">open publication</a>{% endif %}<br>Link: {{ fact.linkage }}<br>Model summary: {{ fact.reasoning }}</p></details></td>
+            <td><span class="badge {% if fact.approvable %}completed{% elif fact.status in ['Unsupported', 'Contradictory'] %}needs{% else %}limited{% endif %}">{{ fact.status }}</span><br><span class="help">{{ fact.comparison }}{% if fact.second_stage %} · second check: {{ fact.second_stage }}{% endif %}</span>{% if fact.notes %}<br><span class="help">{{ fact.notes }}</span>{% endif %}</td>
+            <td>{% if fact.approvable %}
+                <label><span><input type="radio" name="review_{{ fact.id }}" value="approve" {% if fact.decision == 'approve' %}checked{% endif %}> Approve</span></label>
+                <label><span><input type="radio" name="review_{{ fact.id }}" value="reject" {% if fact.decision == 'reject' %}checked{% endif %}> Reject</span></label>
+                <label><span><input type="radio" name="review_{{ fact.id }}" value="unresolved" {% if fact.decision == 'unresolved' %}checked{% endif %}> Leave unresolved</span></label>
+              {% else %}<span class="note">Cannot be approved</span>{% endif %}</td>
+          </tr>{% endfor %}</tbody>
+        </table></div>
+        <button type="submit">Save decisions and apply approved changes</button>
+        <p class="note">Approved places are resolved with GeoNames when it is configured (approximate place coordinates, never exact specimen coordinates). Only date and distance screening is recomputed from the existing genetic distances; sequences are not realigned.</p>
+      </form>
+    {% else %}
+      <p class="unavailable">No candidate metadata was proposed. Insufficient evidence is an acceptable answer.</p>
+    {% endif %}
+    {% if lit.insufficient %}<p class="note"><strong>Reported as insufficient evidence:</strong> {% for item in lit.insufficient %}{{ item.Sample_ID }} ({{ item.Article_ID }}){% if not loop.last %}, {% endif %}{% endfor %}</p>{% endif %}
+    {% if lit.context %}
+      <details>
+        <summary>Surveillance context from the publications ({{ lit.context|length }})</summary>
+        <p class="note">What the articles say about detections, trends, sites, clusters, and limitations. These are the authors' statements, labeled by type; they are not independently confirmed events and do not change any calculation.</p>
+        <div class="scroll"><table><thead><tr><th>Category</th><th>Statement</th><th>Label</th><th>Evidence</th><th>Citation</th></tr></thead>
+          <tbody>{% for item in lit.context %}<tr><td>{{ item.Category }}</td><td>{{ item.Statement }}</td><td>{{ item.Label }}</td><td>“{{ item.Evidence_Quote }}”<br><span class="help">{{ item.Check_Notes }}</span></td><td>{{ item.Article_ID }}<br><span class="help">{{ item.Article_Title }}</span></td></tr>{% endfor %}</tbody></table></div>
+      </details>
+    {% endif %}
+  {% endif %}
+
+  {% if lit.applied %}
+    <h3>D. Original versus enriched metadata</h3>
+    {% if lit.applied.summary %}
+      <div class="scroll"><table><thead><tr><th>Screening result (individual sequences)</th><th>Original metadata</th><th>Enriched metadata</th></tr></thead>
+        <tbody>{% for label, pair in lit.applied.summary.items() %}<tr><td>{{ label }}</td><td>{{ pair[0] }}</td><td>{{ pair[1] }}</td></tr>{% endfor %}</tbody></table></div>
+      <p class="note">A pair that newly meets the screening criteria is a lead for review, not confirmed transmission; approximate place coordinates and name matches are less precise than measured collection coordinates.</p>
+      {% if lit.applied.changed %}
+        <details open><summary>Pairs whose values changed ({{ lit.applied.changed_total }})</summary>
+          <div class="scroll"><table><thead><tr><th>Pair</th><th>Days apart</th><th>Km apart</th><th>Same place name</th><th>Meets criteria</th><th>Change</th><th>Why</th></tr></thead>
+            <tbody>{% for row in lit.applied.changed %}<tr><td>{{ row.Sample_ID_1 }} – {{ row.Sample_ID_2 }}</td><td>{{ row.Days_Apart_Before or '—' }} → {{ row.Days_Apart_After or '—' }}</td><td>{{ row.Km_Apart_Before or '—' }} → {{ row.Km_Apart_After or '—' }}</td><td>{{ row.Same_Location_Before or '—' }} → {{ row.Same_Location_After or '—' }}</td><td>{{ row.Meets_Criteria_Before }} → {{ row.Meets_Criteria_After }}</td><td>{{ row.Change }}</td><td>{{ row.Reason }}</td></tr>{% endfor %}</tbody></table></div>
+          {% if lit.applied.changed_total > lit.applied.changed|length %}<p class="note">Showing {{ lit.applied.changed|length }} rows; download the CSV for all.</p>{% endif %}
+        </details>
+      {% endif %}
+    {% else %}
+      <p class="note">No individual-sequence distances were available, so no screening result was recomputed. Download the enriched metadata to rerun the full analysis with it.</p>
+    {% endif %}
+    <div class="scroll"><table><thead><tr><th>Geographic precision</th><th>Samples before</th><th>Samples after</th></tr></thead>
+      <tbody>{% for label in lit.applied.precision %}<tr><td>{{ label }}</td><td>{{ lit.applied.before.get(label, 0) }}</td><td>{{ lit.applied.after.get(label, 0) }}</td></tr>{% endfor %}</tbody></table></div>
+    {% if lit.applied.log %}
+      <details><summary>What was applied ({{ lit.applied.log|length }})</summary>
+        <ul class="notes">{% for item in lit.applied.log %}<li>{{ item.Sample_ID }} · {{ item.Field }} = {{ item.Value }}: {{ item.Outcome }}</li>{% endfor %}</ul>
+      </details>
+    {% else %}
+      <p class="note">No proposal was approved, so the metadata and results are unchanged.</p>
+    {% endif %}
+  {% endif %}
+
+  {% if lit.download_id and lit.files %}
+    <p class="section-downloads"><strong>Evidence downloads:</strong> {% for name in lit.files %}<a href="{{ url_for('result_download', download_id=lit.download_id, filename=name) }}">{{ name }}</a>{% if not loop.last %} · {% endif %}{% endfor %}</p>
+  {% endif %}
+
+  <h3>Uncertainty and limitations</h3>
+  <ul class="notes">
+    <li>A publication being linked to a sample does not mean the article describes that sample's collection site.</li>
+    <li>Model output is checked for exact quotations and for the sample being named, but a quotation can still be misread; every change needs a person's approval.</li>
+    <li>No numerical confidence is shown: model judgments are not calibrated probabilities.</li>
+    <li>City-level GeoNames coordinates are approximate place locations, not specimen coordinates; state-level and county-level areas stay too coarse for the distance cutoff.</li>
+    <li>Date ranges are kept as ranges and do not change exact-day comparisons.</li>
+    <li>Statements about increases, clusters, or spread come from the publications and are labeled; this tool does not detect outbreaks.</li>
+  </ul>
+</section>

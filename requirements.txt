@@ -6,3 +6,5 @@ biopython>=1.83,<2.0
 requests>=2.31,<3.0
 gunicorn>=22.0,<24.0
 matplotlib>=3.8,<4.0
+# Official Anthropic SDK for the optional, disabled-by-default AI literature enrichment.
+anthropic>=2.3,<3.0
