@@ -705,7 +705,7 @@ class LocalModelProviderTest(unittest.TestCase):
 
 class ConfigurationTest(unittest.TestCase):
     def test_disabled_by_default_and_never_reveals_the_key(self):
-        with patch.dict("os.environ", {"AI_ENRICHMENT_ENABLED": "", "ANTHROPIC_API_KEY": "sk-test-SECRET"},
+        with patch.dict("os.environ", {"AI_ENRICHMENT_ENABLED": "", "ANTHROPIC_API_KEY": "fake-test-key-SECRET"},
                         clear=False):
             with patch("literature.config.ENV_FILE", ROOT / "missing.env"):
                 status = ai_status()

@@ -26,7 +26,7 @@ from literature import budget as budget_module  # noqa: E402
 ROOT = Path(__file__).resolve().parents[1]
 EXAMPLE = ROOT / "examples" / "literature"
 FIRST_SEQUENCE = (EXAMPLE / "synthetic_literature_sequences.fasta").read_text(encoding="utf-8").split("\n")[1]
-SECRET = "sk-ant-test-NEVER-SHOW-THIS"
+SECRET = "fake-test-key-NEVER-SHOW-THIS"
 EMPTY = '{"facts": [], "context_statements": [], "insufficient_evidence_samples": [], "notes": ""}'
 
 

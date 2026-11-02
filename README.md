@@ -155,7 +155,10 @@ classroom data rather than actual outbreaks.
 
 This section describes the integration of the Sprint 2 individual-sequence
 pipeline with the Sprint 3 pooled-sequencing work. It is an update to those
-sprints, not Sprint 4 work.
+sprints, not Sprint 4 work. The optional Sprint 4 AI literature and metadata
+enrichment (dashboard section 9, disabled for paid requests by default) is
+documented in `SPRINT4_AI_NLP_INTEGRATION_REPORT.md`; this README will be
+updated for it after manual validation.
 
 ### Architecture
 
@@ -969,6 +972,7 @@ classroom or appropriately de-identified data on this unauthenticated prototype.
 | `genomics/` | Shared reference-based model, QC, analyses, matching, figures, orchestration (Sprint 2 + 3 integration) |
 | `genomics/file_formats.py`, `genomics/column_detection.py`, `genomics/input_inspection.py` | Guided upload: formats and VCF, flexible columns, file roles, dataset review |
 | `integrated_view.py` | Arranges integrated results into the eight dashboard sections |
+| `literature/`, `literature_view.py` | Optional Sprint 4 AI literature and metadata enrichment (see `SPRINT4_AI_NLP_INTEGRATION_REPORT.md`) |
 | `validation/check_fontenele_2021.py` | Compares the import of the paper's real Supplementary Table 2 with its reported counts |
 | `ARTICLE_METHOD_VALIDATION.md` | Method-to-implementation table for Fontenele et al. (2021) |
 | `run_integrated_analysis.py` | Command-line integrated analysis (larger processed datasets) |

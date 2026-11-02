@@ -2,6 +2,14 @@
 
 **Purpose:** Transfer working context for a biomedical informatics class coding project. This handoff was prepared from discussion, Codex-reported summaries, and screenshots. It is **not** a code audit or an assertion that every file exists in the present repository. Verify the current files before editing.
 
+## Sprint 4 update: AI literature and metadata enrichment (November 2, 2026)
+
+- **What was built:** an optional section 9 of the same dashboard (and optional workflow step 4) that finds publications linked to uploaded samples (NCBI E-utilities record links, metadata publication fields, exact identifiers in PubTator3 text), sends a few relevant passages to a replaceable extraction provider (Claude API with structured outputs; an offline mock; a documented local-model HTTP contract for a future ASU SOL model), verifies every quotation against the retrieved text, and applies only person-approved values to a derived metadata table with a before/after rescreen of dates and distances. Code: `literature/`, `literature_view.py`, `templates/_literature.html`, routes at the end of `app.py`. Full details: `SPRINT4_AI_NLP_INTEGRATION_REPORT.md`.
+- **Paid API:** disabled by default (`AI_ENRICHMENT_ENABLED`), no key in the repository or browser, explicit two-step approval with a cost estimate, per-run and per-day caps, and an access code or local-only rule for paid runs. **No live Claude request has been made**; all Claude tests use a fake client or the mock provider. Settings template: `ai_enrichment.example.env` (copy to the gitignored `.env`).
+- **Live services checked:** NCBI E-utilities and PubTator3 (free) worked for MN908947.3 → PMID 32015508 with PMC full text. GeoNames and the Docker build are still unverified.
+- **Synthetic demonstration and evaluation:** `examples/literature/` (13 invented samples, 11 invented articles, hand-written expected labels, mock responses with planted mistakes); `python validation/evaluate_literature_enrichment.py`. These numbers test the pipeline's checks, not Claude's accuracy.
+- **Tests:** 281 run; with real MAFFT 279 pass and 2 optional skip (without MAFFT 278 pass, 3 skip). The 33-check real-MAFFT end-to-end matrix still passes. Checkpoint tag before Sprint 4: `checkpoint/before-sprint4`. Commits are local on `sprint4-integration`; nothing was pushed, merged, or deployed.
+
 ## Current state after the Sprint 2 + Sprint 3 integration (November 1, 2026)
 
 This section supersedes the "not yet confirmed" items further below; the rest of the file is the original handoff, kept for history.

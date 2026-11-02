@@ -201,6 +201,17 @@ general mapping/variant-calling stage order.
 - **Tests:** 204 tests, 202 passed, 2 optional real-data tests skipped by
   default (both passed when their files were supplied).
 
+### Sprint 4 — AI literature and metadata enrichment (November 2, 2026)
+
+Sprint 4 was requested on November 2, 2026 and builds on this integration
+without changing its calculations. It adds the optional `literature/`
+package and dashboard section 9; see `SPRINT4_AI_NLP_INTEGRATION_REPORT.md`
+for the architecture, the extraction contract, cost controls, the synthetic
+evaluation, and live-versus-mocked verification. Approved literature
+locations enter the Sprint 2 date/distance rescreen only through the existing
+`enrich_pairs` / `find_related_pairs` functions and the existing geographic
+precision rules (state, county, and administrative areas stay too coarse).
+
 ## Remaining limitations
 
 - Exact PCoA needs genome-wide A/C/G/T counts, which `mmc2.xlsx` does not
