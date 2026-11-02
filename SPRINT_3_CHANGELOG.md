@@ -31,6 +31,202 @@ Sprint 2.
 
 ## Sprint 3 changes so far
 
+### November 1, 2026 — Pre-Sprint 4 full audit and corrections
+
+- **Report:** `SPRINT2_3_FULL_AUDIT.md` (architecture, file-by-file review, scientific validation, article comparison, formats, visuals, 47-entry issue register, tests, Windows instructions, manual checklist, Sprint 4 readiness). Checkpoint tag: `checkpoint/before-full-audit`.
+- **Scientific rule changes (documented and tested):** related pairs need at least 20 comparable positions; US country/state-level labels and placeholder words such as "not provided" never count as precise or same locations; placeholder dates/coordinates are missing values; mixed day-first/month-first numeric dates are rejected; reported 0% rows are set aside; VCF INFO/AF is used only for sites-only files and VCF depth equals the allele-count total; QC-excluded pooled calls are never counted as reports or non-detections; state-level pooled coordinates give no kilometre distances.
+- **Reliability and safety:** sample IDs such as `001` are kept as text; MAFFT has a 150 s timeout and works through `.bat` paths with spaces; one decompression budget per upload; malformed files no longer cause server errors; uploads are deleted after a run.
+- **Verification:** 224 tests (222 passed, 2 optional real-data tests skipped) with real MAFFT; 20 new regression tests, 19 of which fail on the pre-audit code; a 33-check end-to-end matrix with real MAFFT; real H5N1 and Fontenele baselines unchanged. GeoNames live and the Docker build were not verified.
+
+### November 1, 2026 — Guided upload, more formats, flexible metadata, and richer integrated dashboard
+
+This responds to the professor's review of the Sprint 2 + Sprint 3
+integration (more meaningful visuals, a friendlier site, more file formats,
+flexible metadata, a clearer integration, and more of Fontenele et al. 2021).
+It is still Sprint 2 + Sprint 3 work, not Sprint 4.
+
+- **Added files:** `genomics/file_formats.py` (gzip, FASTA/table/VCF/FASTQ
+  recognition, VCF-to-SNV conversion), `genomics/column_detection.py`
+  (role-specific header aliases, ambiguity, unit checks),
+  `genomics/input_inspection.py` (file roles with evidence, dataset review,
+  analysis plan, standardized copies), `validation/check_fontenele_2021.py`,
+  `ARTICLE_METHOD_VALIDATION.md`, and the tests `test_input_detection.py`,
+  `test_guided_workflow.py`, and `test_optional_fontenele_table.py`.
+- **Changed files:** `app.py` adds the `/review` and `/run` routes and a
+  30-minute temporary staging folder; the named-field `POST /` still works.
+  `templates/index.html` is a three-step page (upload, review, results) with a
+  prominent Run Integrated Example card, collapsible advanced settings, and one
+  layout for all eight sections. `integrated_view.py` gives every section a
+  purpose, statistics ("Not available" instead of 0), figures, tables,
+  limitations, and downloads, and puts the integrated sections first.
+  `genomics/figures.py` adds 13 figures (metadata completeness, variant-overlap
+  matrix, cross-source positions, sampling timeline, frequency changes,
+  missing observations, geographic precision, QC outcomes, depth distribution,
+  callable positions, genetic distances, relationship network) and improves
+  the genome-position and PCoA figures. `genomics/integrated_analysis.py`
+  records per-sample cross-source evidence, which analyses ran, and how the
+  sources were connected. `genomics/temporal_analysis.py` computes trends with
+  grouped sums (the real 7,973-record table went from 106 s to about 8 s; same
+  values). `validate_inputs.py` and `run_pipeline.py` relax individual
+  metadata requirements (see below). `wastewater/processed_snv.py` reads SNV
+  VCF files. `run_integrated_analysis.py` accepts `.gz` inputs and draws the
+  Sprint 2 distance figure. `geocode_locations.py` labels a blank location
+  "No location given".
+- **Removed files:** None.
+- **Scientific rule changes (documented and tested):** individual metadata now
+  requires only `Accession` and `Pathogen`; missing dates, locations, or hosts
+  are notes, not errors, and disable only the affected screening. A year-only
+  or year-month date is no longer turned into a specific day. Units are never
+  rescaled automatically. VCF frequencies are taken only from allele-specific
+  values; genotype-only entries are not converted to frequencies.
+- **Before:** one long form with eight separate file fields; exact column
+  names; eight sections with few figures; pooled-only or individual-only
+  sections were mostly blank.
+- **After:** files are uploaded together, recognized by content, and reviewed
+  with stated evidence before running; 21 figures across the sections; the
+  overview explains how the two sources were connected and which analyses ran.
+- **Verification:** 204 tests run, 202 pass, 2 optional real-data tests skipped
+  in the default run (both passed when their real files were supplied). Real
+  MAFFT (Windows, `C:\Tools\mafft-win`) reproduced the synthetic example's
+  categories and the real H5N1 baseline (45 comparisons, 22 candidate pairs, 0
+  strict clusters). The real Supplementary Table 2 matched the paper's record,
+  sample, state, per-sample, and D614G counts exactly. GeoNames and the Docker
+  build were not checked (no username; Docker daemon not running).
+
+### November 1, 2026 — Integrate Sprint 2 and Sprint 3 into one reference-based analysis
+
+- **Added files:** `genomics/` package (`references.py`, `unified_schema.py`,
+  `pooled_observations.py`, `sequence_variants.py`, `quality_control.py`,
+  `temporal_analysis.py`, `diversity_analysis.py`, `variant_matching.py`,
+  `figures.py`, `integrated_analysis.py`); `integrated_view.py`;
+  `run_integrated_analysis.py`; the synthetic paired demo in
+  `examples/integrated/`; the optional `offline_workflow/`; `tests/fixtures/`,
+  `tests/fake_mafft.py`, and seven new test files;
+  `INTEGRATION_IMPLEMENTATION_LOG.md`.
+- **Changed files:** `app.py` and `templates/index.html` now form one dashboard
+  for individual, reference, and pooled inputs (the Sprint 3 pages remain
+  linked). `wastewater/processed_snv.py` keeps the paper's annotation columns
+  and reads iVar TSV files. `run_pipeline.py` can hand its validated sample
+  table to the integrated analysis. `align_sequences.py` factors out the
+  unchanged MAFFT command. `validate_inputs.py` and
+  `compare_genetic_distances.py` accept IUPAC ambiguity codes and treat them
+  like N. `system_diagnostics.py` reuses its MAFFT version lookup.
+  `Dockerfile` copies the new package; `requirements.txt` lists numpy.
+  Two regression tests now use committed synthetic fixtures; the real-NCBI
+  check became an optional, clearly skipped test.
+- **Removed files:** None. The Sprint 3 branch's generated `tmp/pdfs/` files
+  were left out of the merge.
+- **Before:** Sprint 2 compared individual sequences pairwise on a
+  sample-to-sample alignment; Sprint 3 summarized pooled SNVs and processed
+  feature tables on separate pages. The three data formats were unrelated.
+- **After:** Both evidence types share one reference-coordinate variant
+  table. Individual sequences receive true 1-based reference positions;
+  pooled records are checked with the Fontenele et al. (2021) settings where
+  the data allow; trends, a Yue–Clayton PCoA, and a cross-source comparison
+  (shared, source-specific, unresolved, incomparable) appear on one dashboard
+  with the Sprint 2 cluster screening as one section.
+- **Why:** The instructor's feedback was that the Sprint 3 addition was not
+  integrated with Sprint 2 and should use more of the article's methods.
+- **How it works:** See the README section "Integrated analysis (Sprint 2 and
+  Sprint 3)" and `INTEGRATION_IMPLEMENTATION_LOG.md`.
+- **Verification:** 164 tests run, 162 pass, 2 skipped (real MAFFT not
+  installed; optional real-NCBI data). MAFFT and GeoNames are mocked in tests.
+- **Limits or next steps:** Not yet checked with real MAFFT, a Docker build,
+  or the real `mmc2.xlsx`. The exact PCoA needs per-position A/C/G/T counts.
+
+### October 19, 2026 — Complete local setup README refresh
+
+- **Changed files:** `README.md` now begins with Windows setup and repeat-run
+  commands, with PowerShell and macOS/Linux alternatives. It documents all
+  current pages, inputs, optional MAFFT/GeoNames setup, diagnostics, downloads,
+  local troubleshooting, and optional Docker/Render hosting. The AI tools
+  acknowledgment remains at the end.
+- **Accuracy updates:** The test count is 110 on Python 3.11.9. Full-suite
+  regression fixtures excluded from GitHub are listed separately from the
+  portable measurement-page tests. Stale deployment and Python-version claims
+  were removed.
+- **Verification:** All five documented local GET pages returned HTTP 200
+  through the Flask test client on Python 3.11. No analysis logic changed.
+
+### October 19, 2026 — Wastewater Data Analysis for processed feature tables
+
+- **Changed files:** `app.py` exposes `/wastewater-data` and its organized CSV
+  download using the existing environmental-measurement module and template.
+  `templates/index.html` links to the requested page. Earlier draft routes and
+  files are retained. `environmental_analysis.py` now accepts missing optional
+  dates, locations, frequencies, and coverage, and counts every listed feature.
+  `templates/environmental.html` displays availability messages, sample/date/
+  location counts, and descriptive charts. README and focused tests document
+  and verify this first table-summary addition. `.dockerignore` keeps its
+  bundled synthetic CSV available in the Docker image.
+- **Missing values:** Supplied zeros remain zero. Missing numerical values
+  remain blank in tables and CSV downloads, and all-missing dated measurements
+  remain missing in summaries and plots. Frequency and coverage are never
+  derived from counts.
+- **Scope:** Descriptive pandas operations on already processed tables only.
+  Sprint 2 validation, alignment, geocoding, genetic comparison, temporal/
+  geographic rules, and cluster detection are unchanged.
+- **Verification:** All 110 automated tests passed on Python 3.11.9, including
+  uploads in both formats, missing measurements, supplied zeros, summary
+  calculations, PNG charts, temporary downloads, and Sprint 2 regressions.
+  Hosted deployment was not performed during this change.
+
+### October 19, 2026 — Processed wastewater SNV surveillance mode
+
+- **Added files:** `wastewater/__init__.py` and `wastewater/processed_snv.py`
+  load, validate, and summarize processed calls separately from individual
+  genomes. `templates/wastewater.html` presents the upload and results page.
+  `tests/test_wastewater.py` covers published-column mapping, validation,
+  metadata joins, counts, the webpage, and CSV download.
+- **Changed files:** `app.py` adds `/wastewater` and a brief in-memory CSV
+  download. `templates/index.html` links to the new mode. `Dockerfile`
+  includes the new Python package. `README.md` documents the exact published
+  columns, mapping, scientific limits, and local/hosted usage.
+- **Before (Sprint 2):** The site screened comparable individual pathogen
+  sequences for potential outbreak clusters. Pooled wastewater SNV calls were
+  not an accepted input.
+- **After (Sprint 3):** A separate page accepts Fontenele et al. Supplementary
+  Table 2 or standardized processed SNV calls and summarizes observed variants.
+  It retains and reports repeated keys instead of treating a missing call as
+  confirmed mutation absence.
+- **Source:** Fontenele et al. (2021), Water Research, Supplementary Table 2
+  (`mmc2.xlsx`), read directly from the publisher's published file. Table 3
+  (`mmc3.xlsx`) is a novel-SNV subset without the full frequency/depth fields.
+- **Scope:** No FASTQ processing, BWA, iVar, Freyja, lineage assignment, or
+  wastewater clustering. Existing Sprint 2 calculations and routes remain.
+- **Verification:** The published workbook loaded as 7,973 retained records
+  across 52 samples, with three repeated keys reported. Seven focused loader
+  tests pass; full Flask/regression tests could not run in this workspace
+  because the test interpreter lacks Flask/Biopython and dependency
+  installation was not approved. They remain to be run locally or in Docker.
+
+### October 19, 2026 — Environmental processed-measurement exploration
+
+- **Added files:** `environmental_analysis.py` loads and validates processed
+  CSV/XLSX measurements and builds sample, time, location, missing-data, and
+  quality summaries. `templates/environmental.html` provides a separate upload,
+  example, chart, and results page. `examples/synthetic_environmental_measurements.csv`
+  contains clearly labeled invented data. `tests/test_environmental_analysis.py`
+  covers file formats, validation, summaries, charts, and the Flask download.
+- **Changed files:** `app.py` adds `/environmental` and its short-lived
+  organized-CSV download. `templates/index.html` links to the separate mode.
+  `requirements.txt` adds Matplotlib for descriptive plots, and `Dockerfile`
+  includes the analysis module. `README.md` describes the schema, safeguards,
+  synthetic example, and local/hosted usage.
+- **Before:** The Sprint 2 pathogen pipeline handled FASTA plus metadata, while
+  environmental processed measurements had no dedicated analysis page.
+- **After:** Visitors can explore sample-level processed measurements by
+  feature, collection date, and location, including missing-data and quality
+  summaries. Results are descriptive only and do not establish a diagnosis,
+  transmission, or outbreak.
+- **Scope:** No raw reads, sequence alignment, Sprint 2 calculation changes,
+  statistical significance testing, or diagnostic/outbreak classification.
+- **Verification:** All 105 automated tests passed, including CSV and XLSX
+  loading, validation, summaries, chart generation, Flask results, CSV download,
+  and the existing Sprint 2 and other Sprint 3 regression tests. The tests use
+  the installed Python 3.11 environment; hosted Render deployment was not
+  performed from this workspace.
+
 ### October 19, 2026 — On-demand MAFFT and GeoNames status check
 
 - **Added files:** `system_diagnostics.py` runs a small real MAFFT alignment of

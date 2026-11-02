@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from compare_genetic_distances import read_pair_table
 from geocode_locations import is_state_only_location
 from validate_inputs import METADATA_EXTENSIONS, load_and_validate_metadata
 
@@ -49,6 +50,9 @@ def enrich_pairs(metadata, pairs):
 
     enriched = pairs.copy()
     samples = metadata.copy()
+    for column in ["Latitude", "Longitude", "Location_Name"]:
+        if column not in samples.columns:
+            samples[column] = pd.NA  # coordinates and places are optional
     samples["Sample_ID"] = samples["Sample_ID"].astype("string").str.strip()
     samples = samples.set_index("Sample_ID")
 
@@ -84,7 +88,9 @@ def enrich_pairs(metadata, pairs):
         date_2 = sample_2["Collection_Date"]
 
         if pd.notna(date_1) and pd.notna(date_2):
-            difference = date_1 - date_2
+            # Compare calendar days so a time of day cannot change the result
+            # or make it depend on which sample is listed first.
+            difference = pd.Timestamp(date_1).normalize() - pd.Timestamp(date_2).normalize()
             days_apart.append(abs(difference.days))
         else:
             days_apart.append(None)
@@ -181,7 +187,7 @@ def run_stage(metadata, pairs_path, output_path):
     """Load pairwise results, enrich them with metadata, and save a new CSV."""
 
     try:
-        pairs = pd.read_csv(pairs_path)
+        pairs = read_pair_table(pairs_path)
     except Exception as error:
         print(f"ERROR: Could not read the pairwise CSV: {error}", file=sys.stderr)
         return 2

@@ -1,0 +1,14 @@
+Accession,Pathogen,Gene_Segment,Collection_Date,Location_Name,Latitude,Longitude,Publication_ID,BioProject,Host_Source
+SYNLIT_01,Synthetic example pathogen,Segment 1,2026-03-03,"USA: Arizona",,,SYNPUB-001,,Synthetic source
+SYNLIT_02,Synthetic example pathogen,Segment 1,2026-03-04,"USA: Arizona",,,SYNPUB-002,,Synthetic source
+SYNLIT_03,Synthetic example pathogen,Segment 1,2026-03-06,"USA: Arizona",,,SYNPUB-003,,Synthetic source
+SYNLIT_04,Synthetic example pathogen,Segment 1,2026-03-07,"USA: Arizona",,,SYNPUB-003,,Synthetic source
+SYNLIT_05,Synthetic example pathogen,Segment 1,2026-03-02,"USA: Arizona",,,SYNPUB-004,,Synthetic source
+SYNLIT_06,Synthetic example pathogen,Segment 1,2026-03-09,"USA: Arizona",,,SYNPUB-005,,Synthetic source
+SYNLIT_07,Synthetic example pathogen,Segment 1,2026-03-10,"USA: Arizona",,,,,Synthetic source
+SYNLIT_08,Synthetic example pathogen,Segment 1,2026-03-05,"USA: Arizona",,,,SYNPRJ-08,Synthetic source
+SYNLIT_09,Synthetic example pathogen,Segment 1,,"USA: Arizona",,,SYNPUB-001,,Synthetic source
+SYNLIT_10,Synthetic example pathogen,Segment 1,,"USA: Arizona",,,SYNPUB-009,,Synthetic source
+SYNLIT_11,Synthetic example pathogen,Segment 1,2026-03-02,"USA: Arizona",,,SYNPUB-008,,Synthetic source
+SYNLIT_12,Synthetic example pathogen,Segment 1,2026-03-12,"USA: Arizona",,,SYNPUB-010,,Synthetic source
+SYNLIT_13,Synthetic example pathogen,Segment 1,2026-03-11,"USA",,,,,Synthetic source

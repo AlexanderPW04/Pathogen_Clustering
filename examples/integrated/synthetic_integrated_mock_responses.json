@@ -1,0 +1,162 @@
+{
+  "_about": "SYNTHETIC mock model responses for the integrated example's offline Sprint 4 demonstration. Sample-collection facts only; one planted error (WW_S1, a fabricated quotation). Not Claude output.",
+  "extraction": {
+    "SYNPUB-INT-1": {
+      "facts": [
+        {
+          "Sample_ID": "IND_D",
+          "Field": "Location",
+          "Value": "Tempe, Arizona",
+          "Location_Role": "Sample collection site",
+          "Geographic_Level": "City or town",
+          "Passage_ID": "SYNPUB-INT-1#p2",
+          "Evidence_Quote": "Sequence IND_D was obtained from a respiratory specimen collected in Tempe, Arizona on 23 March 2026",
+          "Evidence_Type": "Directly stated",
+          "Ambiguity": "",
+          "Reasoning_Summary": "The sentence names the sequence and the city where the specimen was collected."
+        },
+        {
+          "Sample_ID": "IND_D",
+          "Field": "Collection_Date",
+          "Value": "2026-03-23",
+          "Location_Role": "Not a location",
+          "Geographic_Level": "Not geographic",
+          "Passage_ID": "SYNPUB-INT-1#p2",
+          "Evidence_Quote": "Sequence IND_D was obtained from a respiratory specimen collected in Tempe, Arizona on 23 March 2026",
+          "Evidence_Type": "Directly stated",
+          "Ambiguity": "",
+          "Reasoning_Summary": "The collection date matches the metadata."
+        }
+      ],
+      "insufficient_evidence_samples": [],
+      "notes": ""
+    },
+    "SYNPUB-INT-2": {
+      "facts": [
+        {
+          "Sample_ID": "WW_N1",
+          "Field": "Coordinates",
+          "Value": "33.4150, -111.9100",
+          "Location_Role": "Sample collection site",
+          "Geographic_Level": "Coordinates",
+          "Passage_ID": "SYNPUB-INT-2#p2",
+          "Evidence_Quote": "WW_N1 | North Synthetic Sewershed influent | 33.4150 | -111.9100",
+          "Evidence_Type": "Sample-to-site table",
+          "Ambiguity": "",
+          "Reasoning_Summary": "The sampling-site table pairs this sample with site coordinates."
+        },
+        {
+          "Sample_ID": "WW_N2",
+          "Field": "Coordinates",
+          "Value": "33.4150, -111.9100",
+          "Location_Role": "Sample collection site",
+          "Geographic_Level": "Coordinates",
+          "Passage_ID": "SYNPUB-INT-2#p2",
+          "Evidence_Quote": "WW_N2 | North Synthetic Sewershed influent | 33.4150 | -111.9100",
+          "Evidence_Type": "Sample-to-site table",
+          "Ambiguity": "",
+          "Reasoning_Summary": "The sampling-site table pairs this sample with site coordinates."
+        },
+        {
+          "Sample_ID": "WW_N3",
+          "Field": "Coordinates",
+          "Value": "33.4150, -111.9100",
+          "Location_Role": "Sample collection site",
+          "Geographic_Level": "Coordinates",
+          "Passage_ID": "SYNPUB-INT-2#p2",
+          "Evidence_Quote": "WW_N3 | North Synthetic Sewershed influent | 33.4150 | -111.9100",
+          "Evidence_Type": "Sample-to-site table",
+          "Ambiguity": "",
+          "Reasoning_Summary": "The sampling-site table pairs this sample with site coordinates."
+        },
+        {
+          "Sample_ID": "WW_N4",
+          "Field": "Coordinates",
+          "Value": "33.4150, -111.9100",
+          "Location_Role": "Sample collection site",
+          "Geographic_Level": "Coordinates",
+          "Passage_ID": "SYNPUB-INT-2#p2",
+          "Evidence_Quote": "WW_N4 | North Synthetic Sewershed influent | 33.4150 | -111.9100",
+          "Evidence_Type": "Sample-to-site table",
+          "Ambiguity": "",
+          "Reasoning_Summary": "The sampling-site table pairs this sample with site coordinates."
+        },
+        {
+          "Sample_ID": "WW_S1",
+          "Field": "Coordinates",
+          "Value": "33.3800, -111.9400",
+          "Location_Role": "Sample collection site",
+          "Geographic_Level": "Coordinates",
+          "Passage_ID": "SYNPUB-INT-2#p2",
+          "Evidence_Quote": "WW_S1 | South Synthetic Sewershed influent | 33.3800 | -111.9400",
+          "Evidence_Type": "Sample-to-site table",
+          "Ambiguity": "",
+          "Reasoning_Summary": "The sampling-site table pairs this sample with site coordinates."
+        },
+        {
+          "Sample_ID": "WW_S2",
+          "Field": "Coordinates",
+          "Value": "33.3800, -111.9400",
+          "Location_Role": "Sample collection site",
+          "Geographic_Level": "Coordinates",
+          "Passage_ID": "SYNPUB-INT-2#p2",
+          "Evidence_Quote": "WW_S2 | South Synthetic Sewershed influent | 33.3800 | -111.9400",
+          "Evidence_Type": "Sample-to-site table",
+          "Ambiguity": "",
+          "Reasoning_Summary": "The sampling-site table pairs this sample with site coordinates."
+        },
+        {
+          "Sample_ID": "WW_S3",
+          "Field": "Coordinates",
+          "Value": "33.3800, -111.9400",
+          "Location_Role": "Sample collection site",
+          "Geographic_Level": "Coordinates",
+          "Passage_ID": "SYNPUB-INT-2#p2",
+          "Evidence_Quote": "WW_S3 | South Synthetic Sewershed influent | 33.3800 | -111.9400",
+          "Evidence_Type": "Sample-to-site table",
+          "Ambiguity": "",
+          "Reasoning_Summary": "The sampling-site table pairs this sample with site coordinates."
+        },
+        {
+          "Sample_ID": "WW_S4",
+          "Field": "Coordinates",
+          "Value": "33.3800, -111.9400",
+          "Location_Role": "Sample collection site",
+          "Geographic_Level": "Coordinates",
+          "Passage_ID": "SYNPUB-INT-2#p2",
+          "Evidence_Quote": "WW_S4 | South Synthetic Sewershed influent | 33.3800 | -111.9400",
+          "Evidence_Type": "Sample-to-site table",
+          "Ambiguity": "",
+          "Reasoning_Summary": "The sampling-site table pairs this sample with site coordinates."
+        },
+        {
+          "Sample_ID": "WW_S1",
+          "Field": "Location",
+          "Value": "Chandler, Arizona",
+          "Location_Role": "Sample collection site",
+          "Geographic_Level": "City or town",
+          "Passage_ID": "SYNPUB-INT-2#p2",
+          "Evidence_Quote": "WW_S1 was collected in Chandler, Arizona.",
+          "Evidence_Type": "Directly stated",
+          "Ambiguity": "",
+          "Reasoning_Summary": "PLANTED ERROR: a fabricated quotation that the checks must reject."
+        },
+        {
+          "Sample_ID": "STUDY",
+          "Field": "Collection_Date_Range",
+          "Value": "2026-03-01/2026-03-24",
+          "Location_Role": "Not a location",
+          "Geographic_Level": "Not geographic",
+          "Passage_ID": "SYNPUB-INT-2#p1",
+          "Evidence_Quote": "Composite influent samples were collected weekly from two synthetic wastewater treatment plants between 1 and 24 March 2026.",
+          "Evidence_Type": "Directly stated",
+          "Ambiguity": "",
+          "Reasoning_Summary": "The study's sampling period (not assigned to any sample)."
+        }
+      ],
+      "insufficient_evidence_samples": [],
+      "notes": "Site coordinates come from the sampling-site table."
+    }
+  },
+  "association": {}
+}

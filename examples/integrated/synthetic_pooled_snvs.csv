@@ -1,0 +1,23 @@
+Sample_ID,Reference_Genome,Position,Ref,Alt,Alt_Frequency,Read_Depth,Alt_Depth,Collection_Date,Location_Name,Source_Fisher_P,Source_Gene_Feature
+WW_N1,SYNREF.1,15,T,C,0.1,140,14,2026-03-01,North Synthetic Sewershed,0.001,synthetic_gene_A
+WW_N1,SYNREF.1,30,G,T,0.05,140,7,2026-03-01,North Synthetic Sewershed,0.2,synthetic_gene_A
+WW_N1,SYNREF.1,75,G,A,0.2,140,28,2026-03-01,North Synthetic Sewershed,0.001,synthetic_gene_B
+WW_N2,SYNREF.1,15,T,C,0.25,180,45,2026-03-08,North Synthetic Sewershed,0.001,synthetic_gene_A
+WW_N2,SYNREF.1,30,G,T,0.08,180,14,2026-03-08,North Synthetic Sewershed,0.001,synthetic_gene_A
+WW_N2,SYNREF.1,75,G,A,0.18,180,32,2026-03-08,North Synthetic Sewershed,0.001,synthetic_gene_B
+WW_N3,SYNREF.1,15,T,C,0.45,220,99,2026-03-15,North Synthetic Sewershed,0.001,synthetic_gene_A
+WW_N3,SYNREF.1,75,G,A,0.22,220,48,2026-03-15,North Synthetic Sewershed,0.001,synthetic_gene_B
+WW_N4,SYNREF.1,15,T,C,0.7,260,182,2026-03-22,North Synthetic Sewershed,0.001,synthetic_gene_A
+WW_N4,SYNREF.1,30,G,T,0.12,260,31,2026-03-22,North Synthetic Sewershed,0.001,synthetic_gene_A
+WW_N4,SYNREF.1,75,G,A,0.15,260,39,2026-03-22,North Synthetic Sewershed,0.001,synthetic_gene_B
+WW_S1,SYNREF.1,42,T,A,0.3,120,36,2026-03-03,South Synthetic Sewershed,0.001,synthetic_gene_B
+WW_S1,SYNREF.1,75,G,A,0.25,120,30,2026-03-03,South Synthetic Sewershed,0.001,synthetic_gene_B
+WW_S2,SYNREF.1,15,T,C,0.05,160,8,2026-03-10,South Synthetic Sewershed,0.001,synthetic_gene_A
+WW_S2,SYNREF.1,42,T,A,0.35,160,56,2026-03-10,South Synthetic Sewershed,0.001,synthetic_gene_B
+WW_S3,SYNREF.1,15,T,C,0.1,200,20,2026-03-17,South Synthetic Sewershed,0.001,synthetic_gene_A
+WW_S3,SYNREF.1,42,T,A,0.4,200,80,2026-03-17,South Synthetic Sewershed,0.001,synthetic_gene_B
+WW_S3,SYNREF.1,75,G,A,0.3,200,60,2026-03-17,South Synthetic Sewershed,0.001,synthetic_gene_B
+WW_S4,SYNREF.1,42,T,A,0.5,240,120,2026-03-24,South Synthetic Sewershed,0.001,synthetic_gene_B
+WW_S4,SYNREF.1,75,G,A,0.28,240,67,2026-03-24,South Synthetic Sewershed,0.001,synthetic_gene_B
+WW_X1,SYNREF_B.1,15,T,C,0.4,150,60,2026-03-12,North Synthetic Sewershed,0.001,
+WW_N3,SYNREF.1,110,G,A,0.12,220,26,2026-03-15,North Synthetic Sewershed,0.001,synthetic_gene_C

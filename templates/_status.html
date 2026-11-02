@@ -1,0 +1,41 @@
+{# System status: what each external program or service is for, and what still works without it. #}
+<section id="status">
+  <h2>System status and external services</h2>
+  <p class="note">Checks run only when you press the button and are reused for five minutes. No request is sent to Claude unless you press its own check button.</p>
+  <div class="scroll"><table class="status-table">
+    <thead><tr><th>Service</th><th>What it does here</th><th>Status</th><th>If it is unavailable</th></tr></thead>
+    <tbody>
+      <tr><td><strong>MAFFT</strong><br><span class="help">program on the computer running this site</span></td>
+        <td>Aligns individual (consensus) sequences for Sprint 2 and places them on the reference genome.</td>
+        <td>{% if system_status %}<strong>MAFFT: {{ system_status.mafft.status }}</strong> — {{ system_status.mafft.message }} {% if system_status.mafft.version %}Version: {{ system_status.mafft.version }}.{% endif %}{% else %}<span class="note">Not checked yet</span>{% endif %}</td>
+        <td>Individual-sequence comparison and reference placement of individual sequences cannot run. Pooled sequencing analysis (Sprint 3) still works.</td></tr>
+      <tr><td><strong>GeoNames</strong><br><span class="help">external web service</span></td>
+        <td>Turns a place name into approximate coordinates when metadata has no coordinates (needs GEONAMES_USERNAME).</td>
+        <td>{% if system_status %}<strong>GeoNames: {{ system_status.geonames.status }}</strong> — {{ system_status.geonames.message }}{% else %}<span class="note">Not checked yet</span>{% endif %}</td>
+        <td>Places without coordinates stay unresolved; every analysis that does not need geocoding still runs.</td></tr>
+      <tr><td><strong>PubTator3 and NCBI</strong><br><span class="help">free external services</span></td>
+        <td>Find and retrieve publications linked to samples for Sprint 4.</td>
+        <td>{% if system_status and system_status.pubtator %}<strong>PubTator3: {{ system_status.pubtator.status }}</strong> — {{ system_status.pubtator.message }}{% else %}<span class="note">Not checked yet</span>{% endif %}</td>
+        <td>Sprint 4 cannot search for publications; the genomic analyses are unaffected.</td></tr>
+      <tr><td><strong>Claude API</strong><br><span class="help">external, paid, off by default</span></td>
+        <td>Reads selected publication passages in Sprint 4, only after you approve a cost estimate.</td>
+        <td>{% if system_status and system_status.ai %}<strong>Claude API configuration: {{ system_status.ai.status }}</strong> — {{ system_status.ai.message }}{% if system_status.claude_check %}<br><strong>Claude API check: {{ system_status.claude_check.status }}</strong> — {{ system_status.claude_check.message }}{% endif %}{% else %}<span class="note">Not checked yet</span>{% endif %}</td>
+        <td>The AI step of Sprint 4 is unavailable; every genomic analysis and the rest of Sprint 4 still work.</td></tr>
+    </tbody>
+  </table></div>
+  <form method="post" action="{{ url_for('system_status') }}">
+    <button type="submit" class="secondary">Check MAFFT &amp; GeoNames (and PubTator)</button>
+  </form>
+  {% if system_status and system_status.ai and system_status.ai.status == 'Configured' %}
+    <form method="post" action="{{ url_for('claude_status') }}">
+      <input type="text" name="access_code" placeholder="Access code (if required)" autocomplete="off" aria-label="Access code">
+      <button type="submit" class="secondary">Check Claude API access (token count only, no text generated)</button>
+    </form>
+  {% endif %}
+  {% if status_cached %}<p class="note">Showing a recent cached check.</p>{% endif %}
+</section>
+
+<details class="about legacy">
+  <summary>Legacy single-source pages</summary>
+  <p class="note">The original Sprint 3 pages are kept for comparison; the dashboard above covers their analyses: <a href="{{ url_for('wastewater_page') }}">Wastewater Surveillance (processed SNV summary)</a> and <a href="{{ url_for('wastewater_data_page') }}">Wastewater Data Analysis (processed measurement tables)</a>.</p>
+</details>

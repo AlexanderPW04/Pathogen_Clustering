@@ -26,12 +26,16 @@ def check_mafft():
             encoding="utf-8",
         )
         command = [mafft_path, "--auto", "--nuc", str(input_path)]
+        folder_for_command = None
         if Path(mafft_path).suffix.lower() in {".bat", ".cmd"}:
-            command = ["cmd.exe", "/c"] + command
+            # Same quoting rule as align_sequences.run_mafft: pass the input by
+            # its plain name so paths with spaces still work through cmd.exe.
+            command = ["cmd.exe", "/c", mafft_path, "--auto", "--nuc", input_path.name]
+            folder_for_command = folder
 
         try:
             result = subprocess.run(
-                command, capture_output=True, text=True, timeout=5
+                command, capture_output=True, text=True, timeout=5, cwd=folder_for_command
             )
         except subprocess.TimeoutExpired:
             return {"status": "Check failed", "message": "The MAFFT test timed out."}
@@ -57,7 +61,16 @@ def check_mafft():
             "message": "MAFFT did not return both sequences at equal aligned lengths.",
         }
 
-    version = None
+    return {
+        "status": "Operational",
+        "message": "Two synthetic sequences aligned successfully to equal lengths.",
+        "version": read_mafft_version(mafft_path),
+    }
+
+
+def read_mafft_version(mafft_path):
+    """Return a version such as 'v7.505' when MAFFT reports one clearly."""
+
     version_command = [mafft_path, "--version"]
     if Path(mafft_path).suffix.lower() in {".bat", ".cmd"}:
         version_command = ["cmd.exe", "/c"] + version_command
@@ -73,13 +86,7 @@ def check_mafft():
                     and any(character.isdigit() for character in candidate)
                     and all(character in "v0123456789." for character in candidate)
                 ):
-                    version = candidate
-                    break
+                    return candidate
     except (OSError, subprocess.TimeoutExpired):
-        pass  # Alignment succeeded; an unavailable version is not a failure.
-
-    return {
-        "status": "Operational",
-        "message": "Two synthetic sequences aligned successfully to equal lengths.",
-        "version": version,
-    }
+        pass  # An unavailable version is not a failure.
+    return None

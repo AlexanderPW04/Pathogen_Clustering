@@ -1,0 +1,20 @@
+>NCBI001.1 Example virus sample 1
+AACCGGTTAACCGGTTAACC
+>NCBI002.1 Example virus sample 2
+AACCGGTTAACCGGTTAACA
+>NCBI003.2 Example virus sample 3
+AACCGGTTAACCGGTTAACT
+>NCBI004.1 Example virus sample 4
+TTGGCCAATTGGCCAATTGG
+>NCBI005.3 Example virus sample 5
+TTGGCCAATTGGCCAATTGA
+>NCBI006.1 Example virus control 1
+GGGGGGGGGGGGGGGGGGGG
+>NCBI007.1 Example virus control 2
+CCCCCCCCCCCCCCCCCCCC
+>NCBI008.2 Example virus distant-date control
+AACCGGTTAACCGGTTAACC
+>NCBI009.1 Example virus distant-location control
+TTGGCCAATTGGCCAATTGG
+>NCBI010.4 Example virus control 3
+ATATATATATATATATATAT

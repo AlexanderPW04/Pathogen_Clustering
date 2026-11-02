@@ -24,6 +24,7 @@ tests/
 !examples/
 !examples/synthetic_sequences.fasta
 !examples/synthetic_metadata.csv
+!examples/synthetic_environmental_measurements.csv
 README.md
 SPRINT_3_CHANGELOG.md
 PYTHON_LINE_BY_LINE_GUIDE.md

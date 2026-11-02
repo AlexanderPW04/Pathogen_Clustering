@@ -3,255 +3,702 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Outbreak Cluster Detector</title>
+  <title>Integrated Genomic Surveillance</title>
+  {% if refresh_url %}<meta http-equiv="refresh" content="3;url={{ refresh_url }}">{% endif %}
   <style>
-    body {
-      background: #f3f5f7;
-      color: #1f2937;
-      font-family: Arial, sans-serif;
-      line-height: 1.5;
-      margin: 0;
+    :root {
+      --page: #f3f5f7;
+      --surface: #ffffff;
+      --surface-alt: #edf4f8;
+      --border: #d8dee6;
+      --ink: #1f2937;
+      --ink-muted: #52606d;
+      --heading: #173f5f;
+      --accent: #1f5f8b;
+      --accent-soft: #e3eef6;
+      --individual: #1baf7a;
+      --pooled: #2a78d6;
+      --warn-bg: #fff8e6;
+      --warn-border: #e6c77a;
+      --error-bg: #fff1f1;
+      --error-border: #cf5b5b;
+      --error-ink: #7f1d1d;
+      --good-ink: #0f5d3a;
+      --good-bg: #e7f6ee;
+      --sprint4: #8a4fbf;
     }
-    main {
-      margin: 2rem auto;
-      max-width: 760px;
-      padding: 0 1rem;
-    }
-    section {
-      background: white;
-      border: 1px solid #d8dee6;
-      border-radius: 8px;
-      margin-bottom: 1rem;
-      padding: 1.25rem;
-    }
-    h1, h2, h3 { color: #173f5f; }
-    h1 { margin-bottom: 0.25rem; }
-    form { display: grid; gap: 1rem; }
-    fieldset {
-      border: 1px solid #c6d2dc;
-      border-radius: 6px;
-      display: grid;
-      gap: 0.5rem;
-      margin: 0;
-      padding: 1rem;
-    }
-    legend {
-      color: #173f5f;
-      font-size: 1.05rem;
-      font-weight: bold;
-      padding: 0 0.35rem;
-    }
-    label { display: grid; font-weight: bold; gap: 0.35rem; }
-    input, button {
-      box-sizing: border-box;
-      font: inherit;
-      padding: 0.65rem;
-      width: 100%;
-    }
+    * { box-sizing: border-box; }
+    body { background: var(--page); color: var(--ink); font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; line-height: 1.5; margin: 0; }
+    main { margin: 1.25rem auto 2rem; max-width: 1120px; padding: 0 1rem; }
+    header.page { margin-bottom: 1rem; }
+    h1, h2, h3 { color: var(--heading); line-height: 1.25; }
+    h1 { margin: 0 0 0.25rem; font-size: 1.7rem; }
+    h2 { margin-top: 0; font-size: 1.3rem; }
+    h3 { font-size: 1.02rem; margin: 1.25rem 0 0.4rem; }
+    section, .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; margin-bottom: 1rem; padding: 1.15rem 1.25rem; overflow-wrap: anywhere; }
+    .lead { color: var(--ink-muted); margin: 0.2rem 0 0.75rem; max-width: 70rem; }
+    .steps { display: flex; flex-wrap: wrap; gap: 0.5rem; list-style: none; margin: 0.75rem 0 0; padding: 0; }
+    .steps li { background: var(--surface); border: 1px solid var(--border); border-radius: 999px; color: var(--ink-muted); font-size: 0.9rem; padding: 0.25rem 0.85rem; }
+    .steps li[aria-current="step"] { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: bold; }
+    .grid-2 { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
+    form { display: grid; gap: 0.9rem; }
+    fieldset { border: 1px solid #c6d2dc; border-radius: 8px; display: grid; gap: 0.5rem; margin: 0; padding: 0.9rem 1rem; }
+    legend { color: var(--heading); font-weight: bold; padding: 0 0.35rem; }
+    label { display: grid; font-weight: bold; gap: 0.3rem; }
+    input, button, select { font: inherit; padding: 0.55rem 0.65rem; }
+    input[type="number"], input[type="text"], select { border: 1px solid #b8c4cf; border-radius: 6px; width: 100%; }
+    td select { min-width: 15rem; }
     input[type="checkbox"], input[type="radio"] { width: auto; }
-    button {
-      background: #1f5f8b;
-      border: 0;
-      border-radius: 4px;
-      color: white;
-      cursor: pointer;
-      font-weight: bold;
-    }
-    .error {
-      background: #fff1f1;
-      border-color: #cf5b5b;
-      color: #7f1d1d;
-      white-space: pre-wrap;
-    }
-    .cluster {
-      border-top: 1px solid #d8dee6;
-      margin-top: 1rem;
-      padding-top: 0.75rem;
-    }
-    .summary-grid {
-      display: grid;
-      gap: 0.5rem;
-      grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
-    }
-    .summary-grid p {
-      background: #edf4f8;
-      border: 1px solid #d8dee6;
-      border-radius: 6px;
-      margin: 0;
-      padding: 0.75rem;
-    }
-    .candidate-details summary { cursor: pointer; font-weight: bold; }
-    .synthetic-note { background: #fff8e6; border-color: #e6c77a; }
-    .note { color: #52606d; }
-    .help {
-      color: #52606d;
-      display: block;
-      font-size: 0.9rem;
-      font-weight: normal;
-    }
+    input[type="file"] { background: var(--surface-alt); border: 2px dashed #9fb3c4; border-radius: 8px; padding: 1.1rem; width: 100%; }
+    button { background: var(--accent); border: 0; border-radius: 6px; color: white; cursor: pointer; font-weight: bold; }
+    button.secondary { background: var(--surface); border: 1px solid var(--accent); color: var(--accent); }
+    button.big { font-size: 1.05rem; padding: 0.8rem 1rem; }
+    button:disabled { background: #9aa8b4; cursor: not-allowed; }
+    .button-row { display: grid; gap: 0.5rem; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+    .error { background: var(--error-bg); border-color: var(--error-border); color: var(--error-ink); white-space: pre-wrap; }
+    .synthetic-note, .warn { background: var(--warn-bg); border-color: var(--warn-border); }
+    .note, .help { color: var(--ink-muted); }
+    .help { display: block; font-size: 0.88rem; font-weight: normal; }
+    .purpose { color: var(--ink-muted); margin-top: -0.25rem; }
+    .cluster { border-top: 1px solid var(--border); margin-top: 1rem; padding-top: 0.75rem; }
+    .summary-grid { display: grid; gap: 0.5rem; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); margin: 0.5rem 0 0.75rem; }
+    .summary-grid p { background: var(--surface-alt); border: 1px solid var(--border); border-radius: 8px; margin: 0; padding: 0.6rem 0.75rem; }
+    .summary-grid p.stat { font-size: 1.15rem; font-weight: 600; }
+    .summary-grid p.stat strong { color: var(--ink-muted); display: block; font-size: 0.8rem; font-weight: 600; }
+    .summary-grid p.stat .detail { color: var(--ink-muted); display: block; font-size: 0.82rem; font-weight: normal; }
+    .summary-grid p.na { background: var(--surface); border-style: dashed; color: var(--ink-muted); font-size: 0.95rem; font-style: italic; }
+    details summary { cursor: pointer; font-weight: bold; }
+    details.about { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; margin-bottom: 1rem; padding: 0.75rem 1.25rem; }
+    nav.sections { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; display: flex; flex-wrap: wrap; gap: 0.25rem 1rem; margin-bottom: 1rem; padding: 0.6rem 1rem; position: sticky; top: 0; z-index: 2; }
+    nav.sections a { color: var(--accent); font-weight: bold; text-decoration: none; }
+    figure { margin: 1rem 0; }
+    figure img { border: 1px solid var(--border); border-radius: 8px; height: auto; max-width: 100%; }
+    .wide-figure img { max-width: none; }
+    figcaption { color: var(--ink-muted); font-size: 0.9rem; max-width: 62rem; }
+    .scroll { overflow-x: auto; overflow-wrap: normal; }
+    .scroll th, .scroll td { min-width: 5.5rem; }
+    table { border-collapse: collapse; font-size: 0.85rem; width: 100%; }
+    th, td { border-bottom: 1px solid var(--border); padding: 0.35rem 0.4rem; text-align: left; vertical-align: top; }
+    th { background: var(--surface-alt); }
+    .notes li { color: var(--ink-muted); }
+    .unavailable { background: var(--surface-alt); border-left: 4px solid var(--ink-muted); padding: 0.5rem 0.75rem; }
+    .downloads { columns: 2 260px; }
+    .section-downloads { font-size: 0.9rem; }
+    .badge { border-radius: 999px; display: inline-block; font-size: 0.8rem; font-weight: bold; padding: 0.05rem 0.55rem; white-space: nowrap; }
+    .badge.run, .badge.will-run, .badge.completed { background: var(--good-bg); color: var(--good-ink); }
+    .badge.limited, .badge.not-evaluable, .badge.partly-completed { background: var(--warn-bg); color: #6b4a00; }
+    .badge.skipped, .badge.unavailable, .badge.refused { background: #eef0f2; color: var(--ink-muted); }
+    .badge.unavailable { border-left: 0; padding: 0.05rem 0.55rem; }
+    .badge.level { background: transparent; border: 1px solid currentColor; color: var(--ink-muted); font-weight: normal; }
+    .badge.level.required { color: var(--error-ink); }
+    .badge.needs { background: var(--error-bg); color: var(--error-ink); }
+    .swatch { border-radius: 3px; display: inline-block; height: 0.8rem; margin-right: 0.3rem; vertical-align: -0.05rem; width: 0.8rem; }
+    .problems li { color: var(--error-ink); }
+    .warnings li { color: #6b4a00; }
+    .facts dt { font-weight: bold; }
+    .facts dd { margin: 0 0 0.5rem; }
+    .example-card { border: 2px solid var(--accent); }
+    code { background: var(--surface-alt); border-radius: 4px; padding: 0 0.25rem; }
+    .sample-choices { columns: 3 12rem; margin: 0.5rem 0; }
+    .sample-choices label { font-weight: normal; }
+    .review-table td label { font-weight: normal; white-space: nowrap; }
+    .review-table tr.not-approvable td { color: var(--ink-muted); }
+    /* Navigation, how-it-works diagram, upload modes, and progressive results */
+    .toolbar { align-items: center; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 1rem; padding: 0.5rem 0.75rem; }
+    .toolbar form { display: inline-flex; gap: 0; margin: 0; }
+    button.small, a.button-link { font-size: 0.9rem; padding: 0.4rem 0.7rem; }
+    a.button-link { background: var(--surface); border: 1px solid var(--accent); border-radius: 6px; color: var(--accent); display: inline-block; font-weight: bold; text-decoration: none; }
+    a.button-link:hover, button.secondary:hover { background: var(--accent-soft); }
+    .how > details > summary { list-style-position: outside; }
+    .how > details > summary h2 { display: inline; }
+    .flow { display: grid; gap: 0.6rem; margin: 0.75rem 0; }
+    .lane { align-items: stretch; border: 1px solid var(--border); border-radius: 10px; display: flex; flex-wrap: wrap; gap: 0.35rem; padding: 0.6rem; }
+    .lane.s2 { border-left: 6px solid var(--individual); }
+    .lane.s3 { border-left: 6px solid var(--pooled); }
+    .lane.s4 { border-left: 6px dashed var(--sprint4); border-style: dashed; }
+    .lane-title { color: var(--heading); flex-basis: 100%; font-weight: bold; }
+    .box { background: var(--surface-alt); border: 1px solid var(--border); border-radius: 8px; font-size: 0.88rem; padding: 0.35rem 0.55rem; }
+    .box.offline { background: var(--surface); border-style: dashed; color: var(--ink-muted); }
+    .arrow { align-self: center; color: var(--ink-muted); font-weight: bold; }
+    .meet { background: var(--accent-soft); border: 2px solid var(--accent); border-radius: 10px; display: grid; gap: 0.25rem; padding: 0.6rem 0.8rem; }
+    .glossary dt { font-weight: bold; }
+    .glossary dd { color: var(--ink-muted); margin: 0 0 0.4rem; }
+    .mode-grid { display: grid; gap: 0.5rem; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); }
+    .mode { border: 1px solid var(--border); border-radius: 8px; font-weight: normal; padding: 0.55rem 0.65rem; }
+    .mode:has(input:checked) { background: var(--accent-soft); border-color: var(--accent); }
+    .pathway { display: flex; flex-wrap: wrap; gap: 0.35rem; list-style: none; margin: 0.5rem 0; padding: 0; }
+    .pathway li { background: var(--accent-soft); border: 1px solid var(--accent); border-radius: 8px; font-size: 0.88rem; padding: 0.3rem 0.55rem; }
+    .pathway li.offline { background: var(--surface); border-style: dashed; border-color: var(--border); color: var(--ink-muted); }
+    .pathway li:not(:last-child)::after { color: var(--ink-muted); content: " →"; }
+    .dot { border-radius: 50%; display: inline-block; height: 0.7rem; margin-right: 0.35rem; width: 0.7rem; }
+    .dot.s2 { background: var(--individual); } .dot.s3 { background: var(--pooled); }
+    .dot.s23 { background: linear-gradient(90deg, var(--individual) 50%, var(--pooled) 50%); }
+    .notice-box { background: var(--accent-soft); border-color: var(--accent); }
+    .mode-banner { background: var(--good-bg); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 0.75rem; padding: 0.5rem 0.75rem; }
+    .mode-banner.warn { background: var(--warn-bg); border-color: var(--warn-border); }
+    .mode-banner p { margin: 0.2rem 0; }
+    .sprint-tag { color: var(--ink-muted); font-size: 0.78rem; font-weight: bold; letter-spacing: 0.03em; margin: 0 0 0.2rem; text-transform: uppercase; }
+    .sprint-tag.sprint4 { color: var(--sprint4); }
+    .mini-steps { color: var(--ink-muted); display: flex; flex-wrap: wrap; font-size: 0.88rem; gap: 0.25rem 1.25rem; margin: 0 0 0.75rem; padding-left: 1.2rem; }
+    .figure-title { margin: 0 0 0.4rem; }
+    .badge.origin { background: var(--accent-soft); color: var(--accent); font-weight: normal; white-space: normal; }
+    .finding { color: var(--ink); margin: 0.3rem 0; }
+    details.guide { margin: 0.3rem 0; }
+    details.more { border-top: 1px solid var(--border); margin-top: 0.75rem; padding-top: 0.5rem; }
+    .findings li { margin-bottom: 0.25rem; }
+    .story { border-left: 6px solid var(--accent); }
+    .story ol li { margin-bottom: 0.4rem; }
+    .back-top { font-size: 0.9rem; margin-bottom: 0; }
+    .nav-label { color: var(--ink-muted); font-weight: bold; }
+    .status-table td { min-width: 9rem; }
+    .enrich-toggle { border-color: var(--sprint4); }
+    .enrich-toggle legend { color: var(--sprint4); }
+    .inline-form { display: inline-block; margin: 0.25rem 0; }
+    .card.pre-analysis { border-left: 6px solid var(--sprint4); }
+    .revisit { align-items: center; display: flex; flex-wrap: wrap; gap: 0.75rem; justify-content: space-between; }
+    .revisit p { margin: 0; }
+    .upload-fields { display: grid; gap: 0.6rem; margin: 0.5rem 0 0.75rem; }
+    .upload-fields [hidden] { display: none !important; }  /* the grid style must not reveal hidden fields */
+    .upload-field { background: var(--surface-alt); border: 1px solid var(--border); border-radius: 8px; display: grid; gap: 0.35rem; padding: 0.6rem 0.7rem; }
+    .upload-field input[type="file"] { padding: 0.6rem; }
+    .advanced-inputs { border: 1px dashed var(--border); border-radius: 8px; padding: 0.5rem 0.7rem; }
+    .advanced-inputs[open] { display: grid; gap: 0.6rem; }
+    .field-help summary { color: var(--ink-muted); font-size: 0.88rem; font-weight: normal; }
+    section[id], .story { scroll-margin-top: 6.5rem; }
+    @media (max-width: 600px) { main { padding: 0 0.75rem; } section, .card { padding: 0.9rem; } nav.sections { position: static; } .box { font-size: 0.82rem; } .mode-grid { grid-template-columns: 1fr; } }
   </style>
 </head>
 <body>
   <main>
-    <h1>Outbreak Cluster Detector</h1>
-    <p class="note">This prototype combines pathogen genomic similarity with collection date and geographic information to flag potential outbreak clusters. Results are screening signals and do not confirm transmission or an outbreak.</p>
-    <p class="note">MAFFT aligns sequences within each pathogen and gene/segment group before genetic distances are calculated.</p>
-    <p class="note">When metadata has a location name but no coordinates, GeoNames may estimate them. These place coordinates can be approximate. State-only names such as USA: ND are too coarse for the kilometer cutoff or same-location fallback; their precision is reported in the pairwise output.</p>
-    <p class="note">Genomic regions come first from metadata, then explicit FASTA descriptions. MAFFT aligns only samples with the same resolved pathogen and region. An unknown region is an error unless you explicitly confirm that every sequence is a complete genome of one pathogen.</p>
+    <header class="page">
+      <h1>Integrated Genomic Surveillance</h1>
+      <p class="lead">One analysis for two kinds of genomic evidence — <span class="swatch" style="background:var(--individual)"></span>individual sequences (Sprint 2) and <span class="swatch" style="background:var(--pooled)"></span>pooled sequencing results such as wastewater (Sprint 3) — connected on one reference genome, with optional AI metadata enrichment (Sprint 4). Results are screening signals; they do not confirm transmission, an outbreak, or the lineage of a mixed sample.</p>
+      <ol class="steps" aria-label="Workflow steps">
+        <li {% if step == 1 %}aria-current="step"{% endif %}>1 · Upload files</li>
+        <li {% if step == 2 %}aria-current="step"{% endif %}>2 · Review dataset</li>
+        <li {% if step == 4 %}aria-current="step"{% endif %}>3 · Metadata enrichment (Sprint 4, optional)</li>
+        <li {% if step == 3 %}aria-current="step"{% endif %}>4 · Results</li>
+      </ol>
+    </header>
 
-    <section>
-      <h2>System status</h2>
-      <p class="note">Check that this server can align two invented sequences with MAFFT and contact GeoNames for an approximate Tempe, Arizona place location. No upload is needed. Recent results are reused for five minutes.</p>
-      <form method="post" action="{{ url_for('system_status') }}">
-        <button type="submit">Check MAFFT &amp; GeoNames</button>
-      </form>
-      {% if system_status %}
-        <p><strong>MAFFT: {{ system_status.mafft.status }}</strong> — {{ system_status.mafft.message }}
-          {% if system_status.mafft.version %}Version: {{ system_status.mafft.version }}.{% endif %}</p>
-        <p><strong>GeoNames: {{ system_status.geonames.status }}</strong> — {{ system_status.geonames.message }}</p>
-        {% if status_cached %}<p class="note">Showing a recent cached check.</p>{% endif %}
-      {% endif %}
-    </section>
+    {% if step >= 2 %}{% include "_toolbar.html" %}{% endif %}
 
-    <section>
-      <h2>Run analysis</h2>
-      <form method="post" enctype="multipart/form-data">
-        <fieldset>
-          <legend>1. Genomic sequences</legend>
-          <label>
-            FASTA file (.fasta, .fa, or .fna)
-            <input type="file" name="fasta_file" accept=".fasta,.fa,.fna" required>
-          </label>
-          <span class="help">Upload nucleotide sequences downloaded from a genomic database such as NCBI Virus.</span>
-        </fieldset>
-
-        <fieldset>
-          <legend>2. Sample metadata</legend>
-          <label>
-            Metadata file (.xlsx or .csv)
-            <input type="file" name="metadata_file" accept=".xlsx,.csv" required>
-          </label>
-          <span class="help">Upload metadata containing accession, pathogen, collection date, location, and host/source. A gene/segment column is optional when FASTA descriptions identify the region.</span>
-        </fieldset>
-
-        <fieldset>
-          <legend>3. Genomic-region selection</legend>
-          <label>
-            <span><input type="radio" name="genomic_region_mode" value="automatic" {% if values.genomic_region_mode == 'automatic' %}checked{% endif %}> Automatic detection (default)</span>
-            <span class="help">Use metadata first, then FASTA annotations. Compatible pathogen/region groups are aligned separately with MAFFT. Missing or conflicting annotations stop the analysis.</span>
-          </label>
-          <label>
-            <span><input type="radio" name="genomic_region_mode" value="complete_genomes" {% if values.genomic_region_mode == 'complete_genomes' %}checked{% endif %}> Complete genomes</span>
-            <span class="help">Choose this only when all sequences are complete genomes of the same pathogen. Existing gene or segment annotations must not contradict that choice.</span>
-          </label>
-          <label>
-            <span><input type="checkbox" name="confirm_complete_genomes" {% if values.confirm_complete_genomes %}checked{% endif %}> I confirm all sequences are complete genomes of one pathogen</span>
-            <span class="help">Required when Complete genomes is selected; selecting it does not override conflicting annotations.</span>
-          </label>
-        </fieldset>
-
-        <label>
-          Maximum genetic p-distance
-          <input type="number" name="max_p_distance" min="0" step="any" value="{{ values.max_p_distance }}" required>
-          <span class="help">The largest allowed fraction of comparable nucleotide positions that differ.</span>
-        </label>
-        <label>
-          Maximum days between samples
-          <input type="number" name="max_days_apart" min="0" step="any" value="{{ values.max_days_apart }}" required>
-          <span class="help">The largest allowed difference between the two collection dates.</span>
-        </label>
-        <label>
-          Maximum geographic distance in kilometers
-          <input type="number" name="max_km_apart" min="0" step="any" value="{{ values.max_km_apart }}" required>
-          <span class="help">The largest allowed Haversine distance between two sample coordinates.</span>
-        </label>
-        <button type="submit">Run Analysis</button>
-        <button type="submit" name="run_example" value="1" formnovalidate>Run Example Analysis</button>
-      </form>
-      <p class="note">The example uses explicitly synthetic sequences and sample records, not NCBI records or real outbreaks. It uses your threshold settings and runs the same MAFFT-backed pipeline. One example record has a real place name but synthetic sample data and no coordinates so GeoNames can be demonstrated when configured.</p>
-      <p class="note">Thresholds are prototype settings, not universal biological outbreak definitions.</p>
-    </section>
+    {% macro settings_fields(values) %}
+      <details class="settings">
+        <summary>Advanced settings and thresholds</summary>
+        <div class="grid-2" style="margin-top:0.75rem">
+          <fieldset>
+            <legend>Genomic region of individual sequences</legend>
+            <label><span><input type="radio" name="genomic_region_mode" value="automatic" {% if values.genomic_region_mode == 'automatic' %}checked{% endif %}> Automatic detection (default)</span>
+              <span class="help">Use metadata first, then FASTA annotations. Missing or conflicting annotations stop the sequence comparison.</span></label>
+            <label><span><input type="radio" name="genomic_region_mode" value="complete_genomes" {% if values.genomic_region_mode == 'complete_genomes' %}checked{% endif %}> Complete genomes</span>
+              <span class="help">Only when all sequences are complete genomes of the same pathogen.</span></label>
+            <label><span><input type="checkbox" name="confirm_complete_genomes" {% if values.confirm_complete_genomes %}checked{% endif %}> I confirm all sequences are complete genomes of one pathogen</span>
+              <span class="help">Required when Complete genomes is selected; it does not override conflicting annotations.</span></label>
+          </fieldset>
+          <fieldset>
+            <legend>Screening thresholds (prototype settings)</legend>
+            <label>Maximum genetic p-distance
+              <input type="number" name="max_p_distance" min="0" step="any" value="{{ values.max_p_distance }}" required>
+              <span class="help">Largest allowed fraction of comparable nucleotide positions that differ.</span></label>
+            <label>Maximum days between samples
+              <input type="number" name="max_days_apart" min="0" step="any" value="{{ values.max_days_apart }}" required></label>
+            <label>Maximum geographic distance (km)
+              <input type="number" name="max_km_apart" min="0" step="any" value="{{ values.max_km_apart }}" required>
+              <span class="help">Haversine distance between two sufficiently precise coordinates.</span></label>
+            <label>Cross-source date window (days)
+              <input type="number" name="date_window_days" min="0" step="any" value="{{ values.date_window_days }}" required>
+              <span class="help">Counts individual/pooled observations of a shared variant collected this close together.</span></label>
+          </fieldset>
+          <fieldset>
+            <legend>Pooled-sample quality control</legend>
+            <label><span><input type="radio" name="qc_mode" value="paper" {% if values.qc_mode == 'paper' %}checked{% endif %}> Paper-reproduction (default)</span>
+              <span class="help">Fontenele et al. settings where data allow: &gt;90% genome coverage at 10x, depth ≥ 20, Fisher p &lt; 0.05, no frequency cut-off. Failures are excluded from analyses.</span></label>
+            <label><span><input type="radio" name="qc_mode" value="exploratory" {% if values.qc_mode == 'exploratory' %}checked{% endif %}> Exploratory</span>
+              <span class="help">The same checks are flagged but nothing is excluded.</span></label>
+          </fieldset>
+        </div>
+      </details>
+    {% endmacro %}
 
     {% if error %}
-      <section class="error">
+      <section class="error" role="alert">
         <strong>Analysis could not be completed.</strong>
         <div>{{ error }}</div>
       </section>
     {% endif %}
 
-    {% if notice %}
-      <section>
-        <p class="note">{{ notice }}</p>
+    {% include "_how_it_works.html" %}
+
+    {% if step == 1 %}{% include "_upload.html" %}{% endif %}
+
+    {% if review %}
+      {% set r = review %}
+      <section class="card" id="review">
+        <h2>Step 2 · Review your dataset</h2>
+        {% if mode_check %}
+          <div class="mode-banner {% if mode_check.missing %}warn{% endif %}">
+            <p><strong>Detected analysis:</strong> {{ mode_check.detected }}</p>
+            {% if mode_check.intended %}<p><strong>You chose:</strong> {{ mode_check.intended }}{% if not mode_check.missing %} — the files support it.{% endif %}</p>{% endif %}
+            {% if mode_check.missing %}<p>For that choice these files were not found: {{ mode_check.missing|join(', ') }}. The analyses below will run with the files that were found; add the missing files with <em>Back to upload</em> if you need them.</p>{% endif %}
+          </div>
+        {% endif %}
+        <p class="note">Check what each file was recognized as. Change a role or choose a column wherever the evidence was not decisive; nothing is guessed silently. Press <em>Update review</em> after changes, then <em>Run analysis</em>.</p>
+        <form method="post" action="{{ url_for('review_upload') }}">
+          <input type="hidden" name="token" value="{{ token }}">
+          <input type="hidden" name="intended_mode" value="{{ intended_mode }}">
+          <h3>Recognized files</h3>
+          <div class="scroll"><table>
+            <thead><tr><th>File</th><th>Detected content</th><th>Records</th><th>Role</th><th>Evidence and notes</th></tr></thead>
+            <tbody>
+            {% for entry in r.files %}{% set info = entry.info %}
+              <tr>
+                <td><strong>{{ info.name }}</strong>{% if info.declared_role %}<br><span class="help">uploaded as: {{ role_labels[info.declared_role] }}</span>{% endif %}{% if info.compressed %}<br><span class="help">gzip-compressed</span>{% endif %}</td>
+                <td>{{ info.format or info.kind }}</td>
+                <td>{{ info.records }}{% if info.ids %}<br><span class="help">{{ info.ids|length }} sample ID{{ 's' if info.ids|length != 1 }}</span>{% endif %}</td>
+                <td>
+                  {% if info.refused %}<span class="badge refused">Not accepted</span>
+                  {% else %}
+                    <select name="role_{{ entry.index }}" aria-label="Role of {{ info.name }}">
+                      {% if not entry.role %}<option value="" selected>Choose a role…</option>{% endif %}
+                      {% for key, label in role_labels.items() %}<option value="{{ key }}" {% if entry.role == key %}selected{% endif %}>{{ label }}</option>{% endfor %}
+                    </select>
+                    {% if info.role_status == 'clear' %}<span class="badge completed">Detected</span>{% elif info.role_status == 'declared' %}<span class="badge completed">Your choice</span>{% elif info.role_status == 'conflict' %}<span class="badge needs">Conflict — please choose</span>{% else %}<span class="badge needs">Please choose</span>{% endif %}
+                  {% endif %}
+                </td>
+                <td>{{ info.role_evidence }}
+                  {% if info.ids %}<br><span class="help">IDs: {{ info.ids[:8]|join(', ') }}{% if info.ids|length > 8 %}, … ({{ info.ids|length }} in total){% endif %}</span>{% endif %}
+                  {% if info.reference_ids %}<br><span class="help">Reference: {{ info.reference_ids|join(', ') }}</span>{% endif %}
+                  {% if info.notes %}<ul class="notes">{% for item in info.notes %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
+                  {% if info.problems %}<ul class="problems">{% for item in info.problems %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+            </tbody>
+          </table></div>
+
+          {% for entry in r.files %}{% if entry.matches %}
+            <details {% if entry.problems %}open{% endif %}>
+              <summary>Detected columns in {{ entry.info.name }} ({{ entry.info.columns|length }} columns)</summary>
+              <div class="scroll"><table>
+                <thead><tr><th>Standard field</th><th>Needed for</th><th>Column used</th><th>Evidence</th></tr></thead>
+                <tbody>{% for match in entry.matches %}
+                  <tr>
+                    <td>{{ match.field }}{% if match.required %} <span class="badge needs">required</span>{% endif %}</td>
+                    <td>{{ match.purpose }}</td>
+                    <td>{% if match.status == 'ambiguous' %}
+                        <select name="map_{{ entry.index }}_{{ match.field }}" aria-label="Column for {{ match.field }}">
+                          <option value="">Choose…</option>
+                          {% for column in match.candidates %}<option value="{{ column }}">{{ column }}</option>{% endfor %}
+                        </select>
+                      {% elif match.status == 'matched' %}<code>{{ match.column }}</code>
+                        {% if match.candidates|length > 1 %}<input type="hidden" name="map_{{ entry.index }}_{{ match.field }}" value="{{ match.column }}">{% endif %}
+                      {% else %}<span class="note">not found</span>{% endif %}</td>
+                    <td>{{ match.evidence }}</td>
+                  </tr>{% endfor %}
+                </tbody>
+              </table></div>
+              <p class="help">All columns: {{ entry.info.columns|join(', ') }}</p>
+            </details>
+          {% endif %}{% endfor %}
+
+          {% if r.pathogen_needed is defined and r.pathogen_needed %}
+            <label>Pathogen of all individual sequences
+              <input type="text" name="declared_pathogen" value="{{ declared_pathogen }}" maxlength="120" placeholder="for example SARS-CoV-2">
+              <span class="help">The metadata and FASTA descriptions do not state the pathogen. Sequences are aligned only within one pathogen, so state it explicitly; it is recorded as user-stated.</span>
+            </label>
+          {% endif %}
+
+          <h3>Dataset summary</h3>
+          <div class="summary-grid">
+            <p class="stat"><strong>Individual sequences:</strong> {{ r.individual_ids|length if r.individual_ids else 'None uploaded' }}</p>
+            <p class="stat"><strong>Pooled samples:</strong> {{ r.pooled_ids|length if r.pooled_ids else 'None uploaded' }}</p>
+            <p class="stat"><strong>Reference genome:</strong> {{ r.reference.id ~ ' (' ~ r.reference.length ~ ' bases)' if r.reference else 'None uploaded' }}</p>
+          </div>
+          {% if r.individual_ids %}<p class="help"><strong>Individual sample IDs:</strong> {{ r.individual_ids[:15]|join(', ') }}{% if r.individual_ids|length > 15 %}, …{% endif %}</p>{% endif %}
+          {% if r.pooled_ids %}<p class="help"><strong>Pooled sample IDs:</strong> {{ r.pooled_ids[:15]|join(', ') }}{% if r.pooled_ids|length > 15 %}, …{% endif %}</p>{% endif %}
+
+          {% if r.compatibility %}
+            <h3>Reference compatibility</h3>
+            <div class="scroll"><table><thead><tr><th>Source</th><th>Reference</th><th>How it is checked</th></tr></thead>
+              <tbody>{% for row in r.compatibility %}<tr><td>{{ row.Source }}</td><td>{{ row.Reference }}</td><td>{{ row.Status }}</td></tr>{% endfor %}</tbody></table></div>
+          {% endif %}
+
+          {% if r.completeness %}
+            <h3>Metadata available</h3>
+            <div class="scroll"><table><thead><tr><th>Source</th><th>Samples</th><th>With date</th><th>With location</th><th>With coordinates</th><th>Genome coverage</th></tr></thead>
+              <tbody>{% for row in r.completeness %}<tr><td>{{ row.Source }}</td><td>{{ row.Samples }}</td><td>{{ row.With_Collection_Date }}</td><td>{{ row.With_Location }}</td><td>{{ row.With_Coordinates }}</td><td>{{ row.With_Genome_Coverage }}</td></tr>{% endfor %}</tbody></table></div>
+          {% endif %}
+          {% if r.annotation_notes %}<ul class="notes">{% for item in r.annotation_notes %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
+          {% if r.location_conflicts %}<h3>Location values to review</h3><ul class="warnings">{% for item in r.location_conflicts[:20] %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
+
+          {% if r.readiness %}{% set rd = r.readiness %}
+            <h3 id="readiness">Metadata readiness for: {{ rd.mode_label }}</h3>
+            <p class="purpose">Fields are checked against what <em>this</em> analysis needs. <strong>Required</strong>: the analysis cannot run without it. <strong>Recommended</strong>: one named step is limited or unavailable without it. <strong>Optional</strong>: context or extra precision. Missing values are never filled in, set to zero, or given coordinates.</p>
+            {% if rd.blocking %}<p class="problems"><strong>Required information missing:</strong> {{ rd.blocking|join('; ') }}. The analysis cannot start without it; the fix is listed under "Required information to fix before running".</p>{% endif %}
+            {% if rd.partial %}<p class="warnings"><strong>Required for one analysis:</strong> {{ rd.partial|join('; ') }}. Everything else can still run.</p>{% endif %}
+            {% if not rd.blocking and not rd.partial %}<p class="stat"><strong>All required fields were found.</strong> You can run the analysis{% if rd.counts.Recommended or rd.counts.Optional %}; the gaps below limit only the calculations they name{% endif %}.</p>{% endif %}
+            <div class="scroll"><table><thead><tr><th>Level</th><th>Field</th><th>Status</th><th>What was found</th><th>Used for</th>{% if enrich %}<th>Could Sprint 4 help?</th>{% endif %}</tr></thead>
+              <tbody>{% for row in rd.rows %}<tr><td><span class="badge level {{ row.Level|lower }}">{{ row.Level }}</span></td><td>{{ row.Field }}{% if rd.mode == 'combined' %}<br><span class="help">{{ row.Source }}</span>{% endif %}</td><td><span class="badge {{ row.Tone }}">{{ row.Status }}</span></td><td>{{ row.Detail }}</td><td>{{ row.Used_For }}</td>{% if enrich %}<td>{% if row.Sprint4 %}{{ 'Possibly. ' if row.Sprint4_Possible }}{{ row.Sprint4 }}{% else %}—{% endif %}</td>{% endif %}</tr>{% endfor %}</tbody></table></div>
+            {% if rd.kept_columns %}<p class="help"><strong>Other columns kept unchanged</strong> (carried along, not used in calculations): {{ rd.kept_columns[:20]|join(', ') }}{% if rd.kept_columns|length > 20 %}, …{% endif %}</p>{% endif %}
+            {% if rd.consequences %}<h3>What the missing or imprecise information affects</h3><ul class="warnings">{% for item in rd.consequences %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
+            {% if rd.enrichable and not enrich %}<p class="help">Optional Sprint 4 enrichment (below) could look in linked publications for: {{ rd.enrichable|join(', ') }}.</p>{% endif %}
+          {% endif %}
+
+          {% if r.warnings %}<h3>Missing optional information</h3><ul class="warnings">{% for item in r.warnings %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
+          {% if r.problems %}<h3>Required information to fix before running</h3><ul class="problems">{% for item in r.problems %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
+
+          <h3>Analyses available with these files</h3>
+          <div class="scroll"><table><thead><tr><th>Analysis</th><th>Status</th><th>Needs</th><th>With these files</th></tr></thead>
+            <tbody>{% for row in (r.readiness.analyses if r.readiness else r.analyses) %}<tr><td>{{ row.Analysis }}</td><td><span class="badge {{ row.Status|lower|replace(' ', '-') }}">{{ row.Status }}</span></td><td>{{ row.Needs }}</td><td>{{ row.Reason }}</td></tr>{% endfor %}</tbody></table></div>
+          {% if r.readiness %}<p class="help">Shown for: {{ r.readiness.mode_label|lower }}. Analyses of other modes are left out when their files are absent. "Unavailable" stops only that analysis.</p>{% endif %}
+
+          <h3>Sprint 4 · Metadata enrichment (optional)</h3>
+          <input type="hidden" name="enrich_shown" value="1">
+          <label><span><input type="checkbox" name="enrich" {% if enrich %}checked{% endif %}> Use PubTator + Claude AI to find missing or more precise sample information</span></label>
+          {% if enrich %}
+            <label>Publication or study identifiers for the whole dataset (optional)
+              <input type="text" name="publication_ids" value="{{ publication_ids }}" maxlength="500" placeholder="a PMID, PMCID, DOI, or BioProject (PRJNA…)"></label>
+            {% if enrichment_preview %}
+              {% set p = enrichment_preview %}
+              {% if p.error %}<p class="warnings">{{ p.error }}</p>
+              {% else %}
+                <p><strong>{{ p.eligible }} of {{ p.samples }} samples</strong> have collection details that publications might improve:{% if not p.counts %} none.{% endif %}</p>
+                {% if p.counts %}<ul class="notes">{% for gap, count in p.counts.items() %}<li>{{ gap }}: {{ count }}</li>{% endfor %}</ul>{% endif %}
+                {% if p.rows %}<details><summary>Samples with gaps (first {{ p.rows|length }})</summary>
+                  <div class="scroll"><table><thead><tr><th>Sample</th><th>Source</th><th>Location</th><th>Date</th><th>Gaps</th></tr></thead>
+                    <tbody>{% for row in p.rows %}<tr><td>{{ row.Sample_ID }}</td><td>{{ row.Sample_Source }}</td><td>{{ row.Location or '—' }}</td><td>{{ row.Collection_Date or '—' }}</td><td>{{ row.Gaps|join('; ') }}</td></tr>{% endfor %}</tbody></table></div></details>{% endif %}
+                <p class="note">Nothing has been sent anywhere yet. <em>Continue to metadata enrichment</em> lets you search linked publications (sample or study identifiers go to NCBI and PubTator) and, only with your cost approval, ask Claude. You can skip at any point.</p>
+              {% endif %}
+            {% elif not r.ready %}<p class="note">Fix the problems above to see which metadata could be improved.</p>
+            {% endif %}
+          {% else %}<p class="help">Off: the analysis runs with your metadata as uploaded. Tick the box and press <em>Update review</em> to add the enrichment step.</p>{% endif %}
+
+          <h3>Step 3 · Run</h3>
+          {{ settings_fields(values) }}
+          <div class="button-row">
+            <button type="submit" class="secondary">Update review</button>
+            {% if enrich %}
+              <button type="submit" class="big" formaction="{{ url_for('enrich_start') }}" {% if not r.ready %}disabled{% endif %}>Continue to metadata enrichment</button>
+              <button type="submit" class="secondary" formaction="{{ url_for('run_reviewed') }}" {% if not r.ready %}disabled{% endif %}>Skip enrichment and run analysis</button>
+            {% else %}
+              <button type="submit" class="big" formaction="{{ url_for('run_reviewed') }}" {% if not r.ready %}disabled{% endif %}>Run analysis</button>
+            {% endif %}
+          </div>
+          {% if not r.ready %}<p class="note">Run analysis is available once the problems above are fixed.</p>{% endif %}
+        </form>
+        <p class="note">Uploaded files wait on the server for at most 30 minutes and are deleted as soon as the analysis runs.</p>
       </section>
     {% endif %}
 
-    {% if analysis_complete %}
-      {% if is_synthetic_example %}
-        <section class="synthetic-note">
-          <h2>Synthetic example analysis</h2>
-          <p>These sequences and sample records are invented for demonstration. They are not NCBI records or real outbreak data.</p>
-        </section>
-      {% endif %}
+    {% if notice %}
       <section>
-        <h2>Analysis summary</h2>
-        <p><strong>FASTA file:</strong> {{ input_names.fasta }}<br><strong>Metadata file:</strong> {{ input_names.metadata }}</p>
-        <div class="summary-grid">
-          <p><strong>Unique samples analyzed:</strong> {{ summary.unique_samples }}</p>
-          <p><strong>Pairwise comparisons:</strong> {{ summary.pairwise_comparisons }}</p>
-          <p><strong>Strict related pairs:</strong> {{ related_pair_count }}</p>
-          <p><strong>Potential clusters meeting all criteria:</strong> {{ clusters|length }}</p>
-          <p><strong>Genomic-temporal candidate pairs with unresolved geography:</strong> {{ candidates|length }}</p>
-          <p><strong>Unique samples represented in candidate pairs:</strong> {{ summary.candidate_unique_samples }}</p>
-        </div>
-        <p class="note">Candidate pairs are relationships among {{ summary.candidate_unique_samples }} of the {{ summary.unique_samples }} original samples, not additional samples.</p>
+        <h3 style="margin-top:0">Notes from the sequence comparison</h3>
+        <p class="note" style="white-space:pre-wrap">{{ notice }}</p>
+      </section>
+    {% endif %}
+
+    {% if integrated_error %}
+      <section class="error">
+        <strong>The integrated (reference-based) analysis could not be completed.</strong>
+        <div>{{ integrated_error }}</div>
+      </section>
+    {% endif %}
+
+    {% macro show_figure(item) %}
+      <figure>
+        <p class="figure-title"><strong>{{ item.title }}</strong>{% if item.guide %} <span class="badge origin">{{ item.guide.origin }}</span>{% endif %}</p>
+        {% if item.wide %}<div class="scroll wide-figure"><img src="{{ item.data_uri }}" alt="{{ item.title }}. {{ item.caption }}"></div>
+        <p class="help">Wide figure: scroll sideways, or download the PNG.</p>
+        {% else %}<img src="{{ item.data_uri }}" alt="{{ item.title }}. {{ item.caption }}">{% endif %}
+        <figcaption>
+          {% if item.interpretation %}<p class="finding"><strong>In these results:</strong> {{ item.interpretation }}</p>{% endif %}
+          <p>{{ item.caption }}</p>
+          {% if item.guide %}
+            <details class="guide">
+              <summary>How to read this chart</summary>
+              <dl class="facts">
+                <dt>What it measures</dt><dd>{{ item.guide.measures }}</dd>
+                <dt>Axes</dt><dd>{{ item.guide.axes }}</dd>
+                <dt>Colors and symbols</dt><dd>{{ item.guide.colors }}</dd>
+                <dt>Limitation</dt><dd>{{ item.guide.limitation }}</dd>
+              </dl>
+            </details>
+          {% endif %}
+          <a href="{{ url_for('result_download', download_id=item.download_id, filename=item.filename) }}">Download PNG</a>
+        </figcaption>
+      </figure>
+    {% endmacro %}
+
+    {% macro table_rows(rows) %}{% for row in rows %}<tr>{% for value in row %}<td>{{ value }}</td>{% endfor %}</tr>{% endfor %}{% endmacro %}
+
+    {% macro show_table(table) %}
+      <h3>{{ table.title }}</h3>
+      {% if table.rows %}
+        <div class="scroll"><table>
+          <thead><tr>{% for column in table.columns %}<th>{{ column|replace('_', ' ') }}</th>{% endfor %}</tr></thead>
+          <tbody>{{ table_rows(table.rows) }}</tbody>
+        </table></div>
+        {% if table.more_rows %}
+          <details><summary>Show {{ table.more_rows|length }} more rows</summary>
+            <div class="scroll"><table><thead><tr>{% for column in table.columns %}<th>{{ column|replace('_', ' ') }}</th>{% endfor %}</tr></thead>
+              <tbody>{{ table_rows(table.more_rows) }}</tbody></table></div>
+          </details>
+        {% endif %}
+        {% if table.total > table.shown %}<p class="note">Showing {{ table.shown }} of {{ table.total }} rows; download the CSV for all rows.</p>{% endif %}
+        {% if table.filename and download_id %}<p class="help"><a href="{{ url_for('result_download', download_id=download_id, filename=table.filename) }}">Download {{ table.filename }}</a> (every row, full precision)</p>{% endif %}
+      {% else %}<p class="note">No rows.</p>{% endif %}
+    {% endmacro %}
+
+    {% macro show_notes(items) %}
+      {% if items %}<ul class="notes">{% for item in items %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
+    {% endmacro %}
+
+    {% macro sprint2_results() %}
+      <h3>Sequence-comparison summary</h3>
+      <p><strong>FASTA file:</strong> {{ input_names.fasta }}<br><strong>Metadata file:</strong> {{ input_names.metadata }}</p>
+      <div class="summary-grid">
+        <p><strong>Unique samples analyzed:</strong> {{ summary.unique_samples }}</p>
+        <p><strong>Pairwise comparisons:</strong> {{ summary.pairwise_comparisons }}</p>
+        <p><strong>Strict related pairs:</strong> {{ related_pair_count }}</p>
+        <p><strong>Potential clusters:</strong> {{ clusters|length }}</p>
+        <p><strong>Genomic-temporal candidate pairs with unresolved geography:</strong> {{ candidates|length }}</p>
+        <p><strong>Unique samples represented in candidate pairs:</strong> {{ summary.candidate_unique_samples }}</p>
+      </div>
+      <p class="note">Candidate pairs are relationships among {{ summary.candidate_unique_samples }} of the {{ summary.unique_samples }} original samples, not additional samples.</p>
+      <details class="more">
+        <summary>Alignment and geography details</summary>
         <p><strong>Sequences aligned by MAFFT:</strong> {{ summary.aligned_sequences }}<br>
           <strong>Distinct locations resolved by GeoNames:</strong> {{ summary.geonames_resolved }}<br>
           <strong>Distinct locations too coarse for distance comparison:</strong> {{ summary.coarse_locations }}<br>
           <strong>Samples lacking sufficiently precise geographic metadata:</strong> {{ summary.insufficient_geography_samples }}<br>
           <strong>Valid geographic-distance comparisons:</strong> {{ summary.valid_geographic_comparisons }}</p>
-      </section>
-      <section>
-        <h2>Potential clusters meeting all three screening criteria</h2>
-        <p><strong>Potential clusters:</strong> {{ clusters|length }}</p>
-        <p><strong>Related pairs:</strong> {{ related_pair_count }}</p>
+      </details>
 
-        {% if clusters %}
-          {% for cluster in clusters %}
+      <h3>Potential clusters meeting all three screening criteria</h3>
+      <p class="note">A related pair meets the genetic, date, and distance cutoffs (and shares at least 20 comparable positions); clusters are connected groups of related pairs.</p>
+      {% if clusters %}
+        {% for cluster in clusters %}
+          <div class="cluster">
+            <h3>{{ cluster.cluster_id }}</h3>
+            <p><strong>Pathogen:</strong> {{ cluster.pathogen }}</p>
+            <p><strong>Gene/segment:</strong> {{ cluster.gene_segment }}</p>
+            <p><strong>Samples:</strong> {{ cluster.samples|join(', ') }}</p>
+            <p><strong>Region label sources:</strong><br>{{ cluster.sample_regions|join('; ') }}</p>
+          </div>
+        {% endfor %}
+      {% else %}
+        {% if candidates %}
+          <p>No pairs met all three screening criteria. Some pairs passed the genetic and date limits, but their geographic evidence is insufficient; see the separate candidate section below.</p>
+        {% else %}
+          <p>No potential clusters were detected with these threshold settings.</p>
+        {% endif %}
+      {% endif %}
+
+      <h3>Genomic-temporal candidates: geography unresolved</h3>
+      <p class="note">These pairs pass the genetic and date thresholds, but the available location data cannot establish whether they pass the geographic cutoff. They are not included in the strict potential clusters and are not confirmed outbreaks.</p>
+      <details class="candidate-details">
+        <summary>Show candidate pairs ({{ candidates|length }})</summary>
+        {% if candidates %}
+          {% for pair in candidates %}
             <div class="cluster">
-              <h3>{{ cluster.cluster_id }}</h3>
-              <p><strong>Pathogen:</strong> {{ cluster.pathogen }}</p>
-              <p><strong>Gene/segment:</strong> {{ cluster.gene_segment }}</p>
-              <p><strong>Samples:</strong> {{ cluster.samples|join(', ') }}</p>
-              <p><strong>Region label sources:</strong><br>{{ cluster.sample_regions|join('; ') }}</p>
+              <strong>{{ pair.sample_1 }} – {{ pair.sample_2 }}</strong><br>
+              {{ pair.pathogen }} / {{ pair.gene_segment }}<br>
+              P-distance: {{ "%.6f"|format(pair.p_distance) }}; days apart: {{ pair.days_apart }}; geographic distance: unresolved
             </div>
           {% endfor %}
         {% else %}
-          {% if candidates %}
-            <p>No pairs met all three screening criteria. Some pairs passed the genetic and date limits, but their geographic evidence is insufficient; see the separate candidate section below.</p>
-          {% else %}
-            <p>No potential clusters were detected with these threshold settings.</p>
-          {% endif %}
+          <p>No genomic-temporal candidate pairs have unresolved geography.</p>
         {% endif %}
-      </section>
-      <section>
-        <h2>Genomic-temporal candidates: geography unresolved</h2>
-        <p class="note">These pairs pass the genetic and date thresholds, but the available location data cannot establish whether they pass the geographic cutoff. They are not included in the strict potential clusters and are not confirmed outbreaks.</p>
-        <details class="candidate-details">
-          <summary>Show candidate pairs ({{ candidates|length }})</summary>
-          {% if candidates %}
-            {% for pair in candidates %}
-              <div class="cluster">
-                <strong>{{ pair.sample_1 }} – {{ pair.sample_2 }}</strong><br>
-                {{ pair.pathogen }} / {{ pair.gene_segment }}<br>
-                P-distance: {{ "%.6f"|format(pair.p_distance) }}; days apart: {{ pair.days_apart }}; geographic distance: unresolved
-              </div>
-            {% endfor %}
-          {% else %}
-            <p>No genomic-temporal candidate pairs have unresolved geography.</p>
+      </details>
+      <p class="note">Thresholds are prototype settings, not universal biological outbreak definitions. Related pairs and clusters are screening signals, never confirmed transmission.</p>
+    {% endmacro %}
+
+    {% macro shared_story(story) %}
+      <div class="story card" id="shared-variant-example">
+        <h3>Follow one shared variant: {{ story.key }}</h3>
+        <ol>
+          <li><strong>Reference nucleotide.</strong> Position {{ story.position }} of reference {{ story.reference }} is <code>{{ story.ref }}</code>.</li>
+          <li><strong>Individual sequences (Sprint 2).</strong> {{ story.individual_count }} individual sequence(s) have <code>{{ story.alt }}</code> at that position after MAFFT places them on the reference: {{ story.individual }}. Each is one observed base.</li>
+          <li><strong>Pooled samples (Sprint 3).</strong> {{ story.pooled_count }} pooled sample(s) kept after quality control report {{ story.ref }}&gt;{{ story.alt }} there, at frequencies {{ story.frequency_range }}: {{ story.pooled }}. Each is a share of sequencing reads, a different kind of measurement.</li>
+          <li><strong>Classification.</strong> Same reference, same position, same change in both sources, so the variant is <em>{{ story.category }}</em>.</li>
+          <li><strong>Time and place.</strong> First pooled report {{ story.first_pooled }}; first individual sequence {{ story.first_individual }}{% if story.days is not none %} ({% if story.days < 0 %}pooled {{ -story.days }} day(s) earlier{% elif story.days > 0 %}individual {{ story.days }} day(s) earlier{% else %}same day{% endif %}){% endif %}; {{ story.window_pairs }} individual–pooled pairs fall within the cross-source date window. Individual sequences come from {{ story.individual_places }}; pooled reports from {{ story.pooled_places }}{% if story.km is not none %}; nearest distance {{ story.km }} km{% else %}; no kilometer distance can be computed because the sites have no precise coordinates{% endif %}.</li>
+        </ol>
+        <p class="note">A shared variant shows that both kinds of surveillance saw the same nucleotide change. It does not show that the same infections, people, or lineage were sampled, or which source saw it first for a reason.</p>
+      </div>
+    {% endmacro %}
+
+    {% macro render_section(s) %}
+      <section id="{{ s.id }}" class="result-section">
+        {% if s.sprint %}<p class="sprint-tag">{{ s.sprint }}</p>{% endif %}
+        <h2>{{ s.number }}. {{ s.title }}</h2>
+        <p class="purpose">{{ s.purpose }}</p>
+        {% if s.unavailable %}<p class="unavailable">{{ s.unavailable }}</p>{% endif %}
+        {% if s.stats %}
+          <div class="summary-grid">{% for item in s.stats %}<p class="stat{% if not item.available %} na{% endif %}"><strong>{{ item.label }}:</strong> {{ item.value }}{% if item.detail %} <span class="detail">({{ item.detail }})</span>{% endif %}</p>{% endfor %}</div>
+        {% endif %}
+        {% if s.id == 'overview' %}
+          <p><strong>Analysis mode:</strong> {{ s.mode }}</p>
+          {% if s.findings or (analysis_complete and summary) or enrichment_report %}
+            <h3>Major findings</h3>
+            <ul class="findings">
+              {% for item in s.findings %}<li>{{ item }}</li>{% endfor %}
+              {% if enrichment_report %}<li>Sprint 4 metadata enrichment was enabled: {{ enrichment_report.summary['Approved'] }} of {{ enrichment_report.summary['Proposed metadata improvements'] }} proposed improvement(s) approved; {{ enrichment_report.summary['Values changed'] }} value(s) used in this analysis (<a href="#enrichment-report">report</a>).</li>{% endif %}
+              {% if analysis_complete and summary %}<li>Sprint 2 screening: {{ related_pair_count }} related pair(s) meet all three cutoffs, forming {{ clusters|length }} potential cluster(s); {{ candidates|length }} more pair(s) pass the genetic and date cutoffs but have unresolved geography.</li>{% endif %}
+            </ul>
           {% endif %}
+          {% if dashboard.cross_source.story %}<p><a href="#shared-variant-example">Follow one shared variant step by step →</a></p>{% endif %}
+          <details class="more">
+            <summary>Files, connection details, and analyses that ran</summary>
+            {% if input_names %}
+              <h3>Files analyzed</h3>
+              <p>{% for key, name in input_names.items() %}<strong>{{ input_labels.get(key, key) }}:</strong> {{ name }}<br>{% endfor %}</p>
+            {% endif %}
+            {% if s.integration %}
+              <h3>How the two sources were connected</h3>
+              <dl class="facts">{% for label, text in s.integration %}<dt>{{ label }}</dt><dd>{{ text }}</dd>{% endfor %}</dl>
+            {% endif %}
+            {% if s.analyses %}
+              <h3>Analyses in this run</h3>
+              <div class="scroll"><table><thead><tr><th>Analysis</th><th>Status</th><th>Detail</th></tr></thead>
+                <tbody>{% for row in s.analyses %}<tr><td>{{ row.Analysis }}</td><td><span class="badge {{ row.Status|lower|replace(' ', '-') }}">{{ row.Status }}</span></td><td>{{ row.Detail }}</td></tr>{% endfor %}</tbody></table></div>
+            {% endif %}
+          </details>
+          <details class="more">
+            <summary>Important limitations</summary>
+            <ul class="notes">
+              <li>Results are screening signals: they do not confirm transmission, an outbreak, or a lineage.</li>
+              <li>Individual base calls and pooled allele frequencies are different measurements; they are compared only by reference position and nucleotide change.</li>
+              <li>Missing information is shown as "Not available" or "unknown", never as zero.</li>
+              <li>Each section lists its own limitations under "Uncertainty and limitations".</li>
+            </ul>
+          </details>
+        {% endif %}
+        {% if s.id == 'population' and s.method %}
+          <p><strong>Method:</strong> {{ s.method }}{% if s.exploratory %} <span class="badge limited">Exploratory — not the paper's method</span>{% else %} <span class="badge completed">Paper method</span>{% endif %}</p>
+        {% endif %}
+        {% if s.figures %}{{ show_figure(s.figures[0]) }}{% endif %}
+        {% if s.id == 'cross-source' and s.story %}{{ shared_story(s.story) }}{% endif %}
+        {% if s.figures|length > 1 %}
+          <details class="more">
+            <summary>More figures in this section ({{ s.figures|length - 1 }})</summary>
+            {% for item in s.figures[1:] %}{{ show_figure(item) }}{% endfor %}
+          </details>
+        {% endif %}
+        {% if s.id == 'quality' and s.regression %}
+          <p class="note">Depth regression: n = {{ s.regression.n }}, slope = {{ '%.4f'|format(s.regression.slope) }}, R² = {{ '%.3f'|format(s.regression.r_squared) }}, permutation p = {{ '%.3f'|format(s.regression.permutation_p) }}.{% if s.regression.small_sample %} Fewer than 10 samples: descriptive only.{% endif %}</p>
+        {% endif %}
+        {% if s.id == 'relationships' %}
+          {% if analysis_complete %}{{ sprint2_results() }}
+          {% elif input_names and input_names.fasta %}<p class="unavailable">The sequence comparison could not be completed for the uploaded sequences; see the message at the top of the page.</p>
+          {% else %}<p class="unavailable">Upload individual FASTA sequences and metadata to compare sequences with MAFFT, p-distance, dates, and locations.</p>{% endif %}
+        {% endif %}
+        {% if s.tables %}
+          <details class="more">
+            <summary>Detailed tables ({{ s.tables|length }})</summary>
+            {% for table in s.tables %}{{ show_table(table) }}{% endfor %}
+          </details>
+        {% endif %}
+        {% if s.limitations %}
+          <details class="more">
+            <summary>Uncertainty and limitations</summary>
+            {{ show_notes(s.limitations) }}
+          </details>
+        {% endif %}
+        {% if s.downloads and download_id %}
+          <p class="section-downloads"><strong>Downloads:</strong> {% for name in s.downloads %}<a href="{{ url_for('result_download', download_id=download_id, filename=name) }}">{{ name }}</a>{% if not loop.last %} · {% endif %}{% endfor %}</p>
+        {% endif %}
+        {% if s.id != 'overview' %}<p class="back-top"><a href="#overview">↑ Back to results overview</a></p>{% endif %}
+      </section>
+    {% endmacro %}
+
+    {% if analysis_complete or dashboard %}
+      {% if is_synthetic_example and not is_literature_example %}
+        <section class="synthetic-note">
+          <h2>Synthetic example analysis</h2>
+          <p>These sequences and sample records are invented for demonstration. They are not NCBI records or real outbreak data.</p>
+        </section>
+      {% endif %}
+      {% if is_integrated_example %}
+        <section class="synthetic-note">
+          <h2>SYNTHETIC integrated example</h2>
+          <p>Every reference base, sequence, pooled sample, site, date, read count, and frequency below is invented to demonstrate the integrated workflow. None of it is real surveillance data.</p>
+          {% if dashboard %}
+            <p><strong>The invented inputs:</strong> {{ dashboard.summary.individual_samples }} individual sequence records (Sprint 2), {{ dashboard.summary.pooled_samples }} pooled sample records (Sprint 3), and reference {{ dashboard.summary.reference }}, which both sources share.</p>
+            <p><strong>Read the results in this order:</strong> the <a href="#overview">overview</a> (what was found), the <a href="#cross-source">cross-source evidence</a> with its step-by-step <a href="#shared-variant-example">shared-variant example</a> (how Sprint 2 and Sprint 3 connect), then the <a href="#population">population structure</a> of the pooled samples.</p>
+          {% endif %}
+        </section>
+      {% endif %}
+      {% if is_literature_example %}
+        <section class="synthetic-note">
+          <h2>SYNTHETIC literature-enrichment example</h2>
+          <p>The samples, sequences, articles, and model responses are invented to demonstrate Sprint 4. Use the Sprint 4 section below; nothing is sent to Claude.</p>
+        </section>
+      {% endif %}
+
+      {% if analysis_plan %}
+        <details class="about">
+          <summary>Analyses predicted in Step 2</summary>
+          <div class="scroll"><table><thead><tr><th>Analysis</th><th>Prediction</th><th>Reason</th></tr></thead>
+            <tbody>{% for row in analysis_plan %}<tr><td>{{ row.Analysis }}</td><td>{{ row.Status }}</td><td>{{ row.Reason }}</td></tr>{% endfor %}</tbody></table></div>
         </details>
+      {% endif %}
+
+      {% if dashboard %}
+        <nav class="sections" aria-label="Dashboard sections">
+          <span class="nav-label">Jump to:</span>
+          {% for s in dashboard.sections %}<a href="#{{ s.id }}">{{ s.number }}. {{ s.title }}</a>{% endfor %}
+          {% if enrichment_report %}<a href="#enrichment-report">Sprint 4 report</a>{% elif enrichment and is_literature_example %}<a href="#literature">Sprint 4 enrichment</a>{% endif %}
+          <a href="#provenance">Provenance &amp; downloads</a>
+        </nav>
+        {% for s in dashboard.sections %}{{ render_section(s) }}{% endfor %}
+      {% else %}
+        <section id="relationships">
+          <h2>8. Individual sequence relationships</h2>
+          {{ sprint2_results() }}
+        </section>
+      {% endif %}
+
+      {% if enrichment_report %}{% include "_enrichment_report.html" %}{% endif %}
+      {% if enrichment and is_literature_example %}{% include "_literature.html" %}
+      {% elif enrichment %}
+        <section id="revisit-enrichment" class="revisit">
+          <p><strong>Sprint 4 (optional):</strong> look for publications that could improve missing or broad collection details for these samples. Only date and distance results would be recomputed.</p>
+          <a class="button-link" href="{{ url_for('literature_status', token=enrichment.token) }}">{% if enrichment_report %}Revisit metadata enrichment{% else %}Open metadata enrichment for these results{% endif %}</a>
+        </section>
+      {% endif %}
+
+      <section id="provenance">
+        <h2>Provenance and downloads</h2>
+        {% if dashboard and dashboard.provenance %}
+          <details><summary>Show the provenance record</summary>{{ show_table(dashboard.provenance) }}</details>
+        {% endif %}
+        {% if downloads %}
+          <p class="note">Result files are kept in this server's memory for up to 10 minutes (sooner if several newer analyses run); uploaded files were deleted after the analysis.</p>
+          <details>
+            <summary>All result files ({{ downloads|length }})</summary>
+            <ul class="downloads">
+              {% for name in downloads %}<li><a href="{{ url_for('result_download', download_id=download_id, filename=name) }}">{{ name }}</a></li>{% endfor %}
+            </ul>
+          </details>
+          {% if skipped_downloads %}<p class="note">Too large for the hosted download: {{ skipped_downloads|join(', ') }}. Use run_integrated_analysis.py locally.</p>{% endif %}
+        {% endif %}
+        <p class="back-top"><a href="#overview">↑ Back to results overview</a> · <a href="{{ url_for('index') }}">Start a new analysis</a></p>
       </section>
     {% endif %}
+
+    {% if enrichment and not (analysis_complete or dashboard) %}
+      {% if is_synthetic_example %}
+        <section class="synthetic-note">
+          <h2>SYNTHETIC offline demonstration</h2>
+          <p>The samples, sequences, articles, and model responses are invented to demonstrate Sprint 4. Nothing is sent to Claude or any external service, and nothing is billed.</p>
+        </section>
+      {% endif %}
+      {% if not enrichment.pre_analysis %}<p class="note">The earlier results page is not stored; run the analysis again to see it. Sprint 4 keeps its own session for 30 minutes.</p>{% endif %}
+      {% include "_literature.html" %}
+    {% endif %}
+
+    {% include "_status.html" %}
   </main>
 </body>
 </html>

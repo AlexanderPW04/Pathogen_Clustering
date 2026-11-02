@@ -1,0 +1,13 @@
+Sample_ID,Collection_Date,Location_Name,Feature_ID,Frequency,Quality
+SYN-A1,2025-01-05,North Demo Site,feature_alpha,0.12,Pass
+SYN-A1,2025-01-05,North Demo Site,feature_beta,0.35,Pass
+SYN-A2,2025-01-19,North Demo Site,feature_alpha,0.20,Pass
+SYN-A2,2025-01-19,North Demo Site,feature_beta,0.30,Pass
+SYN-A3,2025-02-02,North Demo Site,feature_alpha,0.28,Review
+SYN-A3,2025-02-02,North Demo Site,feature_beta,0.25,Pass
+SYN-B1,2025-01-06,South Demo Site,feature_alpha,0.08,Pass
+SYN-B1,2025-01-06,South Demo Site,feature_beta,0.42,Pass
+SYN-B2,2025-01-20,South Demo Site,feature_alpha,0.11,Pass
+SYN-B2,2025-01-20,South Demo Site,feature_beta,0.39,Pass
+SYN-B3,2025-02-03,South Demo Site,feature_alpha,0.16,
+SYN-B3,2025-02-03,South Demo Site,feature_beta,0.36,Pass

@@ -26,6 +26,16 @@ RESULT_COLUMNS = [
 ]
 
 
+def read_pair_table(path):
+    """Read a pairwise CSV without changing sample IDs.
+
+    Plain read_csv would turn IDs such as "001" into 1 and "NA" into a missing
+    value, so the IDs would no longer match the metadata.
+    """
+
+    return pd.read_csv(path, converters={"Sample_ID_1": str, "Sample_ID_2": str})
+
+
 def compare_sequences(sequence_1, sequence_2):
     """Compare two already-aligned sequences position by position."""
 
@@ -36,8 +46,10 @@ def compare_sequences(sequence_1, sequence_2):
     comparable_positions = 0
 
     for base_1, base_2 in zip(sequence_1, sequence_2):
-        # Unknown bases and alignment gaps do not count.
-        if base_1 in "N-" or base_2 in "N-":
+        # Unknown bases (N or IUPAC ambiguity codes) and alignment gaps do not
+        # count. For sequences containing only A, C, G, T, N, and -, this is
+        # the same rule as the original Sprint 2 comparison.
+        if base_1 not in "ACGT" or base_2 not in "ACGT":
             continue
 
         comparable_positions += 1

@@ -10,14 +10,18 @@ from Bio import SeqIO
 from genomic_regions import fasta_region, metadata_region, regions_conflict
 
 
-# Required metadata after NCBI column names are standardized.
+# Required metadata after NCBI column names are standardized. Sequence
+# comparison needs an identifier that matches the FASTA and a pathogen to group
+# sequences for MAFFT; nothing else is required.
 REQUIRED_METADATA_COLUMNS = [
     "Accession",
     "Pathogen",
-    "Collection_Date",
-    "Location_Name",
-    "Host_Source",
 ]
+
+# Context fields. When a column is absent or a value is blank, the sample is
+# still compared genetically; only the temporal or geographic screening that
+# needs the value is skipped for it. Nothing is filled in.
+CONTEXT_METADATA_COLUMNS = ["Collection_Date", "Location_Name", "Host_Source"]
 
 # Coordinates are useful, but they are not required.
 OPTIONAL_METADATA_COLUMNS = ["Latitude", "Longitude"]
@@ -51,9 +55,20 @@ METADATA_ALIASES = {
     "longitude": "Longitude",
     "host_source": "Host_Source",
     "host": "Host_Source",
+    # Completeness columns are read by the complete-genome safeguard, so they
+    # must be recognized however their headers are spaced or capitalized.
+    "nuc_completeness": "Nuc_Completeness",
+    "completeness": "Completeness",
 }
 
 REGION_COLUMNS = ["Gene_Segment", "Segment", "Gene_Name", "Gene", "Region"]
+
+# INSDC/NCBI placeholder words that mean "no value" (plus common variants).
+MISSING_VALUE_WORDS = {
+    "missing", "not collected", "not provided", "not applicable", "restricted access",
+    "unknown", "na", "n/a", "none", "null", "-", "?",
+}
+
 
 # Exact DataFrame layout expected by the later analysis stages.
 INTERNAL_COLUMNS = [
@@ -68,11 +83,28 @@ INTERNAL_COLUMNS = [
     "Longitude",
     "Host_Source",
     "Accession",
+    # Geographic level when known from country/state columns (see
+    # genomics/location_hierarchy.py); country- and state-level places are
+    # too coarse for the kilometer cutoff.
+    "Location_Level",
+    "Location_Name_Source",
 ]
 
 FASTA_EXTENSIONS = {".fasta", ".fa", ".fna"}
 METADATA_EXTENSIONS = {".xlsx", ".csv"}
-ALLOWED_SEQUENCE_CHARACTERS = set("ACGTN-")
+# IUPAC ambiguity codes (for example R = A or G) are accepted, but every stage
+# treats them like N: they are never counted as a difference or a variant call.
+AMBIGUOUS_NUCLEOTIDES = set("RYSWKMBDHV")
+ALLOWED_SEQUENCE_CHARACTERS = set("ACGTN-") | AMBIGUOUS_NUCLEOTIDES
+
+
+def is_missing_value(value):
+    """True for blanks and placeholder words such as 'not provided'."""
+
+    if value is None or pd.isna(value):
+        return True
+    text = " ".join(str(value).split()).casefold()
+    return text == "" or text in MISSING_VALUE_WORDS
 
 
 def blank_mask(series):
@@ -149,12 +181,60 @@ def load_metadata(file_path):
     raise ValueError("Metadata must be an .xlsx or .csv file.")
 
 
-def validate_metadata(data):
-    """Clean and validate metadata without deleting any rows."""
+def partial_date_mask(values):
+    """True for dates given only as a year or a year and month.
+
+    Such dates (for example "2020" or "2020-06") are kept as text in the
+    source but are not turned into a day, because pandas would otherwise
+    silently read "2020" as 1 January 2020.
+    """
+
+    text = values.astype("string").str.strip()
+    year_only = text.str.fullmatch(r"\d{4}")
+    year_month = text.str.fullmatch(r"\d{4}[-/]\d{1,2}")
+    month_year = text.str.fullmatch(r"[A-Za-z]{3,9}[- ]\d{4}")
+    return (year_only | year_month | month_year).fillna(False).astype(bool)
+
+
+def ambiguous_day_month(values):
+    """Mark numeric a/b/yyyy dates when the column also shows day-first evidence.
+
+    pandas reads 03/04/2024 as 4 March (month first) but 13/04/2024 as 13 April
+    (day first). When both kinds appear, the whole column is ambiguous, so every
+    a/b/yyyy value with both parts 12 or less is reported.
+    """
+
+    text = values.astype("string").str.strip()
+    parts = text.str.extract(r"^(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})$")
+    first = pd.to_numeric(parts[0], errors="coerce")
+    second = pd.to_numeric(parts[1], errors="coerce")
+    day_first = (first > 12).any()
+    month_first = (second > 12).any()
+    both_small = first.le(12) & second.le(12)
+    if not day_first:
+        # Month-first only (US style) is read consistently by pandas.
+        return pd.Series(False, index=values.index)
+    flagged = both_small | (first.notna() if month_first else False)
+    return pd.Series(flagged, index=values.index).fillna(False).astype(bool)
+
+
+def validate_metadata(data, warnings=None):
+    """Clean and validate metadata without deleting any rows.
+
+    `warnings`, when a list is given, receives notes about missing optional
+    context (dates, locations, hosts) that limit some analyses but do not stop
+    the genetic comparison.
+    """
 
     validated = data.copy()
     validated = standardize_metadata_columns(validated)
+    # Combine Geo_Location / Country / state columns into one location per row
+    # (imported here because that module imports from this one).
+    from genomics.location_hierarchy import apply_location_hierarchy
+    validated = apply_location_hierarchy(validated)
     errors = []
+    if warnings is None:
+        warnings = []
 
     # Check the required headers.
     missing_columns = []
@@ -165,6 +245,31 @@ def validate_metadata(data):
     if missing_columns:
         message = "Missing required metadata column(s): "
         errors.append(message + ", ".join(missing_columns))
+
+    absent_columns = set()
+    for column in CONTEXT_METADATA_COLUMNS:
+        if column not in validated.columns:
+            absent_columns.add(column)
+            validated[column] = pd.Series(pd.NA, index=validated.index, dtype="string")
+            warnings.append(
+                f"No {column} column: analyses that need it are skipped; genetic "
+                "comparison still runs."
+            )
+
+    # Placeholder words such as "not provided" or "missing" (INSDC/NCBI style)
+    # mean "no value" in optional context columns; they are not places or dates.
+    for column in CONTEXT_METADATA_COLUMNS + OPTIONAL_METADATA_COLUMNS:
+        if column not in validated.columns or column in absent_columns:
+            continue
+        placeholders = validated[column].map(
+            lambda value: is_missing_value(value) and pd.notna(value) and str(value).strip() != ""
+        ).astype(bool)
+        if placeholders.any():
+            warnings.append(
+                f"{column} uses a 'missing value' word (for example 'not provided') at "
+                f"metadata row(s): {metadata_rows(placeholders)}; treated as missing."
+            )
+            validated.loc[placeholders, column] = pd.NA
 
     # Choose an explicit region from any supported metadata column, by priority.
     region_columns = [column for column in REGION_COLUMNS if column in validated]
@@ -220,7 +325,13 @@ def validate_metadata(data):
 
         if missing_values.any():
             row_text = metadata_rows(missing_values)
-            errors.append(f"Missing {column} at metadata row(s): {row_text}")
+            if column in REQUIRED_METADATA_COLUMNS:
+                errors.append(f"Missing {column} at metadata row(s): {row_text}")
+            elif not missing_values.all():
+                warnings.append(f"Missing {column} at metadata row(s): {row_text}")
+            elif column not in absent_columns:
+                warnings.append(f"{column} is blank in every metadata row.")
+            validated.loc[missing_values, column] = pd.NA
 
     # Detect duplicate metadata accessions after removing numeric versions.
     if "Accession" in validated.columns:
@@ -247,17 +358,37 @@ def validate_metadata(data):
     if "Collection_Date" in validated.columns:
         original_dates = validated["Collection_Date"].copy()
         missing_dates = blank_mask(original_dates)
+        partial_dates = ~missing_dates & partial_date_mask(original_dates)
+        ambiguous_dates = ambiguous_day_month(original_dates.where(~missing_dates))
+        if ambiguous_dates.any():
+            errors.append(
+                "Collection_Date mixes day-first and month-first numeric dates (for example "
+                "03/04/2024 and 13/04/2024) at metadata row(s): "
+                f"{metadata_rows(ambiguous_dates)}. Use YYYY-MM-DD so days apart are not "
+                "calculated with the wrong convention."
+            )
         converted_dates = pd.to_datetime(
-            original_dates,
+            original_dates.where(~partial_dates),
             errors="coerce",
             format="mixed",
         )
-        invalid_dates = ~missing_dates & converted_dates.isna()
+        invalid_dates = ~missing_dates & ~partial_dates & converted_dates.isna()
         validated["Collection_Date"] = converted_dates
 
-        if missing_dates.any():
+        if missing_dates.any() and not missing_dates.all():
             row_text = metadata_rows(missing_dates)
-            errors.append(f"Missing Collection_Date at metadata row(s): {row_text}")
+            warnings.append(
+                f"Missing Collection_Date at metadata row(s): {row_text}; those samples "
+                "are compared genetically but not by date."
+            )
+        elif missing_dates.all() and len(missing_dates) and "Collection_Date" not in absent_columns:
+            warnings.append("No collection dates were given; temporal screening is skipped.")
+        if partial_dates.any():
+            row_text = metadata_rows(partial_dates)
+            warnings.append(
+                f"Collection_Date gives only a year or month at metadata row(s): {row_text}; "
+                "no day is assumed, so those samples are not used for day-level comparisons."
+            )
 
         if invalid_dates.any():
             row_text = metadata_rows(invalid_dates)
@@ -299,11 +430,11 @@ def validate_metadata(data):
     return validated, errors, missing_counts
 
 
-def load_and_validate_metadata(file_path):
+def load_and_validate_metadata(file_path, warnings=None):
     """Load and validate one metadata file."""
 
     metadata = load_metadata(file_path)
-    return validate_metadata(metadata)
+    return validate_metadata(metadata, warnings)
 
 
 def load_fasta(file_path):
@@ -311,7 +442,8 @@ def load_fasta(file_path):
 
     rows = []
 
-    with Path(file_path).open(encoding="utf-8") as fasta_file:
+    # utf-8-sig removes a byte-order mark that some Windows editors add.
+    with Path(file_path).open(encoding="utf-8-sig") as fasta_file:
         records = SeqIO.parse(fasta_file, "fasta")
 
         for record_number, record in enumerate(records, start=1):
@@ -392,7 +524,8 @@ def match_fasta_to_metadata(
             errors.append(
                 f"Invalid sequence character(s) {character_text!r} for FASTA "
                 f"accession {accession!r} in record {record_number}. "
-                "Allowed characters are A, C, G, T, N, and -."
+                "Allowed characters are A, C, G, T, N, -, and the IUPAC "
+                "ambiguity codes R, Y, S, W, K, M, B, D, H, and V."
             )
 
     # Make dictionaries that connect normalized IDs to their original IDs.
@@ -610,14 +743,34 @@ def match_fasta_to_metadata(
     return matched, errors
 
 
+def version_mismatches(metadata, fasta_records):
+    """List 'metadata vs FASTA' pairs whose numeric versions differ (X.2 vs X.3)."""
+
+    if "Accession" not in metadata.columns:
+        return []
+    fasta_by_base = {normalize_accession(value): str(value) for value in fasta_records["Accession"]}
+    mismatched = []
+    for value in metadata["Accession"].dropna():
+        original = str(value).strip()
+        fasta_value = fasta_by_base.get(normalize_accession(original))
+        if (fasta_value and original != fasta_value
+                and normalize_accession(original) != original
+                and normalize_accession(fasta_value) != fasta_value):
+            mismatched.append(f"{original} vs {fasta_value}")
+    return mismatched
+
+
 def load_and_validate_inputs(
     fasta_path, metadata_path, default_gene_segment=None, confirm_same_region=False,
-    complete_genomes=False,
+    complete_genomes=False, warnings=None,
 ):
-    """Load both inputs and return the DataFrame used by analysis stages."""
+    """Load both inputs and return the DataFrame used by analysis stages.
+
+    Notes about missing optional context are appended to `warnings`.
+    """
 
     metadata, metadata_errors, missing_counts = load_and_validate_metadata(
-        metadata_path
+        metadata_path, warnings
     )
     fasta_records = load_fasta(fasta_path)
     matched, matching_errors = match_fasta_to_metadata(
@@ -628,6 +781,16 @@ def load_and_validate_inputs(
     missing_counts["Sample_ID"] = int(blank_mask(matched["Sample_ID"]).sum())
     missing_counts["Sequence"] = int(blank_mask(matched["Sequence"]).sum())
     missing_counts["Gene_Segment"] = int(blank_mask(matched["Gene_Segment"]).sum())
+
+    if warnings is not None:
+        mismatched = version_mismatches(metadata, fasta_records)
+        if mismatched:
+            warnings.append(
+                "Metadata and FASTA give different accession versions for: "
+                + ", ".join(mismatched[:10])
+                + ". They were matched by base accession; check that the metadata "
+                "describes the same sequence version."
+            )
 
     all_errors = metadata_errors + matching_errors
     return matched, all_errors, missing_counts

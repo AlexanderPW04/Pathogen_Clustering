@@ -1,0 +1,185 @@
+{# Step 1: choose an analysis (optional), see which files it needs, and upload. #}
+{% if previous_files or info %}
+  <section class="notice-box" role="status">
+    {% if info %}<p>{{ info }}</p>{% endif %}
+    {% if previous_files %}<p><strong>Files you used before (select them again):</strong> {{ previous_files|join(', ') }}</p>{% endif %}
+  </section>
+{% endif %}
+<div class="grid-2">
+  <section class="card" id="upload">
+    <h2>Step 1 · Choose your files</h2>
+    {% set mode = intended_mode or 'auto' %}
+    {% macro upload_field(field) %}
+      <div class="upload-field" data-modes="{{ field.modes|join(' ') }}" data-status="{{ field.modes|tojson|forceescape }}" {% if mode not in field.modes %}hidden{% endif %}>
+        <label for="file_{{ field.role }}"><span><strong>{{ field.label }}</strong>
+          <span class="badge {% if field.modes.get(mode) == 'required' %}needs{% else %}skipped{% endif %}" data-badge>{{ 'Required' if field.modes.get(mode) == 'required' else 'Optional' }}</span></span></label>
+        <input id="file_{{ field.role }}" type="file" name="file_{{ field.role }}" accept="{{ field.accept }}" {% if field.multiple %}multiple{% endif %} {% if field.modes.get(mode) == 'required' %}required{% endif %}>
+        <details class="field-help"><summary>{{ field.summary }}</summary>
+          <p class="help">{{ field.help }}{% if field.example %} <a href="{{ url_for('example_file', name=field.example) }}">Example file</a>{% endif %}</p>
+        </details>
+      </div>
+    {% endmacro %}
+    <form id="upload-form" method="post" action="{{ url_for('review_upload') }}" enctype="multipart/form-data">
+      <fieldset class="modes">
+        <legend>What do you want to analyze?</legend>
+        <p class="help">The upload fields below change with your choice. Automatic detection accepts any mix of files and recognizes each one from its content.</p>
+        <div class="mode-grid">
+          {% for key, item in modes.items() %}
+            <label class="mode"><span><input type="radio" name="intended_mode" value="{{ key }}" {% if mode == key %}checked{% endif %}> <strong>{{ item.label }}</strong></span>
+              <span class="help">{{ item.files }}</span></label>
+          {% endfor %}
+        </div>
+      </fieldset>
+
+      <fieldset class="enrich-toggle">
+        <legend>Sprint 4 · optional</legend>
+        <label><span><input type="checkbox" name="enrich" id="enrich" {% if enrich %}checked{% endif %}> <strong>Use PubTator + Claude AI to find missing or more precise sample information</strong></span></label>
+        <p class="help">When enabled, the application can search scientific publications associated with your uploaded records and use AI to identify documented collection locations, dates, sampling sites, and other relevant metadata.</p>
+        <div data-enrich {% if not enrich %}hidden{% endif %}>
+          <ul class="notes">
+            <li>Enrichment is offered after the file review; nothing is searched when this page opens.</li>
+            <li>Finding publications (NCBI, PubTator) sends sample or study identifiers to those external services.</li>
+            <li>Claude analyzes only selected supporting passages, never your sequences or the whole dataset.</li>
+            <li>Paid Claude analysis needs your explicit cost approval.</li>
+            <li>Every suggested value must be reviewed before it is applied.</li>
+            <li>If nothing is found, or you skip, the analysis runs with your original metadata.</li>
+          </ul>
+          <label>Publication or study identifiers for the whole dataset (optional)
+            <input type="text" name="publication_ids" value="{{ publication_ids }}" maxlength="500" placeholder="a PMID, PMCID, DOI, or BioProject (PRJNA…)">
+            <span class="help">Only needed when your files do not already contain them. Accessions in FASTA names and metadata, and BioSample, BioProject, SRA, PMID, or DOI columns, are used automatically.</span></label>
+        </div>
+      </fieldset>
+
+      <div class="upload-fields">
+        <div class="upload-field" data-modes="auto" {% if mode != 'auto' %}hidden{% endif %}>
+          <label for="files"><span><strong>Files</strong> <span class="badge needs" data-badge>Required</span></span></label>
+          <input id="files" type="file" name="files" multiple {% if mode == 'auto' %}required{% endif %} accept=".fasta,.fa,.fna,.csv,.tsv,.txt,.xlsx,.vcf,.gz">
+          <p class="help">Select all files at once (up to 20 files, 10 MB in total). Each file's role is proposed from its content; you can correct it in the review.</p>
+        </div>
+        {% for field in upload_fields if not field.advanced %}{{ upload_field(field) }}{% endfor %}
+        <details class="advanced-inputs" data-modes="pooled combined" {% if mode not in ['pooled', 'combined'] %}hidden{% endif %}>
+          <summary>Advanced inputs (optional)</summary>
+          {% for field in upload_fields if field.advanced %}{{ upload_field(field) }}{% endfor %}
+        </details>
+        <p class="note" data-modes="pooled combined" {% if mode not in ['pooled', 'combined'] %}hidden{% endif %}>Pooled results are uploaded <em>after</em> sequencing reads were aligned to a reference and variants were called elsewhere. This website analyzes those processed results; it does not accept raw FASTQ reads or call variants.</p>
+        <p class="note" data-modes="combined" {% if mode != 'combined' %}hidden{% endif %}>Cross-source matching needs both sources on the <strong>same verified reference</strong>: the pooled table must name the uploaded reference (same ID and bases). Otherwise each source is still analyzed, but their variants are marked incomparable.</p>
+        <p class="warnings" id="other-mode-files" role="status" hidden></p>
+      </div>
+      <noscript><style>.upload-fields [hidden] { display: block !important; }</style><p class="help">JavaScript is off, so every upload field is shown; leave the ones you do not need empty.</p></noscript>
+      <button type="submit" class="big">Review files</button>
+    </form>
+    <script>
+      // Show the upload fields of the selected mode. Fields of other modes keep
+      // their files but are disabled, so they are not uploaded.
+      (function () {
+        var form = document.getElementById("upload-form");
+        if (!form) { return; }
+        var note = document.getElementById("other-mode-files");
+        function update() {
+          var checked = form.querySelector("input[name=intended_mode]:checked");
+          var mode = checked ? checked.value : "auto";
+          var kept = [];
+          form.querySelectorAll("[data-modes]").forEach(function (block) {
+            var show = block.dataset.modes.split(" ").indexOf(mode) >= 0;
+            block.hidden = !show;
+            var status = block.dataset.status ? JSON.parse(block.dataset.status)[mode] : (show ? "required" : null);
+            block.querySelectorAll("input[type=file]").forEach(function (input) {
+              if (input.closest("[data-modes]") !== block) { return; }
+              input.disabled = !show;
+              input.required = show && status === "required";
+              if (!show) { Array.prototype.forEach.call(input.files, function (file) { kept.push(file.name); }); }
+            });
+            var badge = block.querySelector("[data-badge]");
+            if (badge && badge.closest("[data-modes]") === block && status) {
+              badge.textContent = status === "required" ? "Required" : "Optional";
+              badge.className = "badge " + (status === "required" ? "needs" : "skipped");
+            }
+          });
+          var enrich = document.getElementById("enrich");
+          form.querySelectorAll("[data-enrich]").forEach(function (block) { block.hidden = !enrich.checked; });
+          note.hidden = kept.length === 0;
+          note.textContent = kept.length ? "Kept but not uploaded in this mode: " + kept.join(", ") +
+            ". Switch back to that mode to use them." : "";
+        }
+        form.addEventListener("change", update);
+        update();
+      })();
+    </script>
+
+    <h3>Which files do I need?</h3>
+    <details>
+      <summary><span class="dot s2"></span>Individual sequence analysis (Sprint 2)</summary>
+      <ul class="notes">
+        <li><strong>Required:</strong> a FASTA file of sequences (<a href="{{ url_for('example_file', name='synthetic_individual_sequences.fasta') }}">example</a>) and a metadata table with an <code>Accession</code> (matching the FASTA names) and the <code>Pathogen</code> (<a href="{{ url_for('example_file', name='synthetic_individual_metadata.csv') }}">example</a>).</li>
+        <li><strong>Optional:</strong> collection dates, locations or coordinates, and a reference genome FASTA (see "What optional information unlocks").</li>
+        <li>Result: MAFFT alignment, genetic p-distances, date and distance screening, and related-sample candidates.</li>
+      </ul>
+    </details>
+    <details>
+      <summary><span class="dot s3"></span>Pooled sequencing analysis (Sprint 3)</summary>
+      <p class="note">A processed SNV table is the <em>result</em> of sequencing a pooled sample; this website starts there.</p>
+      <ol class="pathway" aria-label="Where a processed SNV table comes from">
+        <li class="offline">Wastewater or other pooled sample</li>
+        <li class="offline">Sequencing reads (FASTQ)</li>
+        <li class="offline">Reference alignment and variant calling — done upstream, offline</li>
+        <li>Processed SNV table — upload this</li>
+        <li>Sprint 3 analysis</li>
+      </ol>
+      <p class="help">The site does not process raw reads or call variants, and MAFFT is not used for pooled reads. An optional offline template for read processing is in <code>offline_workflow/</code>.</p>
+      <ul class="notes">
+        <li><strong>Required:</strong> a processed SNV table with sample, reference position, reference and alternative base, frequency, and depth (<a href="{{ url_for('example_file', name='synthetic_pooled_snvs.csv') }}">example</a>). Also accepted: iVar tables, SNV VCF files, and the Fontenele et al. (2021) supplementary workbook.</li>
+        <li><strong>Optional:</strong> pooled-sample metadata (dates, sites, coverage), per-position depth or A/C/G/T counts (<a href="{{ url_for('example_file', name='synthetic_pooled_base_counts.csv') }}">example</a>), a reference FASTA, a masked-site list, and documented variant profiles (<a href="{{ url_for('example_file', name='synthetic_variant_signatures.csv') }}">example</a>).</li>
+      </ul>
+    </details>
+    <details>
+      <summary><span class="dot s23"></span>Combined analysis (Sprint 2 + Sprint 3)</summary>
+      <ul class="notes">
+        <li>All files of both analyses above, plus <strong>one reference genome FASTA</strong> that both sources use (<a href="{{ url_for('example_file', name='synthetic_reference.fasta') }}">example</a>).</li>
+        <li>Result: every variant is compared across sources by reference position and nucleotide change — shared, one source only, unresolved, or incomparable.</li>
+        <li>The Integrated Example on the right uses exactly these files.</li>
+      </ul>
+    </details>
+    <details>
+      <summary>What optional information unlocks</summary>
+      <div class="scroll"><table>
+        <thead><tr><th>Add this</th><th>To unlock</th></tr></thead>
+        <tbody>
+          <tr><td>Collection dates</td><td>Temporal comparisons, date screening, frequency trends</td></tr>
+          <tr><td>Locations or coordinates</td><td>Geographic context and distance screening (GeoNames estimates coordinates for place names)</td></tr>
+          <tr><td>A verified shared reference genome</td><td>Reference positions for individual sequences and cross-source matching</td></tr>
+          <tr><td>Per-position A/C/G/T counts</td><td>The paper-style Yue–Clayton PCoA</td></tr>
+          <tr><td>Per-position depth or genome coverage</td><td>Coverage-aware results: "not detected at adequate depth" instead of "unknown"</td></tr>
+          <tr><td>Pooled mean depth</td><td>The depth-versus-SNV regression (paper Fig 2B)</td></tr>
+          <tr><td>Masked-site list</td><td>The paper's masked-site quality check</td></tr>
+          <tr><td>Variant profiles</td><td>Overlap with documented profiles (never a lineage assignment)</td></tr>
+        </tbody>
+      </table></div>
+    </details>
+    <details>
+      <summary>Accepted file formats</summary>
+      <ul class="notes">
+        <li><strong>Sequences:</strong> FASTA (.fasta, .fa, .fna), optionally gzip-compressed (.gz). One sequence = possible reference genome; several = individual sequences.</li>
+        <li><strong>Tables:</strong> CSV, TSV/TXT (tab-separated), XLSX (first sheet); CSV/TSV may be .gz. Column names are matched flexibly (for example Sample / Sample_ID / SampleName, Date / Collection_Date, Lat / Latitude, AF / Frequency, DP / Depth).</li>
+        <li><strong>Pooled variant calls:</strong> standardized SNV tables, combined iVar variant tables, the Fontenele et al. (2021) supplementary SNV workbook, and SNV VCF files (.vcf, .vcf.gz) with allele depths or frequencies.</li>
+        <li><strong>Not accepted as results:</strong> raw reads (FASTQ) and read alignments (SAM/BAM/CRAM). Process them first with the optional offline workflow; then upload the variant table or VCF.</li>
+      </ul>
+    </details>
+  </section>
+
+  <section class="card example-card">
+    <h2>Try the synthetic examples</h2>
+    <form method="post" action="{{ url_for('index') }}">
+      <button type="submit" name="run_integrated_example" value="1" class="big" formnovalidate>Run Integrated Example</button>
+      <label><span><input type="checkbox" name="enrich_example"> Include Sprint 4 metadata enrichment before the analysis (offline synthetic demonstration; no AI call)</span></label>
+      {% if example_facts %}
+        <p class="note"><strong>Recommended first.</strong> Invented data with known answers: {{ example_facts.individual }} individual sequence records, {{ example_facts.pooled }} pooled samples from {{ example_facts.sites }} sites, and a {{ example_facts.reference_length }}-base reference genome that both sources share. The results page then follows one shared variant step by step.</p>
+      {% endif %}
+      <button type="submit" name="run_example" value="1" class="secondary" formnovalidate>Run Example Analysis (individual sequences only)</button>
+      <p class="help">Sprint 2 only: invented sequences and sample records (one has a real place name and no coordinates, so GeoNames can be demonstrated when configured).</p>
+      <button type="submit" name="run_literature_example" value="1" class="secondary" formnovalidate>Run Literature Enrichment Example (offline, no AI call)</button>
+      <p class="help">Sprint 4: invented samples and articles with fixed answers; nothing is sent to Claude.</p>
+      {{ settings_fields(values) }}
+    </form>
+    <p class="note">Nothing in the examples is real surveillance data, an NCBI record, or a real outbreak.</p>
+  </section>
+</div>

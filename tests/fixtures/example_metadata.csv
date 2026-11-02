@@ -1,0 +1,10 @@
+Accession,Pathogen,Gene_Segment,Collection_Date,Location_Name,Latitude,Longitude,Host_Source
+DEMO001,Example virus,Region 1,2026-02-01,Phoenix Midtown,33.4484,-112.0740,Human
+DEMO002,Example virus,Region 1,2026-02-03,Phoenix Midtown,33.4520,-112.0680,Human
+DEMO003,Example virus,Region 1,2026-02-06,Phoenix Midtown,33.4440,-112.0810,Environmental
+DEMO004,Example virus,Region 1,2026-03-10,Tucson Central,32.2226,-110.9747,Animal
+DEMO005,Example virus,Region 1,2026-03-12,Tucson Central,32.2270,-110.9690,Animal
+DEMO006,Example virus,Region 1,2026-02-02,Flagstaff,35.1983,-111.6513,Environmental
+DEMO007,Example virus,Region 1,2026-03-11,Yuma,32.6927,-114.6277,Human
+DEMO008,Example virus,Region 1,2025-01-01,New York,40.7128,-74.0060,Human
+DEMO009,Example virus,Region 1,2026-03-11,Seattle,47.6062,-122.3321,Human

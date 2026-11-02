@@ -7,6 +7,15 @@ from pathlib import Path
 
 import pandas as pd
 
+from compare_genetic_distances import read_pair_table
+
+
+# A pair needs this many positions where both sequences have A, C, G, or T
+# before its p-distance can count as genetic relatedness. Without it, two
+# sequences sharing a single called base would have p = 0 and pass any
+# threshold. Prototype safeguard (same value as the reference-mapping rule),
+# not a published standard.
+MIN_COMPARABLE_POSITIONS = 20
 
 PAIR_COLUMNS = [
     "Sample_ID_1",
@@ -46,6 +55,8 @@ def find_related_pairs(
         # Genetic and date information are always required.
         if pd.isna(p_distance) or pd.isna(days_apart):
             continue
+        if not enough_overlap(pair):
+            continue
 
         genetic_passes = p_distance <= max_p_distance
         time_passes = days_apart <= max_days_apart
@@ -71,6 +82,13 @@ def find_related_pairs(
         related_rows.append(related_row)
 
     return pd.DataFrame(related_rows, columns=PAIR_COLUMNS)
+
+
+def enough_overlap(pair):
+    """True when the pair has enough comparable positions (or the column is absent)."""
+
+    comparable = pair.get("Comparable_Positions")
+    return pd.isna(comparable) or comparable >= MIN_COMPARABLE_POSITIONS
 
 
 def build_clusters(related_pairs):
@@ -154,7 +172,7 @@ def run_stage(
     """Load enriched pairs, detect potential clusters, and save two CSVs."""
 
     try:
-        pairs = pd.read_csv(input_path)
+        pairs = read_pair_table(input_path)
     except Exception as error:
         print(f"ERROR: Could not read the enriched CSV: {error}", file=sys.stderr)
         return 2

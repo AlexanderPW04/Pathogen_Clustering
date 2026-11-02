@@ -1,0 +1,44 @@
+{# What Sprint 4 contributed when it ran before the analysis. Article text is autoescaped. #}
+{% set r = enrichment_report %}
+<section id="enrichment-report">
+  <p class="sprint-tag sprint4">Sprint 4 · applied before this analysis</p>
+  <h2>Sprint 4 — AI Metadata Enrichment report</h2>
+  {% if r.synthetic %}<p class="synthetic-note" style="padding:0.5rem 0.75rem;border-radius:8px;border:1px solid var(--warn-border)"><strong>SYNTHETIC offline demonstration:</strong> invented articles and fixed answers; no Claude call and nothing billed.</p>{% endif %}
+  <p class="purpose">The results above were computed with the approved values below. The original files and metadata were not changed; each approved value carries its quoted evidence.</p>
+  <div class="summary-grid">{% for label, value in r.summary.items() %}<p class="stat"><strong>{{ label }}:</strong> {{ value }}</p>{% endfor %}</div>
+  {% if r.resolution %}
+    <h3>Metadata gaps after enrichment</h3>
+    <p class="help">Each gap found at the review step, listed again with the approved values. "Improved, still limited" means a value was applied but the field is still not precise enough for its calculation (for example a place name that GeoNames must still locate). Unresolved gaps keep their original values; nothing was filled without evidence.</p>
+    <div class="scroll"><table><thead><tr><th>Field</th><th>Samples with a gap</th><th>Resolved</th><th>Improved, still limited</th><th>Unresolved</th><th>Details</th></tr></thead>
+      <tbody>{% for row in r.resolution %}<tr><td>{{ row.Field }}</td><td>{{ row['Samples with a gap'] }}</td><td>{{ row.Resolved }}</td><td>{{ row['Improved, still limited'] }}</td><td>{{ row.Unresolved }}</td><td>{% if row['Improved samples'] %}Improved: {{ row['Improved samples'] }}<br>{% endif %}{% if row['Unresolved samples'] %}Unresolved: {{ row['Unresolved samples'] }}{% endif %}</td></tr>{% endfor %}</tbody></table></div>
+  {% endif %}
+  {% if r.per_sample %}
+    <h3>Per-sample enrichment summary</h3>
+    <p class="help">Every inspected sample: what was proposed, your decision, and the value the analysis used. Samples without an approved, applied value used their original metadata.</p>
+    <div class="scroll"><table><thead><tr><th>Sample</th><th>Field</th><th>Original</th><th>Proposed</th><th>Approval</th><th>Applied value</th><th>Publication</th></tr></thead>
+      <tbody>{% for row in r.per_sample %}<tr><td>{{ row.Sample }}</td><td>{{ row.Field }}</td><td>{{ row.Original }}</td><td>{{ row.Proposed }}</td><td>{{ row.Approval }}</td><td>{{ row.Applied }}</td><td>{{ row.Publication }}</td></tr>{% endfor %}</tbody></table></div>
+  {% endif %}
+  {% if r.changes %}
+    <h3>Values used in this analysis</h3>
+    <div class="scroll"><table><thead><tr><th>Sample</th><th>Field</th><th>Original</th><th>Applied value</th><th>Evidence</th><th>Result</th></tr></thead>
+      <tbody>{% for row in r.changes %}<tr><td>{{ row.sample }}</td><td>{{ row.field }}</td><td>{{ row.original }}</td><td><strong>{{ row.value }}</strong></td><td>{{ row.article }}<br><span class="help">“{{ row.quote }}”</span></td><td>{{ row.outcome }}</td></tr>{% endfor %}</tbody></table></div>
+  {% else %}
+    <p class="unavailable">No suggestion was approved, so the analysis used the original metadata.</p>
+  {% endif %}
+  {% if r.screening %}
+    <h3>Individual-sequence screening: original versus enriched metadata</h3>
+    <div class="scroll"><table><thead><tr><th>Result</th><th>Original metadata</th><th>Enriched metadata</th></tr></thead>
+      <tbody>{% for label, pair in r.screening.items() %}<tr><td>{{ label }}</td><td>{{ pair[0] }}</td><td>{{ pair[1] }}</td></tr>{% endfor %}</tbody></table></div>
+    {% if r.changed_pairs %}
+      <details><summary>Pairs whose values changed ({{ r.changed_pair_total }})</summary>
+        <div class="scroll"><table><thead><tr><th>Pair</th><th>Days apart</th><th>Km apart</th><th>Same place name</th><th>Meets criteria</th><th>Change</th></tr></thead>
+          <tbody>{% for row in r.changed_pairs %}<tr><td>{{ row.Sample_ID_1 }} – {{ row.Sample_ID_2 }}</td><td>{{ row.Days_Apart_Before or '—' }} → {{ row.Days_Apart_After or '—' }}</td><td>{{ row.Km_Apart_Before or '—' }} → {{ row.Km_Apart_After or '—' }}</td><td>{{ row.Same_Location_Before or '—' }} → {{ row.Same_Location_After or '—' }}</td><td>{{ row.Meets_Criteria_Before }} → {{ row.Meets_Criteria_After }}</td><td>{{ row.Change }}</td></tr>{% endfor %}</tbody></table></div>
+      </details>
+    {% endif %}
+    <p class="note">The "original" column recomputes the same date and distance screening with the original values; genetic distances were calculated once. A pair that newly meets the criteria is a lead for review, not confirmed transmission.</p>
+  {% endif %}
+  {% if r.download_id and r.files %}
+    <p class="section-downloads"><strong>Evidence report downloads:</strong> {% for name in r.files %}<a href="{{ url_for('result_download', download_id=r.download_id, filename=name) }}">{{ name }}</a>{% if not loop.last %} · {% endif %}{% endfor %}</p>
+  {% endif %}
+  <p class="back-top"><a href="#overview">↑ Back to results overview</a></p>
+</section>

@@ -1,738 +1,1286 @@
-# Disease-Agnostic Genomic Epidemiology Prototype
+# BMI 461 Integrated Genomic Surveillance
 
-This BMI 461 Sprint project is a Python prototype for screening pathogen
-samples for **potential outbreak clusters**. It combines nucleotide-sequence
-similarity with collection dates and locations, then presents cluster membership
-through either command-line CSV outputs or a small Flask webpage. The webpage
-can run locally or on a Render Docker web service.
+A classroom Flask application that analyzes **two kinds of genomic evidence
+in one workflow**: individual (consensus) sequences and pooled-sample
+sequencing results such as wastewater SNV tables. Both are placed on the same
+reference-genome coordinates when the reference is verified, so the
+dashboard can show sequencing quality, genomic variation, temporal trends,
+population structure (PCoA), geographic context, cross-source variant
+overlap, and the original Sprint 2 sequence-relationship screening.
 
-> **Important:** A potential cluster is a screening signal, not a confirmed
-> outbreak or proof of direct transmission. Thresholds must be selected for the
-> pathogen, genomic region, sampling design, and public-health question.
+The application can run on a personal computer or in the supplied Docker
+container. This README describes the code on the `sprint4-integration`
+branch as of November 2, 2026. A potential outbreak cluster, a shared variant,
+or a variant-profile overlap is a screening result; none of them confirms
+transmission, an outbreak, or the lineage present in a mixed sample.
 
-## Current input workflow
+> **Integration summary:** see [Integrated analysis (Sprint 2 and Sprint 3)](#integrated-analysis-sprint-2-and-sprint-3)
+> below, `INTEGRATION_IMPLEMENTATION_LOG.md` for what was implemented, and
+> `ARTICLE_METHOD_VALIDATION.md` for which methods of Fontenele et al. (2021)
+> are reproduced, partially reproduced, or exploratory, with a comparison
+> against the paper's published supplementary data.
+>
+> **To run it on your computer**, follow
+> [Run everything locally: complete setup](#run-everything-locally-complete-setup) step by step.
 
-The program uses two source files, similar to a sequence-plus-results-table
-download from NCBI Virus:
+## Run everything locally: complete setup
 
-```text
-FASTA nucleotide sequences        XLSX or CSV metadata
-             \                         /
-              \                       /
-        accession matching, region resolution, and validation
-                              |
-                              v
-          matched internal DataFrame used by all analysis stages
-                              |
-                              v
-              GeoNames fills missing coordinates when available
-                              |
-                              v
-             MAFFT aligns each pathogen/gene group
-                              |
-                              v
-       genetic comparison -> time/location -> potential clusters
-                              |
-                              v
-                    CSV files or Flask results
-```
+Follow these steps in order. Steps 1–5 and 8 are needed for the core website
+(individual sequences, pooled sequencing results, and the combined analysis).
+Step 6 (GeoNames) and step 7 (Sprint 4 AI metadata enrichment) are optional;
+every analysis still runs without them. Commands are given for **Windows
+Command Prompt**, **Windows PowerShell**, and **macOS/Linux**; use the one
+that matches your terminal.
 
-The FASTA and metadata files are matched through a normalized `Accession`.
-A final numeric FASTA version such as `.1` is ignored for matching, so metadata
-`QB061804` matches FASTA `QB061804.1`. The full metadata accession is preserved
-in `Accession`, while `Sample_ID` uses the full matched FASTA ID. The existing
-genomic, temporal/geographic, and clustering calculations keep their established
-internal column names and scientific rules.
+### 0. What you need
 
-## Project structure
+| Item | Needed for | Required? |
+|---|---|---|
+| Python **3.11** with pip | Running the application | Yes |
+| Git (or a ZIP download of the project) | Getting the code | Yes (one of the two) |
+| A web browser | Using the website | Yes |
+| **MAFFT** (external program) | Aligning individual sequences (Sprint 2, combined analysis, both example buttons that use sequences) | Yes for individual sequences; not for pooled-only uploads |
+| Internet access | GeoNames, NCBI E-utilities, PubTator3, Claude | Only for those optional features |
+| A free **GeoNames** account | Turning specific place names into approximate coordinates | Optional |
+| An **Anthropic API key** with billing enabled | Paid Claude extraction in Sprint 4 | Optional (off by default) |
+| An **NCBI API key** | Faster NCBI literature lookups (10 instead of 3 requests per second) | Optional |
+| Docker Desktop/Engine | Running the Linux container instead of a local Python setup | Optional |
 
-```text
-app.py                          Local Flask interface
-Dockerfile                      Python 3.11 + Linux MAFFT + Gunicorn hosting
-.dockerignore / .gitignore      Keep local data and caches out of deployments
-run_pipeline.py                 Six-step command-line runner
-validate_inputs.py              FASTA/metadata loading, matching, and validation
-genomic_regions.py              Simple explicit-region parsing and checks
-geocode_locations.py            Optional GeoNames coordinate lookup
-align_sequences.py              MAFFT alignment within comparable groups
-system_diagnostics.py           On-demand synthetic MAFFT check
-compare_genetic_distances.py    Pairwise genomic comparison
-add_temporal_geographic.py      Date and Haversine-distance enrichment
-detect_potential_clusters.py    Threshold filtering and DFS clustering
-requirements.txt                Third-party Python dependencies
-PYTHON_LINE_BY_LINE_GUIDE.md     Historical pre-MAFFT line-by-line explanation
-SPRINT_3_CHANGELOG.md           Changes made after the Sprint 2 baseline
-templates/index.html            Flask/Jinja webpage template
-examples/                       Bundled, explicitly synthetic demo inputs
-tests/                          Unit and integration tests
-outputs/                        Demonstration data and generated results
-```
+### 1. Get the code
 
-The earlier conceptual walkthrough is available as
-`output/pdf/BMI461_Sprint2_Code_Review_Guide.pdf`, with editable Markdown beside
-it. That PDF and `PYTHON_LINE_BY_LINE_GUIDE.md` describe the pre-MAFFT/GeoNames
-baseline; their line numbers and pipeline order are not current. This README
-describes the updated workflow.
-
-### Beginner-friendly code style
-
-The main Python files are intentionally written for an undergraduate
-presentation. They use ordinary functions, named intermediate variables, basic
-`for` loops, `if` statements, lists, dictionaries, and sets. The project avoids
-classes, workflow frameworks, graph libraries, regular expressions, and
-JavaScript scientific calculations. Comments separate the major steps, and the
-scientific stages remain in individual files so each calculation can be
-explained and tested separately.
-
-## Requirements and installation
-
-The project can run locally on Windows, macOS, or Linux, or in its Docker
-container. It does not require a database. For local use, MAFFT must be
-installed separately; Docker installs it automatically. GeoNames needs internet
-access only when optional coordinate lookup is used.
-
-Required software:
-
-- Python 3.11 is the project target. The current update was also tested locally
-  with Python 3.12 because Python 3.11 was unavailable in this test environment.
-- `pip`, which is normally included with Python.
-- MAFFT, the external nucleotide alignment program, available on `PATH`.
-- A web browser if the optional Flask interface will be used.
-
-The packages in `requirements.txt` are:
-
-| Package requirement | Purpose |
-|---|---|
-| `pandas>=2.1,<3.0` | Table loading, conversion, grouping, and CSV output |
-| `openpyxl>=3.1,<4.0` | XLSX metadata files |
-| `biopython>=1.83,<2.0` | FASTA parsing |
-| `Flask>=3.0,<4.0` | Local webpage |
-| `requests>=2.31,<3.0` | Optional GeoNames web-service calls |
-| `gunicorn>=22.0,<24.0` | Production web server inside Docker (not used by Windows `python app.py`) |
-
-MAFFT is **not** a pip package in this project. Python starts the separately
-installed program using `subprocess`.
-
-### 1. Download or copy the project
-
-Place the entire project folder on the computer. Keep `requirements.txt`, the
-Python files, `templates/`, and `tests/` together. Open Command Prompt,
-PowerShell, Terminal, or another shell in the project folder—the folder that
-contains `run_pipeline.py`.
-
-For example, the general form is:
+With Git (the work is on the `sprint4-integration` branch):
 
 ```console
-cd "path/to/sprint_2"
+git clone https://github.com/AlexanderPW04/Pathogen_Clustering.git
+cd Pathogen_Clustering
+git checkout sprint4-integration
 ```
 
-Replace `path/to/sprint_2` with the folder's actual location. Quotation marks are
-recommended when a path contains spaces.
+Or download the project as a ZIP from GitHub, extract **all** of it, and open
+a terminal in the folder that contains `app.py` and `requirements.txt`.
+Keep the folders `genomics/`, `literature/`, `wastewater/`, `templates/`,
+`examples/`, and `tests/` next to the Python files.
 
-### 2. Confirm Python is available
+### 2. Install Python 3.11 and check it
 
-On Windows, either of these commands may be available:
+Install Python 3.11 from [python.org](https://www.python.org/downloads/).
+On Windows, tick **"Add python.exe to PATH"** in the installer. Then check:
 
-```console
+```bat
+:: Windows (Command Prompt or PowerShell)
 py -3.11 --version
-python --version
 ```
 
-On macOS or Linux, use:
-
-```console
-python3 --version
+```sh
+# macOS/Linux
+python3.11 --version
 ```
 
-The displayed version should begin with `Python 3.11`. If none of these commands
-works, install Python 3.11 from <https://www.python.org/downloads/>. On Windows,
-the installer can add Python to `PATH`; the `py` launcher can also select version
-3.11 directly.
+The output must start with `Python 3.11`. If `py` is not available on
+Windows but `python --version` shows 3.11, use `python` wherever `py -3.11`
+appears below.
 
-### 3. Create an isolated virtual environment
+### 3. Create a virtual environment and install the Python packages
 
-A virtual environment keeps this project's packages separate from other Python
-projects.
+Run these in the project folder. The environment is created once per
+computer; never copy a `.venv` folder from another computer.
 
 Windows Command Prompt:
 
-```console
+```bat
+cd /d "C:\path\to\Pathogen_Clustering"
 py -3.11 -m venv .venv
 .venv\Scripts\activate.bat
-```
-
-If the Windows `py` launcher is unavailable but `python --version` reports Python
-3.11, use `python -m venv .venv` instead.
-
-Windows PowerShell:
-
-```console
-py -3.11 -m venv .venv
-.venv\Scripts\Activate.ps1
-```
-
-macOS or Linux:
-
-```console
-python3 -m venv .venv
-source .venv/bin/activate
-```
-
-If `python3` points to another Python version but `python3.11` is installed, use
-`python3.11 -m venv .venv` instead.
-
-After activation, the command prompt normally begins with `(.venv)`. If
-activation is unavailable, the environment's Python executable can still be
-called directly as `.venv\Scripts\python.exe` on Windows or
-`.venv/bin/python` on macOS/Linux.
-
-If PowerShell blocks its activation script, use the Windows Command Prompt
-instructions or call `.venv\Scripts\python.exe` directly. Changing the computer's
-execution policy is not required.
-
-### 4. Install the required packages
-
-With the virtual environment active, run:
-
-```console
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
 
-Package installation requires an internet connection. Later analysis runs can
-stay local if the metadata already has coordinates, or if GeoNames lookup is
-skipped; MAFFT still runs locally on the computer.
+Windows PowerShell (no activation script needed, so no execution-policy change):
 
-### 5. Install MAFFT and put it on PATH
-
-MAFFT aligns sequences that may have different lengths or gaps before genomic
-distance is calculated. The code uses `shutil.which("mafft")` to check that the
-executable is discoverable, then runs `mafft --auto --nuc` once per pathogen and
-gene/segment group. It does not align unrelated groups together. All aligned
-sequences in a group must have the same length before direct position-by-position
-comparison. The existing formulas still ignore positions containing `N` or `-`.
-
-Download MAFFT from the [official MAFFT site](https://mafft.ddbj.nig.ac.jp/alignment/software/).
-For Windows, the [official Windows instructions](https://mafft.ddbj.nig.ac.jp/alignment/software/windows_without_cygwin.html)
-describe the portable `mafft-win` download, which includes `mafft.bat`. Extract
-it and add the folder containing `mafft.bat` to the system or user `PATH`. For
-the current **Command Prompt window only**, an example is:
-
-```bat
-set "PATH=C:\path\to\mafft-win;%PATH%"
-where mafft
+```powershell
+Set-Location "C:\path\to\Pathogen_Clustering"
+py -3.11 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
-Replace `C:\path\to\mafft-win` with the actual folder containing `mafft.bat`.
-The `where mafft` command should print its location. On macOS or Linux, install
-MAFFT using the official instructions or a suitable package manager and check
-with `command -v mafft`. Restart the terminal after a permanent PATH change.
-If MAFFT is missing, the pipeline stops before analysis with a clear error; it
-does not silently compare unaligned sequences.
+macOS/Linux:
 
-### 6. Optional: create a GeoNames account
-
-If metadata has missing latitude or longitude, the pipeline can ask
-[GeoNames](https://www.geonames.org/) for coordinates based on `Location_Name`.
-Create a free GeoNames account, confirm the email address, and enable the free
-web service in your account settings, as described in the
-[GeoNames web-services guide](https://www.geonames.org/export/web-services.html).
-Do not put the username in the source code. In the current Windows Command
-Prompt window, set:
-
-```bat
-set "GEONAMES_USERNAME=your_username"
+```sh
+cd "/path/to/Pathogen_Clustering"
+python3.11 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
 ```
 
-In PowerShell, use `$env:GEONAMES_USERNAME = "your_username"`; on macOS/Linux,
-use `export GEONAMES_USERNAME=your_username`. Set the variable in the same
-terminal from which you run the pipeline or Flask site. No password is needed
-in the project.
-
-If the username is absent, GeoNames lookup is skipped with a readable warning.
-If its service or network is unavailable, unresolved coordinates remain blank.
-In either case, the existing normalized `Same_Location` fallback still applies
-for sufficiently specific place names. Lookups use the secure
-`https://secure.geonames.org/searchJSON` endpoint with normal SSL certificate
-verification.
-The first GeoNames search result is used, so ambiguous place names should be
-checked by a person. GeoNames gives approximate *place* coordinates, not an
-exact specimen collection point. Provided coordinates are never replaced when
-both latitude and longitude are present; if only one is present, both values
-are replaced together when GeoNames resolves the place. Repeated location names
-are looked up only once per run. When enabled, location names are sent to the
-GeoNames service, so avoid including private specimen-level details in them.
-
-A state-only name such as `USA: ND` is not an exact collection site. It is not
-sent to GeoNames for a state centroid. GeoNames results identified as
-administrative areas are also marked too coarse. For any pair containing such a
-sample, `Km_Apart` and `Same_Location` are left blank, so the state name cannot
-pass a 50 km cutoff or the name-based fallback. Existing coordinates are kept
-and their source remains visible, but they are not used for that pair's
-geographic comparison when the only location description is state-level. The
-enriched CSV includes `Geographic_Precision_1` and
-`Geographic_Precision_2`; the program also warns about state-only records.
-Specific sites or appropriate sample coordinates are needed for a meaningful
-local-distance assessment.
-
-To confirm a **real** GeoNames request independently of MAFFT, set
-`GEONAMES_USERNAME` as above, then run this from the project folder in Windows
-Command Prompt:
-
-```bat
-python -c "import pandas as pd; from geocode_locations import fill_missing_coordinates; print(fill_missing_coordinates(pd.DataFrame({'Location_Name':['Tempe, Arizona'],'Latitude':[None],'Longitude':[None]})).to_string(index=False))"
-```
-
-The output should show `Coordinate_Source` as `GeoNames`, approximate latitude
-and longitude, and `Geographic_Precision` as a GeoNames place estimate. The
-automated tests mock the web request and confirm the secure URL; they do not
-contact the live service.
-
-### 7. Confirm the installation
-
-Run the automated tests from the project folder:
+Check that every package, including the Anthropic SDK used by Sprint 4,
+imports in this environment (it prints `all packages OK`):
 
 ```console
-python -m unittest discover -s tests -v
+python -c "import flask, pandas, numpy, openpyxl, Bio, requests, matplotlib, anthropic; print('all packages OK')"
 ```
 
-A successful setup ends with `OK`. Tests
-mock the external MAFFT program and GeoNames service, so also verify a real
-MAFFT installation with `where mafft` or `command -v mafft` before a real run.
+In PowerShell without activation, write `.\.venv\Scripts\python.exe` instead of
+`python` (here and in every later step). On macOS/Linux, run
+`source .venv/bin/activate` in each new terminal first.
 
-All remaining commands in this README use `python`, assuming the virtual
-environment is active. On a system where it is not active, replace `python` with
-the appropriate environment executable described above.
+> If Sprint 4 later says *"The Anthropic Python SDK … is not installed in the
+> Python environment running this server"*, the server was started with a
+> Python that skipped this step. Run the `pip install -r requirements.txt`
+> line again **with the same Python that starts the server**, then restart it.
 
-## FASTA format
+### 4. Install MAFFT and put it on `PATH`
 
-Accepted extensions are `.fasta`, `.fa`, and `.fna`. Each FASTA record must
-contain one nucleotide sequence. Biopython uses the first identifier in the
-header as the record ID. For example, the ID below is `ACC001`:
+MAFFT is a separate program; pip does not install it.
+
+**Windows**
+
+1. Download the all-in-one Windows package from the
+   [official MAFFT Windows page](https://mafft.ddbj.nig.ac.jp/alignment/software/windows_without_cygwin.html).
+2. Extract the whole package to a folder without spaces, for example
+   `C:\Tools\mafft-win`, and keep its subfolders together. The folder must
+   contain `mafft.bat`.
+3. Add that folder to your user `Path` permanently: open **Start → "Edit
+   environment variables for your account" → Path → Edit → New**, paste
+   `C:\Tools\mafft-win`, and click **OK** in every window.
+4. Close all terminals and open a new one (running programs do not see the
+   change), then check:
+
+   ```bat
+   where mafft
+   mafft --version
+   ```
+
+   For a single terminal session only, you can instead run
+   `set "PATH=C:\Tools\mafft-win;%PATH%"` (Command Prompt) or
+   `$env:Path = "C:\Tools\mafft-win;" + $env:Path` (PowerShell) before
+   starting the server.
+
+**macOS/Linux**
+
+```sh
+# Debian/Ubuntu
+sudo apt-get update
+sudo apt-get install mafft
+# macOS with Homebrew
+brew install mafft
+# check (both)
+command -v mafft
+mafft --version
+```
+
+The server must be started from a terminal in which `mafft --version` works.
+
+### 5. Start the website
+
+Windows Command Prompt (environment active):
+
+```bat
+python app.py
+```
+
+PowerShell:
+
+```powershell
+.\.venv\Scripts\python.exe app.py
+```
+
+macOS/Linux (environment active):
+
+```sh
+python app.py
+```
+
+Open **http://127.0.0.1:5000** in a browser. The terminal must stay open while
+you use the site; press `Ctrl+C` in it to stop the server. The address only
+works on this computer. If port 5000 is busy, run
+`python -m flask --app app run --host 127.0.0.1 --port 5001` and open port 5001.
+
+### 6. Optional: GeoNames place lookup
+
+1. Create an account at [geonames.org/login](https://www.geonames.org/login)
+   and confirm the e-mail.
+2. Sign in, open [Manage Account](https://www.geonames.org/manageaccount),
+   and click **enable** under *Free Web Services*.
+3. Store your **username** (no password is used) as an environment variable.
+   Permanent setting:
+
+   ```bat
+   :: Windows (Command Prompt or PowerShell), then open a NEW terminal
+   setx GEONAMES_USERNAME "your_username"
+   ```
+
+   ```sh
+   # macOS (zsh): add to ~/.zshrc; Linux (bash): add to ~/.bashrc; then open a new terminal
+   echo 'export GEONAMES_USERNAME="your_username"' >> ~/.zshrc
+   ```
+
+   For the current terminal only: `set "GEONAMES_USERNAME=your_username"`
+   (Command Prompt), `$env:GEONAMES_USERNAME = "your_username"` (PowerShell),
+   or `export GEONAMES_USERNAME="your_username"` (macOS/Linux).
+4. Restart the server (step 5) from a terminal that has the variable.
+
+Set GeoNames as an environment variable rather than in `.env`. Without it,
+analyses still run; specific place names simply stay without coordinates.
+
+### 7. Optional: Sprint 4 AI metadata enrichment
+
+Finding linked publications uses the free NCBI E-utilities and PubTator3
+services and needs no account. Only the Claude extraction step is paid, and
+it is **disabled until you configure it**. Even when it is configured,
+nothing is sent to Claude until you approve a cost estimate on the page.
+
+1. Create a local settings file from the example (`.env` is listed in
+   `.gitignore`, so it is never committed):
+
+   ```bat
+   :: Windows
+   copy ai_enrichment.example.env .env
+   notepad .env
+   ```
+
+   ```sh
+   # macOS/Linux
+   cp ai_enrichment.example.env .env
+   nano .env
+   ```
+
+2. To allow paid Claude extraction, create an API key in the
+   [Anthropic Console](https://console.anthropic.com/) (**API Keys**; the
+   account needs billing credit) and set in `.env`:
+
+   ```text
+   AI_ENRICHMENT_ENABLED=true
+   ANTHROPIC_API_KEY=your-key-here
+   ANTHROPIC_MODEL=claude-opus-5-5
+   ```
+
+   Keep the spending limits in the file (`AI_MAX_COST_USD_PER_RUN=1.00`,
+   `AI_MAX_COST_USD_PER_DAY=3.00`, and the request/token/article limits) or
+   lower them. Never paste the key into a chat, screenshot, source file, or
+   commit.
+3. Leave `AI_ACCESS_CODE` empty for local use: paid runs are then allowed only
+   from this computer (`127.0.0.1`). If you set a code, it is required for
+   every paid run, including local ones. Always set one before exposing the
+   site to other computers.
+4. Optional NCBI settings in the same file: `NCBI_API_KEY` (create it under
+   **Account settings → API Key Management** on
+   [ncbi.nlm.nih.gov](https://www.ncbi.nlm.nih.gov/account/)), and
+   `NCBI_EMAIL`. Without a key, requests are limited to 3 per second, which is
+   enough for normal use.
+5. Confirm that Git ignores the file. The command prints `.env`:
+
+   ```console
+   git check-ignore .env
+   ```
+
+6. Restart the server (step 5). The `.env` file is read when Sprint 4 starts;
+   variables already set in the environment take precedence over it.
+
+Without step 7, Sprint 4 still finds and assesses publications for free and
+explains that AI analysis is disabled; the genomic analysis is unaffected.
+
+### 8. Check the installation on the website
+
+On the main page, scroll to **System status and external services**:
+
+1. Click **Check MAFFT & GeoNames (and PubTator)**. Expected: MAFFT
+   *Operational*; GeoNames *Operational* (or *Not configured* if you skipped
+   step 6); PubTator3 *Operational* when online. The AI line reports
+   *Disabled*, *Not configured*, or *Configured* from your settings without
+   contacting Claude.
+2. Only if you completed step 7: click **Check Claude API access (token count
+   only, no text generated)**. *Operational* means the key and model were
+   accepted by Anthropic's free token-counting endpoint. It does not run a paid
+   extraction.
+
+### 9. Run the built-in examples (all synthetic, no AI call)
+
+On the main page:
+
+1. **Run Example Analysis (individual sequences only)**: Sprint 2 pipeline with MAFFT.
+2. **Run Integrated Example**: individual sequences, pooled SNVs, and a shared
+   reference on one coordinate system. Tick **Include Sprint 4 metadata
+   enrichment before the analysis** to walk through the enrichment steps with
+   invented articles and fixed answers.
+3. **Run Literature Enrichment Example (offline, no AI call)**: the Sprint 4
+   review, approval, and apply steps on their own.
+4. Open `http://127.0.0.1:5000/wastewater-data` and click **Run Synthetic
+   Example** for the processed-measurement page (no MAFFT needed).
+
+### 10. Analyze your own files
+
+1. On the main page choose an analysis mode: **Individual sequences** (FASTA +
+   metadata CSV/TSV/XLSX), **Pooled sequencing results** (processed SNV
+   table or VCF), or **Combined** (both plus one shared reference FASTA). Or
+   upload any mix with **Detect from my files**.
+2. Optional: tick **Use PubTator + Claude AI to find missing or more precise
+   sample information** to add Sprint 4 before the analysis.
+3. Click **Review files**. Check the detected file roles, the column mapping,
+   and the *Metadata readiness* table; fix any listed required item (for
+   example, enter the pathogen if the metadata does not state it).
+4. Click **Run analysis**. With Sprint 4 on, click **Continue to metadata
+   enrichment** instead:
+   1. **Find Relevant Literature** (free);
+   2. read the review outcome;
+   3. if usable evidence exists, run each Claude batch after its cost
+      estimate (paid);
+   4. approve or reject each proposal;
+   5. **Apply approved changes and run the analysis**.
+
+   **Continue with the original metadata** skips enrichment at any point.
+5. Download the result files from the results page. Uploaded files are deleted
+   after the analysis; downloads are kept in memory for about 10 minutes.
+
+### 11. Run the automated tests (optional)
+
+With the environment active, in the project folder:
+
+```console
+python -m unittest discover -s tests
+```
+
+The suite takes about 2–3 minutes and needs no internet, accounts, or keys:
+MAFFT, GeoNames, NCBI, PubTator, and Claude are all mocked. On November 2,
+2026 it ran **372 tests**:
+
+- with MAFFT on `PATH`: all pass except **2 skipped**;
+- without MAFFT: **3 skipped**.
+
+The skipped tests are optional real-data checks; see
+[Tests and local verification](#tests-and-local-verification).
+
+### 12. Every later session, and updating the code
+
+```bat
+:: Windows Command Prompt
+cd /d "C:\path\to\Pathogen_Clustering"
+.venv\Scripts\activate.bat
+python app.py
+```
+
+```powershell
+# Windows PowerShell
+Set-Location "C:\path\to\Pathogen_Clustering"
+.\.venv\Scripts\python.exe app.py
+```
+
+```sh
+# macOS/Linux
+cd "/path/to/Pathogen_Clustering" && source .venv/bin/activate && python app.py
+```
+
+After pulling a newer version (`git pull`), reinstall the requirements
+(`python -m pip install -r requirements.txt`). Then restart the server: code,
+template, and `.env` changes are only picked up by a fresh start.
+
+## Pages and a first demonstration
+
+| Page | Local address | Input and purpose |
+|---|---|---|
+| **Integrated dashboard (primary)** | `http://127.0.0.1:5000/` | Guided workflow: upload any mix of files, review what each one was recognized as, then run every applicable analysis; individual sequences need MAFFT |
+| Wastewater Data Analysis (Sprint 3, legacy) | `http://127.0.0.1:5000/wastewater-data` | One processed feature-measurement CSV/XLSX |
+| Wastewater Surveillance (Sprint 3, legacy) | `http://127.0.0.1:5000/wastewater` | Processed SNV CSV/XLSX, with optional sample metadata |
+| Earlier environmental page | `http://127.0.0.1:5000/environmental` | Same measurement analysis as Wastewater Data Analysis |
+| Health check | `http://127.0.0.1:5000/health` | Returns `OK`; performs no external dependency tests |
+
+The main page also has **Run Integrated Example** (needs MAFFT), which runs
+the entirely synthetic paired demonstration described in
+[Integrated analysis (Sprint 2 and Sprint 3)](#integrated-analysis-sprint-2-and-sprint-3). Pooled-only
+uploads (an SNV table without FASTA files) do not need MAFFT.
+
+For a first local demonstration of a Sprint 3 page without installing MAFFT:
+
+1. Open `/wastewater-data`.
+2. Click **Run Synthetic Example**.
+3. Inspect sample counts, features, tables, and charts.
+4. Select **Download organized measurements (CSV)**.
+
+The example uses `examples/synthetic_environmental_measurements.csv` and is
+clearly labeled synthetic. It contains invented samples and frequencies;
+coverage was not supplied, so the page explains that it is unavailable.
+
+After installing MAFFT, the main page also has **Run Example Analysis**.
+That uses `examples/synthetic_sequences.fasta` and
+`examples/synthetic_metadata.csv` through the six-stage genomic pipeline.
+One example record has a real place name with synthetic sample information
+so optional GeoNames lookup can be demonstrated. All example records are
+classroom data rather than actual outbreaks.
+
+## Integrated analysis (Sprint 2 and Sprint 3)
+
+This section describes the integration of the Sprint 2 individual-sequence
+pipeline with the Sprint 3 pooled-sequencing work. It is an update to those
+sprints, not Sprint 4 work. The optional Sprint 4 AI literature and metadata
+enrichment (dashboard section 9, disabled for paid requests by default) is
+documented in `SPRINT4_AI_NLP_INTEGRATION_REPORT.md`; this README will be
+updated for it after manual validation.
+
+### Architecture
 
 ```text
->ACC001 optional description
-ACGTACGTNN--
+Individual FASTA + metadata          Reference FASTA          Pooled SNV table (+ optional metadata,
+        |                                  |                   per-position depth/A-C-G-T counts,
+        v                                  |                   masked sites, variant profiles)
+ Sprint 2 pipeline (unchanged):            |                              |
+ validate -> GeoNames -> MAFFT ->          |                              v
+ p-distance -> time/place -> clusters      |            wastewater/processed_snv.py (Sprint 3 importer,
+        |                                  |            now keeps published annotations, reads iVar TSV)
+        |   validated, geocoded samples    |                              |
+        +--------------------------------> genomics/  <-------------------+
+                                           references.py         verified reference identity (SHA-256)
+                                           sequence_variants.py  MAFFT to reference -> 1-based variants
+                                           pooled_observations.py shared variant/sample tables, coverage
+                                           quality_control.py    paper preset or exploratory flags
+                                           temporal_analysis.py  per-site frequency trends, regression
+                                           diversity_analysis.py Yue-Clayton PCoA (paper) / Jaccard (exploratory)
+                                           variant_matching.py   cross-source categories, profiles
+                                           figures.py            PNG figures (no Flask code)
+                                           integrated_analysis.py orchestration + provenance
+                                                      |
+                              app.py + integrated_view.py + templates/index.html
+                              (one dashboard, CSV/PNG downloads)   run_integrated_analysis.py (command line)
 ```
 
-Sequences are converted to uppercase. Whitespace is removed with ordinary
-string splitting and joining; the implementation does not use regular
-expressions. The accepted sequence characters are `A`, `C`, `G`, `T`, `N`, and
-`-`. The program reports empty sequences, invalid characters, and duplicate
-FASTA accessions. Biopython also reads each record's full description so an
-explicit genomic-region label can be used when metadata does not provide one.
+Both evidence types use one shared variant table (`genomics/unified_schema.py`):
+`Variant_Key` (= `Reference_ID:Position:Ref>Alt`), `Reference_ID`, 1-based
+`Position`, `Ref`, `Alt`, `Sample_ID`, `Sample_Type` (individual sequence or
+pooled sample), `Observation_Type` (consensus base call or allele frequency),
+`Alt_Frequency`, `Read_Depth`, `Alt_Depth`, `Callable_Status`,
+`Quality_Status`, date, location, and `Data_Source`. Source-provided extras are
+kept as `Published_*` (paper annotations) or `Source_*` (variant-caller output)
+columns, separate from values this application calculates.
 
-## Metadata format
+Three modules support the guided upload: `genomics/file_formats.py` (gzip,
+FASTA/table/VCF recognition, VCF conversion), `genomics/column_detection.py`
+(flexible column names with explicit ambiguity), and
+`genomics/input_inspection.py` (file roles, dataset review, analysis plan, and
+standardized copies for the existing loaders).
 
-Metadata can be `.xlsx` or `.csv`. The standardized internal columns and accepted
-NCBI Virus aliases are:
+### Guided workflow: upload, review, run
 
-| Standard column | Accepted NCBI alias | Required? | Purpose |
-|---|---|---|---|
-| `Accession` | `Accession` | Yes | Identifier used to match a FASTA record |
-| `Pathogen` | `Organism_Name` | Yes | Prevents cross-pathogen comparison |
-| `Gene_Segment` | `Segment`, `Gene`, `Gene_Name`, `Region` | No | Separates different genomic regions when supplied |
-| `Collection_Date` | `Collection_Date` | Yes | Calculates absolute days apart |
-| `Location_Name` | `Geo_Location` | Yes | Provides location comparison and fallback |
-| `Host_Source` | `Host` | Yes | Descriptive epidemiological metadata |
-| `Latitude` | `Latitude` | No | Haversine input when available |
-| `Longitude` | `Longitude` | No | Haversine input when available |
+1. **Upload files.** Select every file at once (up to 20 files, 10 MB in total).
+   Gzip-compressed files are decompressed with a 60 MB size limit.
+2. **Review dataset.** Each file is inspected by content and shown with its
+   detected format, record count, sample IDs, reference IDs, and a suggested
+   role with the evidence for it (for example "5 of 5 values in column
+   'Sample' match the FASTA records", or "its ID SYNREF.1 is the reference
+   named in pooled.csv"). When the evidence is not decisive (a one-sequence
+   FASTA, metadata whose IDs match no other file) the role is left blank and
+   must be chosen. Every table's detected columns are listed; when two columns
+   could be the same field (for example `Date` and `Collection_Date`) the run is
+   blocked until the user picks one. The review also shows reference
+   compatibility, metadata completeness, missing optional information, required
+   information that is still missing, and which analyses will run, run with
+   limits, or be skipped (and why).
+3. **Run analysis.** Advanced thresholds and the QC mode are in a collapsible
+   section. Only applicable analyses run; the results start with a list of what
+   ran and what was skipped.
 
-Headers are matched without regard to capitalization or extra spaces; for
-example, `  sEgMeNt  ` and `Gene Name` are recognized. An NCBI Virus Results
-Table CSV using `Segment = 4` can be uploaded directly and becomes internal
-`Gene_Segment = Segment 4`. Text values such as the gene name `NA` are kept as
-text instead of being mistaken for blank spreadsheet cells. Latitude and longitude
-may be absent or blank. If a GeoNames username is configured, the pipeline tries
-to fill missing coordinates from the location name. Otherwise `Km_Apart` remains
-blank and the existing normalized location-name fallback is used for specific
-place names, but not state-level names.
+Uploaded files wait in a temporary folder for at most 30 minutes between
+review and run (at most six upload sets per server process) and are never
+stored permanently. **Run Integrated Example** remains on the first page.
+The named-field form fields (`fasta_file`, `metadata_file`, `reference_file`,
+`snv_file`, ...) are still accepted by `POST /` for scripts and tests.
 
-Accession values are read as text and surrounding spaces are removed. For
-matching only, one final dot followed entirely by digits is removed. Thus
-`ABC123`, `ABC123.1`, and `ABC123.2` share the normalized base `ABC123`.
-Original accessions are retained for reporting. Matching remains case-sensitive.
+### Supported file formats
 
-### How the genomic region is chosen
+| Format | Use | Support |
+|---|---|---|
+| FASTA `.fasta`, `.fa`, `.fna` (and `.gz`) | Individual sequences; a one-record FASTA as the reference | Full. Content is checked, so FASTA in a `.txt` file is also recognized (and noted). |
+| CSV, TSV/TXT (tab), XLSX first sheet; CSV/TSV/TXT may be `.gz` | Metadata, pooled SNV tables, per-position tables, masked sites, profiles | Full. `.xlsx.gz` is not needed (XLSX is already compressed). |
+| Fontenele et al. (2021) Supplementary Table 2 (`mmc2.xlsx`) | Pooled SNV table with published annotations | Full; verified against the real workbook (see `ARTICLE_METHOD_VALIDATION.md`). |
+| iVar `variants` TSV | Pooled SNV table | Full for SNVs; insertions/deletions are set aside and counted. Without a `SAMPLE` column, one file = one sample named after the file (shown on the review page). Several iVar files are combined. |
+| VCF `.vcf`, `.vcf.gz` | Pooled SNV calls | Partial by design: single-nucleotide alleles only. Frequencies come only from allele-specific values: `FORMAT/AD` (one value per allele), `FORMAT/AO`+`RO`, `FORMAT/AF`, iVar `FORMAT/ALT_FREQ` (single ALT), or `INFO/AF` only for a sites-only file (LoFreq style; with sample columns INFO/AF can be genotype-based). With allele counts, depth is their total, so frequency = alternate reads / depth. Multi-allelic records are split per allele only when such values exist. Genotype-only (`GT`) entries, indels, symbolic alleles, and entries with no alternate reads are set aside and counted; they are never turned into 0% frequencies. `FILTER` is recorded, not applied. VCF has no dates or sites, so add pooled metadata for those analyses. A sites-only VCF uses its file name as the sample ID (shown). |
+| FASTQ (`.fastq`, `.fq`), SAM/BAM/CRAM | Raw reads / alignments | **Not accepted** as results. They are recognized and refused with a pointer to `offline_workflow/`. |
+| Other files | — | Refused with a message. |
 
-For each matched sample, the input stage uses the first available source:
+### Required versus optional information
 
-1. An explicit metadata value in `Gene_Segment`, `Segment`, `Gene_Name`, `Gene`,
-   or `Region`.
-2. An explicit FASTA description, such as `segment 4`, `hemagglutinin (HA)`,
-   or `complete genome`.
-3. For the website's **Complete genomes** option only, `Complete genome` is
-   assigned to still-unannotated records after the user separately confirms
-   that all sequences are complete genomes of one pathogen.
+Column headers are matched without regard to case, spaces, underscores,
+hyphens, or dots, using role-specific names, for example: `Sample_ID` /
+`Sample` / `SampleName` / `Sample Name`; `Accession`; `Collection_Date` /
+`Date` / `Sample_Date`; `Location_Name` / `Location` / `Geo_Location` / `Site`;
+`Latitude` / `Lat`; `Longitude` / `Lon` / `Long`; `Reference_Genome` /
+`Reference` / `Reference_ID` / `CHROM`; `Read_Depth` / `Depth` / `DP`;
+`Alt_Frequency` / `AF` / `Frequency`. Units are never rescaled: coverage
+written as a fraction (all values ≤ 1) or frequencies written as percentages
+(values > 1) block the run with an explanation. Explicit FASTA description
+annotations such as `[collection_date=2020-06-01]`, `[organism=...]`,
+`[country=...]`, and `[host=...]` fill a metadata field only when the metadata
+file has no such column; the source is recorded. Nothing is inferred from file
+names (except the visible fallback sample ID above) or from sequence length.
 
-The website defaults to **Automatic detection**. If metadata and FASTA are
-both silent about a sample's region, automatic detection stops with a clear
-error; it does not guess from sequence length. **Complete genomes** requires
-the confirmation checkbox, one pathogen, and no conflicting gene or segment
-annotation. Explicit partial-sequence or CDS descriptions are also treated as
-contradictions. Neither
-sequence length nor MAFFT is used to identify a gene. Conflicting metadata and
-FASTA annotations cause validation to stop. If no region can be established,
-the error asks for an annotation or an explicit complete-genome confirmation.
-A generic metadata label is the user's assertion of comparability;
-review it before interpreting results. MAFFT aligns only within the resolved
-`Pathogen` and `Gene_Segment` groups.
+| Analysis | Needs | When it is missing |
+|---|---|---|
+| Sequence comparison (MAFFT, p-distance) | FASTA IDs, valid sequences, a pathogen (metadata column, FASTA annotation, or stated once on the review page), a genomic region (metadata, FASTA description, or confirmed complete genomes) | Not run; the review page says what is missing |
+| Temporal screening of pairs | Collection dates (full dates; a year-only or year-month date is not given a day) | Pairs without two dates are compared genetically only |
+| Geographic-distance screening | Coordinates, or specific place names GeoNames can locate | State-level or missing locations stay "unresolved", never 0 km |
+| Reference-coordinate variants and cross-source comparison | A reference FASTA; pooled records on the same verified reference | Skipped, or records kept apart as incomparable |
+| Variant-frequency analysis | Interpretable 0–1 frequencies | Records without one are rejected by the importer |
+| Coverage-aware non-detection | Per-position depth | Unreported variants stay "coverage unknown", never 0% |
+| Paper Yue–Clayton PCoA | Per-position A/C/G/T counts | A labeled exploratory ordination is shown instead |
 
-The older command-line `--default-gene-segment` and `--confirm-same-region`
-options remain for backwards compatibility, but are not controls on the
-website. `--confirm-same-region` assigns `Unspecified_Region`, not a complete
-genome. Do not use either option without independently checking sequence
-comparability.
+**Metadata rule change (documented and tested).** Individual metadata now
+requires only `Accession` and `Pathogen`. A missing `Collection_Date`,
+`Location_Name`, or `Host_Source` column, or a blank value, is a visible note
+instead of an error, so the genetic comparison still runs. Unparseable dates
+remain errors. Year-only or year-month dates (for example `2020` or
+`2020-06`) are no longer read as 1 January / day 1; they are treated as
+unknown for day-level comparisons and listed in the notes.
 
-The validator shows region-label sources, and the pipeline writes a
-`*_region_assignments.csv` file listing every sample's label and source:
-`Metadata`, `FASTA header`, `User override`, or
-`User-confirmed unspecified region`, or `User-confirmed complete genome`. The Flask results also show the source
-for each clustered sample.
+### Dashboard sections
 
-Validation clearly reports:
+Integrated sections come first, then source-specific ones. Every section has a
+purpose statement, summary statistics ("Not available" is shown instead of a
+misleading 0), figures with captions and PNG downloads, tables with CSV
+downloads, and an "Uncertainty and limitations" list.
 
-- missing required columns or values
-- duplicate metadata accessions
-- duplicate FASTA accessions
-- metadata accessions without a FASTA sequence
-- FASTA accessions without metadata
-- invalid sequence characters
-- invalid dates or coordinates
-- unknown or conflicting genomic-region annotations
+| Section | Figures |
+|---|---|
+| 1. Overview | Metadata completeness by source; how the two sources were connected (reference checksum, mapping rule, label and Ref-base checks, date overlap); analyses run or skipped |
+| 2. Cross-source evidence | Category counts; variant-overlap matrix (variant × sample, individual and pooled side by side, distinguishing detection, non-detection with adequate depth, unknown coverage, and QC exclusion); reference positions by category; when each variant was seen in each source |
+| 3. Genomic variation | Variants along the reference (Fig 3 analogue): samples per position, alternative base by color, source by marker shape, multi-allele positions, published novelty flags, annotation bands |
+| 4. Temporal patterns | Sampling dates and sites for both sources at their real dates; frequency trajectories; first-versus-last frequency changes with day spans; missing and unknown observations per sample; sample-by-variant heatmap |
+| 5. Geographic context | Location precision by source (source-provided coordinates, GeoNames estimates, broad administrative areas, named sites, none) and a plain coordinate plot (not a map) |
+| 6. Sequencing quality | Coverage by sample; which QC checks could be applied (pass / fail / not verifiable); read-depth distributions; callable and uncallable positions in individual sequences; SNVs per sample (Fig 2A); depth versus SNVs (Fig 2B) |
+| 7. Population structure | PCoA colored by date with site (or state) markers and an eigenvalue panel; paper method or labeled exploratory method |
+| 8. Individual sequence relationships | The original Sprint 2 results, plus a genetic-distance distribution with genetic-versus-temporal distance and a relationship network (solid = all three cutoffs, dashed = geography unresolved; never "transmission") |
 
-Rows are not silently deleted. The complete pipeline stops before genetic
-comparison when validation or matching fails.
+### Rules that keep the comparison honest
 
-## Run the complete command-line pipeline
+- Positions are compared only on the same reference. Two different accession
+  labels count as the same reference only when both sequences are supplied
+  and identical (checked by SHA-256). A pooled record whose `Ref` base
+  disagrees with the supplied reference is marked incomparable.
+- Individual sequences are aligned **to the reference**, so alignment columns
+  are never used as positions. Partial sequences keep their real span; `N`,
+  IUPAC ambiguity codes, deletions, and positions outside the span are not
+  callable; insertions/deletions are listed but not compared. A sequence that
+  does not map (fewer than 20 callable positions or below 90% identity — a
+  prototype safeguard, not a paper rule) keeps its Sprint 2 distances but gets
+  no variant profile.
+- An unreported pooled variant is never set to 0%. With a per-position depth
+  table it becomes *adequate depth, not reported*, *low coverage*, or *not
+  covered*; without one it stays *coverage unknown*. A reported call that
+  failed QC is shown as *excluded by QC*, not as a non-detection.
+- Cross-source categories: **Shared**, **Individual only** (not detected in
+  pooled samples with adequate depth), **Pooled only** (callable individual
+  sequences show the reference base), **Unresolved** (the other source lacks
+  coverage), **Incomparable** (reference not verified).
+- Pooled site labels are not geocoded and are never treated as precise points;
+  state-only individual locations keep the existing coarse-location rules.
+- Variant-profile overlap is reported as overlap only, never as a lineage call.
 
-```console
-python run_pipeline.py "path/to/sequences.fasta" "path/to/metadata.xlsx" --max-p-distance 0.05 --max-days-apart 14 --max-km-apart 50
-```
+### Fontenele et al. (2021) methods: reproduced, applied, or unavailable
 
-CSV metadata works the same way:
+The full method-to-implementation table (what the study did, what is
+implemented, faithful / partial / exploratory status, required inputs, tests,
+and limits for Methods 2.1–2.6 and Figures 1–5) is in
+`ARTICLE_METHOD_VALIDATION.md`. Summary:
 
-```console
-python run_pipeline.py "path/to/sequences.fna" "path/to/metadata.csv" --max-p-distance 0.05 --max-days-apart 14 --max-km-apart 50
-```
+| Paper method | In this project |
+|---|---|
+| >90% genome coverage at 10x for detailed analysis | Applied when genome coverage is supplied in metadata or calculable from a complete per-position depth table |
+| Variant depth >= 20x | Applied to supplied `Read_Depth` |
+| Fisher's exact test p < 0.05 (iVar) | Applied to supplied p-values or iVar PASS flags; never recalculated or invented |
+| No minimum allele frequency | Matched |
+| Minimum base quality 20 | Not verifiable from processed records; applied when converting `samtools mpileup` text offline |
+| Problematic-site masking (De Maio et al. 2020) | Applied only to an uploaded site list; the historical list is not bundled |
+| SNVs per sample (Fig 2A) | Reproduced as a per-site bar chart |
+| SNV count vs mean depth with 95% CI (Fig 2B) | Least-squares line, seeded bootstrap 95% band, permutation p-value (model details not stated in the paper); needs mean depth |
+| SNVs by genome position (Fig 3) | Reproduced; published novelty flags shown only when present in the source table |
+| Yue–Clayton PCoA (Fig 5) | Reproduced exactly when per-position A/C/G/T counts are supplied (per-position dissimilarity summed over positions; zero-depth positions contribute 0, as stated in the paper). Otherwise a separately labeled exploratory Jaccard ordination of reported SNV sets |
+| BWA-MEM / iVar read processing | Not run here; command template and tested converters in `offline_workflow/` |
+| GISAID comparison and PANGOLIN lineage support | Not reproduced (requires GISAID access); optional documented variant profiles are compared as overlap only |
 
-Replace both example paths with the actual input-file locations. Relative paths
-are interpreted from the current project folder. Forward slashes work in Python
-paths on Windows, macOS, and Linux, which is why they are used in these examples.
-The five command-line output CSVs are written into the same folder as the
-metadata file, so that folder must allow the current user to create files.
+The quality-control mode can be **paper** (failures excluded from analyses,
+still listed in downloads) or **exploratory** (failures flagged only). The
+dashboard shows a method-reproduction table for every run.
 
-If every sequence is truly a complete genome of the same pathogen, explicitly
-confirm that on the command line:
+### Run the synthetic integrated example
 
-```console
-python run_pipeline.py "path/to/sequences.fasta" "path/to/metadata.csv" --max-p-distance 0.05 --max-days-apart 14 --max-km-apart 50 --complete-genomes
-```
-
-The flag is a user assertion, not a method for inferring genome completeness.
-It cannot override contradictory metadata or FASTA headers.
-
-An NCBI Virus nucleotide FASTA and Results Table CSV can be supplied directly
-when the CSV contains the accepted fields above. Extra NCBI columns are ignored
-by the internal analysis contract.
-
-Threshold meanings:
-
-- `--max-p-distance`: largest allowed mismatch proportion among comparable bases.
-- `--max-days-apart`: largest allowed absolute collection-date difference.
-- `--max-km-apart`: largest allowed Haversine distance when coordinates exist.
-
-These are prototype parameters, not universal biological outbreak definitions.
-If coordinates remain missing after optional geocoding, a pair can satisfy the
-geographic rule only when its normalized location names match. Missing
-p-distance or date information prevents a pair from being related.
-
-To run only the new input validation and matching step:
-
-```console
-python validate_inputs.py "path/to/sequences.fasta" "path/to/metadata.csv"
-```
-
-To check the 10-record NCBI files currently in this project folder:
-
-```console
-python validate_inputs.py "sequences.fasta" "sequences.csv"
-```
-
-After installing MAFFT, run those same files through the complete pipeline
-with demonstration-only thresholds:
-
-```console
-python run_pipeline.py "sequences.fasta" "sequences.csv" --max-p-distance 0.05 --max-days-apart 14 --max-km-apart 50
-```
-
-## Run the local website
+Every file in `examples/integrated/` is invented; it was generated by
+`examples/integrated/make_integrated_example.py`, which also lists the
+expected category for every planted variant. With MAFFT installed:
 
 ```console
 python app.py
 ```
 
-Open:
+Open `http://127.0.0.1:5000`, click **Run Integrated Example**, and use the
+section links (Overview through Individual sequence relationships). Or, from
+the command line:
+
+```console
+python run_integrated_analysis.py --example --output-folder results/integrated_example
+```
+
+Expected highlights: 2 shared variants, 1 individual-only, 1 pooled-only,
+1 unresolved for each source, 2 incomparable records (another reference and a
+reference-base mismatch), WW_S4 excluded by the paper preset (78% genome
+coverage), and the paper-method PCoA on 7 pooled samples.
+
+### Real data
+
+- **Pooled:** upload Fontenele et al. (2021) Supplementary Table 2
+  (`mmc2.xlsx`, from the article's supplementary materials) as the SNV table.
+  It has SNV calls only, so PCoA falls back to the exploratory ordination and
+  unreported positions stay *coverage unknown*. Genome coverage per sample is
+  not in that table; supply it as pooled metadata (from the paper's Table 1)
+  to apply the >90% rule. The real workbook was checked on November 1, 2026:
+  7,973 records, 52 samples, 10 states, 24–793 SNVs per sample, and D614G in
+  all 52 samples match the paper exactly; the full comparison (including small
+  differences) is in `ARTICLE_METHOD_VALIDATION.md`, and
+  `python validation/check_fontenele_2021.py path\to\mmc2.xlsx` repeats it.
+  The whole table runs in about 8 seconds.
+- **Individual + cross-source:** upload SARS-CoV-2 consensus sequences from a
+  comparable place and period, the NC_045512.2 reference FASTA (one record),
+  and the pooled table. The bundled H5N1 influenza Sprint 2 data and the
+  SARS-CoV-2 wastewater data are different pathogens and cannot be compared.
+- Data larger than the 10 MB web limit (for example a genome-wide A/C/G/T
+  table for 52 samples) should be analyzed with `run_integrated_analysis.py`.
+
+## Requirements
+
+| Requirement | Used for |
+|---|---|
+| Python 3.11 and pip | Runs the application and installs packages |
+| A web browser | Displays the local website |
+| MAFFT on `PATH` | Individual-genome alignment and the MAFFT diagnostic |
+| Optional GeoNames account and internet access | Missing-coordinate lookup and the GeoNames diagnostic |
+| Internet access (no account) | Sprint 4 publication discovery through NCBI E-utilities and PubTator3 |
+| Optional Anthropic API key in `.env` | Paid Claude extraction in Sprint 4 (disabled by default) |
+| Optional NCBI API key in `.env` | Faster Sprint 4 NCBI lookups (10 instead of 3 requests per second) |
+| Optional Docker Desktop/Engine | Runs the supplied Linux container |
+
+MAFFT and GeoNames are not needed for the processed-measurement or
+processed-SNV pages. Those pages summarize the uploaded tables locally.
+All pages share one Flask application, so install the complete
+`requirements.txt` even when using only one page.
+
+| Python dependency | Purpose |
+|---|---|
+| `pandas>=2.1,<3.0` | Tables, cleaning, grouping, and CSV output |
+| `numpy>=1.26,<3.0` | Yue–Clayton distances, PCoA eigen-decomposition, regression (already a pandas dependency; now listed because the code imports it directly) |
+| `openpyxl>=3.1,<4.0` | Reading XLSX workbooks |
+| `Flask>=3.0,<4.0` | Web forms and rendered results |
+| `biopython>=1.83,<2.0` | FASTA parsing |
+| `requests>=2.31,<3.0` | GeoNames HTTPS requests |
+| `gunicorn>=22.0,<24.0` | Web server in the Linux Docker image |
+| `matplotlib>=3.8,<4.0` | Dashboard figures and Sprint 3 measurement charts |
+| `anthropic>=2.3,<3.0` | Official Anthropic SDK for the optional Sprint 4 Claude extraction (imported only when it is used) |
+
+Local Windows use starts with `python app.py`. Gunicorn is used in Linux
+hosting. MAFFT is an external program and is not installed by pip.
+
+## Install MAFFT for individual-genome analysis
+
+MAFFT aligns comparable nucleotide sequences before direct position-by-position
+comparison. The code finds it with `shutil.which("mafft")` and runs
+`mafft --auto --nuc` separately for each pathogen and genomic region.
+If Flask is running in that terminal, stop it with `Ctrl+C` before changing
+the session settings, then restart it with `python app.py`.
+
+### Windows
+
+1. Download the all-in-one Windows package from the
+   [official MAFFT Windows page](https://mafft.ddbj.nig.ac.jp/alignment/software/windows_without_cygwin.html).
+2. Extract the entire package and keep its folders together. Find `mafft.bat`.
+3. Add its containing folder to `PATH`. For the current Command Prompt session:
+
+   ```bat
+   set "PATH=C:\tools\mafft-win;%PATH%"
+   where mafft
+   mafft --version
+   ```
+
+Replace `C:\tools\mafft-win` with your actual folder. In PowerShell:
+
+```powershell
+$env:Path = "C:\tools\mafft-win;" + $env:Path
+Get-Command mafft
+mafft --version
+```
+
+For a permanent setting, add that folder to your Windows user `Path` through
+the environment-variable settings, then open a new terminal. The application
+supports `mafft.bat` through `cmd.exe /c`.
+
+### macOS and Linux
+
+Install MAFFT using the [official software instructions](https://mafft.ddbj.nig.ac.jp/alignment/software/)
+or your operating system's package manager. On Debian/Ubuntu:
+
+```sh
+sudo apt-get update
+sudo apt-get install mafft
+command -v mafft
+mafft --version
+```
+
+Start Flask from a terminal that can find MAFFT. If it cannot be found, the
+genomic pipeline stops with an installation message. Uploaded sequences can
+have different original lengths; MAFFT must return equal aligned lengths
+within each comparable group.
+
+## Configure optional GeoNames lookup
+
+1. Create your own [GeoNames account](https://www.geonames.org/login).
+2. Confirm the registration email.
+3. Sign in and enable **Free Web Services** on
+   [Manage Account](https://www.geonames.org/manageaccount).
+4. Set `GEONAMES_USERNAME` in the terminal that will start Flask.
+
+Windows Command Prompt:
+
+```bat
+set "GEONAMES_USERNAME=your_username"
+python app.py
+```
+
+PowerShell:
+
+```powershell
+$env:GEONAMES_USERNAME = "your_username"
+.\.venv\Scripts\python.exe app.py
+```
+
+macOS/Linux, with the virtual environment active:
+
+```sh
+export GEONAMES_USERNAME="your_username"
+python app.py
+```
+
+Replace the placeholder with your account username. The application needs no
+GeoNames password. Keep the value in the environment rather than the source.
+For a permanent Windows setting, run `setx GEONAMES_USERNAME "your_username"`
+once and open a new terminal. The project's `.env` file is read only when
+Sprint 4 settings are loaded, so do not rely on it for GeoNames.
+Restart an already-running Flask process after changing its environment.
+
+The application uses `https://secure.geonames.org/searchJSON` with SSL
+verification enabled. If configuration or lookup is unavailable, it continues
+with missing coordinates and the existing specific-location-name fallback.
+
+GeoNames is used only when coordinates are incomplete. Both provided coordinates
+are retained when present. Results are approximate place coordinates and may
+be ambiguous; repeated location names are cached within an analysis run.
+See the [GeoNames web-service documentation](https://www.geonames.org/export/web-services.html).
+
+State-only labels such as `USA: ND` and administrative-area estimates cannot
+establish the kilometer cutoff or the named-location fallback. Their precision
+is recorded. The processed-data pages group supplied location labels without
+calling GeoNames.
+
+## Check the local or hosted system status
+
+On the main page, click **Check MAFFT & GeoNames**. No uploads are required.
+
+| Status | Meaning |
+|---|---|
+| Operational | The real test alignment or live location lookup succeeded |
+| Unavailable | An executable could not be found/started, or a connection failed |
+| Not configured | `GEONAMES_USERNAME` is absent |
+| Check failed | Execution, timeout, API, or returned-data checks failed |
+
+The checks are independent. MAFFT aligns two short synthetic sequences and
+verifies both IDs and equal output lengths. A version is shown when it can
+be read reliably. GeoNames makes one fixed Tempe, Arizona lookup and checks
+the returned latitude and longitude. The username is never displayed.
+
+Results are cached for five minutes per application process. Checks run on
+button presses rather than page loads. `/health` remains a separate lightweight
+endpoint. Automated tests mock external calls; clicking this button verifies
+the dependencies on the actual computer or cloud server.
+
+## Sprint 2: FASTA and metadata input
+
+### FASTA sequences
+
+Accepted extensions: `.fasta`, `.fa`, and `.fna`. Each record contains one
+nucleotide sequence, with its accession/sample identifier first in the header:
 
 ```text
-http://127.0.0.1:5000
+>ACC001.1 segment 4
+ACGTACGTACGT
+>ACC002.1 segment 4
+ACGTACGTACGA
 ```
 
-The page has separate upload areas for FASTA sequences and XLSX/CSV metadata,
-two genomic-region choices, and three thresholds. Automatic detection is the
-default; Complete genomes needs its own confirmation checkbox. Flask saves
-uploads in a unique temporary directory, calls `run_pipeline()` directly,
-then reads the existing CSV outputs. It displays strict potential clusters
-separately from **genomic-temporal candidate pairs with unresolved geography**.
-Those candidate pairs pass the genetic and date limits, have no usable
-kilometer comparison, and cannot pass the named-location fallback. Pairs with
-a known distance above the limit are *not* called unresolved. Candidate pairs
-are not added to the strict related-pairs or cluster-membership CSVs and are
-not confirmed outbreaks. The page also shows MAFFT, GeoNames, comparison, and
-location-precision counts plus the input filenames. Its main summary separates
-unique samples from pairwise relationships: for example, 22 candidate pairs
-can be relationships among the original 10 samples, not 22 extra samples.
-The candidate-pair list starts collapsed; select **Show candidate pairs** to
-inspect it. P-distances are rounded to six decimal places on the webpage only;
-the backend calculations and CSV values retain their precision. The HTML
-performs no scientific calculations. Keep the terminal open; press `Ctrl+C`
-to stop the site.
+Biopython reads the ID and full description. Sequences are uppercased and
+whitespace is removed. Allowed characters are `A C G T N -` and, since the
+Sprint 2 + Sprint 3 integration update, the IUPAC ambiguity codes `R Y S W K M B D H V`, which real
+consensus genomes often contain. Every stage treats an ambiguity code like
+`N`: it is never counted as a nucleotide difference or a variant, so p-distance
+results for `A C G T N -` input are unchanged. Empty sequences, other
+characters, and duplicate normalized accessions are reported.
 
-### Check MAFFT and GeoNames on the server
+### Metadata CSV or XLSX
 
-Near the top of the website, click **Check MAFFT & GeoNames**. No FASTA or
-metadata upload is needed. This button is separate from an analysis run and
-from Render's lightweight `/health` endpoint. The checks do **not** run when
-someone merely opens the page.
+Use a header row and one metadata row per accession. The loader accepts NCBI
+Virus nucleotide FASTA plus a Results Table CSV when the required fields below
+are included in the export.
 
-- MAFFT is located through the same cross-platform lookup used by the pipeline.
-  The diagnostic runs a real alignment of two short, invented sequences and
-  checks that both return at equal aligned lengths. It shows a version only
-  when MAFFT returns one clearly. Linux `mafft` and Windows `mafft.bat` are
-  supported.
-- GeoNames makes one secure, certificate-verified lookup of Tempe, Arizona
-  through the existing GeoNames integration and checks that valid coordinates
-  come back. The page never displays `GEONAMES_USERNAME`. A missing username,
-  connection problem, or API error gets a distinct readable status.
+| Standard column | Accepted aliases | Requirement |
+|---|---|---|
+| `Accession` | `Accession` | Required |
+| `Pathogen` | `Organism_Name` | Required (or stated once on the review page) |
+| `Collection_Date` | `Collection_Date` | Optional context; values must be valid dates when given |
+| `Location_Name` | `Geo_Location` | Optional context |
+| `Host_Source` | `Host` | Optional context |
+| `Gene_Segment` | `Segment`, `Gene`, `Gene_Name`, `Region` | Optional if the region can be established another way |
+| `Latitude` | `Latitude` | Optional; valid range -90 to 90 |
+| `Longitude` | `Longitude` | Optional; valid range -180 to 180 |
 
-Statuses are **Operational**, **Unavailable**, **Not configured**, or
-**Check failed**. The server reuses a recent result for five minutes to limit
-repeated MAFFT work and GeoNames requests. A successful status confirms these
-dependencies responded to this small test; it does not validate a user's
-dataset or prove an outbreak.
+Prefer ISO dates such as `2026-01-08`. Metadata headers tolerate inconsistent
+capitalization and spacing. The guided upload recognizes more header spellings
+(see [Required versus optional information](#required-versus-optional-information));
+a missing optional column is a visible note, and year-only dates are treated as
+unknown for day-level comparisons. A segment value `4` becomes `Segment 4`.
+A text gene label such as `NA` is preserved as text.
 
-To test locally, start the website with `python app.py`, open
-`http://127.0.0.1:5000`, and click the button. On Render, push the changed
-files to GitHub, wait for the Docker Web Service to redeploy, open its public
-`onrender.com` page, and click the same button. If GeoNames says **Not
-configured**, set `GEONAMES_USERNAME` in Render's Environment settings. If
-MAFFT is **Unavailable**, inspect the Docker build log for the Linux `mafft`
-package. `/health` should still simply return `OK` without running either
-diagnostic.
+Accession matching trims surrounding spaces and ignores one final numeric
+version suffix: metadata `QB061804` matches FASTA `QB061804.1`. Matching is
+case-sensitive. Full original values are retained where useful. Duplicate
+base accessions and unmatched records on either side are errors.
 
-**Run Example Analysis** on the webpage uses `examples/synthetic_sequences.fasta`
-and `examples/synthetic_metadata.csv`. These are invented records, not NCBI
-accessions, real specimens, or actual outbreaks. One synthetic sample has a
-Tempe place name but no coordinates; with a configured GeoNames account its
-approximate place coordinates can be looked up. Without GeoNames, the existing
-specific-place name fallback remains. The example includes sequences of
-different original lengths so MAFFT must align them. The button uses the same
-threshold settings and the same six-stage backend as an upload.
-With GeoNames disabled and MAFFT mocked in the automated test, the synthetic
-example produces 28 genomic pairs and two strict potential clusters. A real
-MAFFT run may change the exact pairwise values.
+### Resolve the genomic region
 
-To try the synthetic data from the command line instead:
+The website's **Automatic detection** uses explicit metadata first, then
+explicit FASTA descriptions. **Complete genomes** additionally requires a
+confirmation checkbox that all sequences are complete genomes of one pathogen.
+Conflicting annotations stop the run.
+
+The program does not determine a gene from length or use MAFFT to identify it.
+Region-label sources are reported, and only equal pathogen/region groups are
+aligned and compared.
+
+For backward compatibility, the command line also accepts
+`--default-gene-segment "Region A"` or `--confirm-same-region`.
+The latter assigns `Unspecified_Region` only with explicit confirmation and
+one pathogen. These options do not override contradictory annotations.
+
+### Analysis and results
+
+The six stages are:
+
+1. Validate and match FASTA records and metadata.
+2. Fill missing coordinates through GeoNames when available.
+3. Align each pathogen/region group with MAFFT.
+4. Compare aligned sequences.
+5. Add collection-date and geographic relationships.
+6. Apply thresholds and find connected potential clusters.
+
+Positions containing `N` or `-` in either sequence are excluded. The formulas
+remain:
+
+```text
+P_Distance = Differences / Comparable_Positions
+Percent_Identity = (Comparable_Positions - Differences) / Comparable_Positions * 100
+```
+
+If there are no comparable positions, p-distance and percent identity remain
+missing rather than dividing by zero.
+
+The webpage takes three non-negative thresholds: maximum p-distance, days,
+and kilometers. Strict related pairs need genetic and date criteria plus usable
+geographic evidence. A specific matching location name can supply the existing
+fallback when kilometer distance is unavailable. State-level locations cannot.
+
+The results keep strict potential clusters separate from genomic-temporal
+candidate pairs with unresolved geography. Candidates pass genetic and date
+criteria but lack usable geographic evidence; pairs with known distances over
+the cutoff are not categorized as unresolved.
+
+The summary distinguishes samples from relationships. The current NCBI
+regression fixture has 10 comparable samples, 45 unique comparisons, and
+22 unresolved-geography candidate pairs involving 9 samples under its
+demonstration settings. Those relationships do not create additional samples.
+P-distances are displayed to six decimals while calculations and CSV values
+retain their precision. Candidate lists start collapsed under **Show candidate
+pairs**.
+
+Thresholds are prototype settings rather than universal biological definitions.
+Connected clusters can include A and C through B even without a direct A-C link.
+
+## Run the genomic pipeline from the command line
+
+Activate your environment and make MAFFT available first:
 
 ```console
-python run_pipeline.py "examples/synthetic_sequences.fasta" "examples/synthetic_metadata.csv" --max-p-distance 0.05 --max-days-apart 14 --max-km-apart 50
+python run_pipeline.py "path/to/sequences.fasta" "path/to/metadata.csv" --max-p-distance 0.05 --max-days-apart 14 --max-km-apart 50
 ```
 
-## Publish the website with GitHub and Render Docker
+Replace both paths with your inputs; `metadata.xlsx` works too. Relative paths
+start from the current folder. If the data are confirmed complete genomes:
 
-Visitors to the hosted website need only a browser. The Docker image installs
-Python 3.11, the requirements, and the Linux `mafft` executable on the cloud
-server. Windows users still run locally with `python app.py`; Gunicorn is for
-the Linux container. The container runs one Gunicorn worker with a 180-second
-analysis timeout. The combined FASTA-and-metadata upload request is limited to
-10 MB. Large datasets may need a different hosting plan or workflow.
+```console
+python run_pipeline.py "path/to/sequences.fasta" "path/to/metadata.xlsx" --max-p-distance 0.05 --max-days-apart 14 --max-km-apart 50 --complete-genomes
+```
 
-### 1. Put the source on GitHub
-
-Create an [empty repository in GitHub](https://docs.github.com/en/repositories/creating-and-managing-repositories/creating-a-new-repository)
-(do not add a GitHub-generated README or `.gitignore`). In Windows Command
-Prompt, from this project folder:
+The numbers above are demonstration settings. All five output CSVs are written
+beside the metadata, so use a writable working folder. To try the bundled
+synthetic inputs without creating outputs among the source examples, use this
+Command Prompt example:
 
 ```bat
-git init
-git add .
-git status --short
-git commit -m "Prepare Sprint 2 Docker website"
-git branch -M main
-git remote add origin https://github.com/YOUR-USERNAME/YOUR-REPOSITORY.git
-git push -u origin main
+mkdir outputs\local_demo
+copy examples\synthetic_sequences.fasta outputs\local_demo\synthetic_sequences.fasta
+copy examples\synthetic_metadata.csv outputs\local_demo\synthetic_metadata.csv
+python run_pipeline.py "outputs/local_demo/synthetic_sequences.fasta" "outputs/local_demo/synthetic_metadata.csv" --max-p-distance 0.05 --max-days-apart 14 --max-km-apart 50
 ```
 
-Replace the example repository URL with your own. Before `git commit`, review
-`git status --short` and confirm **no real sample data, credentials, `.env`
-files, generated outputs, or virtual environment** will be published. The
-provided `.gitignore` omits root-level FASTA/CSV/XLSX data and `outputs/`, but
-it cannot remove files that were already committed in an earlier Git history.
-The files needed by Render are the root Python modules, `requirements.txt`,
-`Dockerfile`, `templates/index.html`, and `examples/` synthetic inputs. Include
-the README and tests in GitHub for explanation and verification; Docker only
-copies the runtime files it needs.
+If `outputs\local_demo` already exists, reuse it and omit `mkdir`. That directory
+is ignored by Git.
 
-### 2. Create a Render Free Docker Web Service
+For `metadata.csv`, the outputs are:
 
-1. Sign in to [Render](https://dashboard.render.com/) and connect your GitHub
-   account/repository.
-2. Choose **New > Web Service**, select this repository and its `main` branch.
-3. Choose **Docker** as the runtime and **Free** as the instance type. Keep the
-   repository root as the service root and use the root `Dockerfile`. No separate
-   build or start command is needed because the Dockerfile contains both.
-4. Under advanced settings, set the health-check path to `/health` if offered.
-   The container listens on `0.0.0.0:${PORT}` (default `10000`).
-5. In the service's **Environment** page, add the key `GEONAMES_USERNAME` with
-   your GeoNames web-service username as its value. Do not put that value in
-   GitHub, Dockerfile, or the README. Save and deploy the change. If this
-   variable is omitted or GeoNames is unavailable, analysis continues with
-   missing coordinates and the existing specific-place fallback.
-6. Wait for Render to report a successful deploy, then open its assigned
-   `https://...onrender.com` address. Check `/health` for `OK` and open `/` for
-   the upload form. **This repository has not been deployed to Render yet.**
-
-Render's [Docker guide](https://render.com/docs/docker),
-[Web Service setup](https://render.com/docs/web-services), and
-[environment-variable instructions](https://render.com/docs/configure-environment-variables)
-describe the current dashboard. The [Free plan](https://render.com/docs/free)
-may spin down after idle time, so the first visit can be slow. Its filesystem
-is temporary; this project intentionally deletes uploaded files and results
-after each request. Do not upload identifiable patient data to this public,
-unauthenticated class prototype. GeoNames queries also send location names to
-the external GeoNames service.
-
-### 3. Check the hosted analysis
-
-- Click **Run Example Analysis** with the displayed demonstration thresholds.
-  Its sequences and metadata are explicitly synthetic. Confirm the page shows
-  an aligned-sequence count and results; it must not claim real outbreaks.
-- For the real NCBI exercise, use your own downloaded NCBI Virus FASTA and
-  Results Table CSV in the two upload fields. With demonstration thresholds
-  `0.05`, `14`, and `50`, the existing 10-sample, state-only dataset produces
-  45 unique comparisons and (in the current tested run) 22 genomic-temporal
-  candidate *pairs* among 9 samples, but no strict geographic clusters. These
-  are screening settings, not universal outbreak definitions. Real MAFFT
-  alignment or different source data may change the exact pair counts.
-- If a hosted upload fails, read the message on the page and the Render deploy
-  or runtime logs. Confirm MAFFT installed during the Docker build and that
-  the optional GeoNames variable was saved in Render. `GEONAMES_USERNAME` is
-  never needed in a visitor's browser.
-
-If Docker Desktop is available locally, an optional pre-deploy check is:
-
-```bat
-docker build -t bmi461-sprint2 .
-docker run --rm bmi461-sprint2 mafft --version
-docker run --rm -p 10000:10000 bmi461-sprint2
-```
-
-Then visit `http://127.0.0.1:10000`. Stop the container with `Ctrl+C`.
-
-## Output files
-
-Output names are based on the metadata filename. For `metadata.csv`, the runner
-creates:
-
-| File | Role |
+| Filename | Contents |
 |---|---|
-| `metadata_pairwise_comparisons.csv` | All valid within-group genomic pairs |
-| `metadata_pairwise_comparisons_temporal_geographic.csv` | Genomic pairs plus days, kilometers, same-location status, coordinates used for each sample, their sources (`Provided`, `GeoNames`, or blank), and geographic-precision labels |
-| `metadata_pairwise_comparisons_temporal_geographic_related_pairs.csv` | Only pairs passing all prototype thresholds |
-| `metadata_pairwise_comparisons_temporal_geographic_cluster_membership.csv` | `C1`, `C2`, and later cluster-membership rows |
-| `metadata_region_assignments.csv` | Each sample's resolved `Gene_Segment` and its source |
+| `metadata_pairwise_comparisons.csv` | Valid within-group genetic comparisons |
+| `metadata_pairwise_comparisons_temporal_geographic.csv` | Genetic pairs plus days, distance, locations, coordinate sources, and precision |
+| `metadata_pairwise_comparisons_temporal_geographic_related_pairs.csv` | Strict related pairs |
+| `metadata_pairwise_comparisons_temporal_geographic_cluster_membership.csv` | Cluster IDs and sample membership |
+| `metadata_region_assignments.csv` | Resolved genomic region and its source per sample |
 
-## Included dual-input demonstration
+The main Flask page uses temporary uploads and outputs, which are removed after
+the request. Use the command-line workflow when you want to keep these genomic
+CSV files on disk. The separate candidate list is a webpage summary, not an
+addition to the strict related-pairs CSV.
 
-The `outputs/01a0e5b9-470b-7032-a8c4-c8465c89040b/` folder contains
-`example_sequences.fasta` and `example_metadata.csv`. These historical output
-files are local-only and excluded from GitHub and the
-Docker image. The bundled `examples/` synthetic files above are the portable
-hosted demonstration. Use your own NCBI downloads for the hosted real-data test.
-If you have the local historical files, run them with:
+## Wastewater Data Analysis: processed measurement tables
 
-```console
-python run_pipeline.py "outputs/01a0e5b9-470b-7032-a8c4-c8465c89040b/example_sequences.fasta" "outputs/01a0e5b9-470b-7032-a8c4-c8465c89040b/example_metadata.csv" --max-p-distance 0.05 --max-days-apart 7 --max-km-apart 10
+Open `http://127.0.0.1:5000/wastewater-data`. The earlier `/environmental` route
+uses the same analysis with its earlier page title.
+
+Use one row per sample and feature. CSV files should be UTF-8; for XLSX use a
+simple header row on the first worksheet.
+
+| Column | Meaning |
+|---|---|
+| `Sample_ID` | Required; collected sample identifier |
+| `Feature_ID` | Required; genomic feature identifier |
+| `Collection_Date` | Optional ISO date or Excel date cell |
+| `Location_Name` | Optional sampling location |
+| `Frequency` | Optional fraction from 0 to 1 |
+| `Measurement_Value` | Optional numeric measurement |
+| `Coverage` | Optional non-negative supplied coverage value |
+| `Read_Depth` | Optional non-negative supplied read depth |
+| `Quality` | Optional supplied quality label or information |
+| `Unit` | Optional measurement unit |
+
+Aliases include `Sample`, `Sample ID`, `Feature`, `Feature Identifier`, `Date`,
+`Site`, `Sampling Location`, `Feature Frequency`, `Alt_Frequency`, `ALT_FREQ`,
+`Measurement`, `Value`, `Coverage Depth`, `Depth`, and `Quality Flag`.
+Header spacing and capitalization are normalized.
+
+Example:
+
+```csv
+Sample_ID,Feature_ID,Collection_Date,Location_Name,Frequency,Coverage
+W1,feature_alpha,2026-01-01,North site,0.10,100
+W2,feature_alpha,2026-01-08,North site,0.15,
+W3,feature_beta,2026-01-08,South site,,
 ```
 
-With GeoNames lookup disabled, these demonstration-only settings produced 36
-genomic pairs, 4 related pairs, and 2 potential clusters containing 5 samples
-in the automated end-to-end test with a mocked MAFFT pass-through. A real MAFFT
-run is still required to verify final results on this laptop. These settings
-are not biological cutoff recommendations.
+Only `Sample_ID` and `Feature_ID` are required. A feature-only table still
+produces counts. Feature IDs should distinguish references, organisms, or assays
+when those affect comparability.
 
-The same folder also contains a 10-record NCBI-style compatibility example with
-versioned FASTA IDs, NCBI column aliases, and no latitude/longitude columns:
+The page displays:
 
-```console
-python run_pipeline.py "outputs/01a0e5b9-470b-7032-a8c4-c8465c89040b/ncbi_virus_style_sequences.fasta" "outputs/01a0e5b9-470b-7032-a8c4-c8465c89040b/ncbi_virus_style_metadata.csv" --max-p-distance 0.05 --max-days-apart 7 --max-km-apart 10
+- Unique samples and listed features, with feature counts per sample.
+- Available frequencies and explicit frequency/coverage availability messages.
+- Sample/feature counts by date and location.
+- Means and ranges for supplied measurements, with changes from the previous
+  date within a feature/location group.
+- Missing-data and supplied-quality summaries.
+- Basic charts and the first 100 organized rows.
+- A download of every validated, organized row.
+
+Frequency is summarized when it has usable values; otherwise available
+`Measurement_Value` values are summarized. Coverage and read depth stay
+separate. Missing numerical values remain blank and are excluded from means;
+a supplied zero remains zero. Explicit missing dated measurements produce gaps,
+and the first date has no previous-date change. Frequency or coverage is never
+inferred from feature counts.
+
+Feature counts count entries listed in the table. Unlisted features do not
+establish absence. Dates and locations can be missing, while invalid supplied
+values are reported. Repeated sample/feature pairs, conflicting sample metadata,
+and conflicting supplied units for a feature are rejected.
+
+Charts show the first 20 samples and numerical trends for up to three features
+and six locations per feature. Tables retain the other features; full organized
+rows remain in the CSV. These are descriptive comparisons, not statistical
+significance tests. No external alignment, geocoding, or raw-read software is
+run by this page.
+
+## Existing processed-SNV page
+
+Open `http://127.0.0.1:5000/wastewater` for **Wastewater Surveillance**.
+
+Its standardized CSV/XLSX input requires these columns:
+
+```text
+Sample_ID,Reference_Genome,Position,Ref,Alt,Alt_Frequency,Read_Depth
 ```
 
-The automated end-to-end test matched all 10 metadata rows to all 10 FASTA
-records with zero validation errors. With GeoNames lookup disabled and a mocked
-MAFFT pass-through, it produced 45 genomic pairs, 4 related pairs, and 2
-potential clusters. Kilometer values remained blank, and matching normalized
-location names supplied the existing geographic fallback. Actual MAFFT output
-or optional GeoNames place coordinates may change pairwise results.
+`Collection_Date` and `Location_Name` are optional. `Position` is a positive
+integer; `Ref` and `Alt` are distinct single `A/C/G/T` bases.
+`Alt_Frequency` is required and uses fractions from 0 to 1. The `Read_Depth`
+column is required, but individual depth values can be blank; supplied depths
+must be positive integers.
 
-## Run tests
+An optional metadata CSV/XLSX can provide `Sample_ID`, `Collection_Date`, and
+`Location_Name`. Metadata IDs must be unique and cover every SNV sample.
+Conflicting dates or locations are errors. Repeated SNV keys are reported and
+retained; distinct-sample counts avoid counting a sample twice.
+
+This page also recognizes the existing supported format of Fontenele et al.
+(2021), Supplementary Table 2 (`mmc2.xlsx`), available from the
+[article's supplementary materials](https://pmc.ncbi.nlm.nih.gov/articles/PMC8464352/).
+For that recognized workbook only, the loader maps `SAMPLE`, `COLLECTION_DATE`,
+`POSITION`, `REF`, `ALT`, `ALT_FREQ`, and `TOTAL_DP`, combines `STATE` and
+`LOCATION`, and supplies its configured reference label `NC_045512.2`.
+Other files must explicitly provide `Reference_Genome`. The published workbook
+is not bundled in GitHub; the generic measurement page uses a different schema.
+
+Results include counts, date/location information, frequency/depth summaries,
+the most frequently reported SNVs, and a CSV download. A missing call is unknown
+when coverage is unavailable. The page does not run the individual-genome
+pipeline or infer lineages.
+
+## Uploads, temporary storage, and downloads
+
+| Limit | Current behavior |
+|---|---|
+| Whole web request | 10 MB, including multipart overhead |
+| Measurement upload (`/wastewater-data` or `/environmental`) | Under 3 MB; 1 to 10,000 rows |
+| Processed-SNV upload (`/wastewater`) | Under 3 MB |
+| Optional SNV metadata upload | Under 1 MB |
+| Organized processed-data CSV | At most 4 MB |
+| Detailed processed-data preview | First 100 rows |
+| Processed-data download cache | Up to 10 minutes; at most four recent results per mode and application process |
+| Guided upload (review step) | Up to 20 files per request; gzip files expand to at most 60 MB; kept in a temporary folder for at most 30 minutes, at most six upload sets |
+
+Uploads are handled in temporary directories. The processed-data download
+cache holds CSV bytes in memory, so a restart clears links and a later run may
+evict an older link before ten minutes. Download promptly and rerun the upload
+if a link expires. The application has no database.
+
+## Tests and local verification
+
+With the environment active:
+
+```console
+python -m unittest discover -s tests -p "test_environmental_analysis.py" -v
+```
+
+This portable measurement-page test file covers CSV/XLSX loading, supplied zeros
+versus missing values, counts, date/location summaries, chart generation,
+uploads, downloads, and the bundled synthetic example.
+
+For the full suite in the development folder:
 
 ```console
 python -m unittest discover -s tests -v
 ```
 
-The tests cover FASTA/XLSX matching, FASTA/CSV
-matching, NCBI aliases, versioned accessions, optional coordinates, leading-zero
-accessions, true unmatched and duplicate accessions, invalid sequences, metadata
-validation, optional genomic-region labels and contradictions, MAFFT grouping
-and output checks, GeoNames caching and fallback,
-genomic comparison, temporal/geographic enrichment, threshold logic, transitive
-clustering, complete backend runs, a Flask dual-upload run, and the on-demand
-MAFFT/GeoNames status checks. External program/network behavior is mocked;
-these tests do not install or run MAFFT.
+The latest full run (November 2, 2026, Python 3.11.9, with real MAFFT v7 on
+`PATH`) ran **372 tests: all passed except 2 skipped** (the two optional
+real-data tests below; without MAFFT, 3 are skipped). NCBI E-utilities,
+PubTator3, GeoNames, and Claude are mocked, so no account, key, or internet
+connection is needed. The suite is self-contained:
 
-## Scientific and technical limitations
+- The invented DEMO/NCBI-style example files live in `tests/fixtures/`.
+- The state-only Flask upload check generates its own NCBI-style records.
+- `tests/test_optional_real_ncbi_data.py` keeps the original real-NCBI
+  (H5N1 segment 4) check as an **optional integration test**. It is skipped
+  with a stated reason unless `sequences.fasta` and `sequences.csv` (untracked)
+  are placed in the project root; it passed when those files were present.
+- `RealMafftReferenceAlignmentTest` runs only when real MAFFT is on `PATH`
+  (it ran and passed with `C:\Tools\mafft-win\mafft.bat`).
+- `tests/test_optional_fontenele_table.py` checks the real Supplementary
+  Table 2 against the paper's counts when `FONTENELE_MMC2` points to
+  `mmc2.xlsx` (not stored in Git); it passed when the workbook was supplied.
+- `tests/test_input_detection.py` and `tests/test_guided_workflow.py` cover
+  gzip, VCF, FASTQ refusal, header detection, ambiguous columns, optional
+  metadata, missing dates/geography/reference, compatible and incompatible
+  cross-source comparisons, the review/run pages, and the new figures.
 
-- Sequences within a pathogen/gene group must represent the same genomic region;
-  MAFFT now aligns them, but it cannot make unrelated regions comparable.
-- FASTA descriptions must state a region explicitly; unknown descriptions are
-  not interpreted from length or presumed to be a whole genome.
-- MAFFT must be available on `PATH` (installed locally by the user or in the
-  hosted Docker image).
-- GeoNames may choose an ambiguous place and supplies approximate place
-  coordinates, not specimen-level collection coordinates.
-- Genomic similarity does not prove direct transmission.
-- Temporal and geographic proximity do not prove epidemiological linkage.
-- Appropriate thresholds and mutation rates differ by pathogen and region.
-- Incomplete sampling and missing metadata can change connected components.
-- `N` and `-` positions are excluded from direct nucleotide comparison.
-- Transitive clustering can connect A and C through B without an A-C link.
-- The prototype builds no phylogenetic tree or phylodynamic model.
-- It uses no machine learning and produces no confirmed outbreak labels.
-- NCBI exports using other column names or complex identifier conventions may
-  still require preprocessing.
-- `python app.py` starts Flask's local development server; the hosted Docker
-  image uses Gunicorn. Public hosting has no authentication, so use only
-  synthetic or appropriately de-identified, permitted data.
+**Mocked versus real external checks.** MAFFT is mocked in the automated
+tests: older tests use a pass-through, and the integrated tests use
+`tests/fake_mafft.py`, a small Needleman–Wunsch aligner, so partial
+sequences and indels can be exercised deterministically. GeoNames network
+calls are always mocked. Before deploying, confirm the real tools with the
+System Status button and by clicking **Run Integrated Example** on a machine
+or container where MAFFT is installed.
+
+Real-tool checks run outside the automated mocks on November 1, 2026 (Windows,
+MAFFT from `C:\Tools\mafft-win`): the synthetic integrated example gave the
+same cross-source categories as the mocked tests (2 shared, 1 individual-only,
+1 pooled-only, 1 + 1 unresolved, 2 incomparable), and the real NCBI H5N1
+segment 4 data through the guided workflow gave 10 sequences, 45 comparisons,
+22 genomic-temporal candidate pairs among 9 samples, and 0 strict clusters
+(state-level locations). GeoNames was **not** checked live (no
+`GEONAMES_USERNAME` in this environment).
+
+## Troubleshooting locally
+
+| Problem | What to check |
+|---|---|
+| `python` or `py` is not recognized | Install Python 3.11 and reopen the terminal. Use the available launcher to create the environment. |
+| `ModuleNotFoundError` | Use the intended environment and run `python -m pip install -r requirements.txt` with that same Python. |
+| PowerShell blocks activation | Run `.\.venv\Scripts\python.exe` directly; no execution-policy change is needed. |
+| A copied environment does not work | Create a fresh virtual environment on the current computer and reinstall requirements. |
+| Browser cannot connect | Keep the terminal running and use `http://127.0.0.1:5000`, not a filesystem path. |
+| Port 5000 is busy | Stop another local copy, or run `python -m flask --app app run --host 127.0.0.1 --port 5001` and visit port 5001. |
+| New page is missing or code changes are not visible | Stop Flask with `Ctrl+C` and restart it from the current project folder. Debug auto-reload is disabled. |
+| MAFFT is unavailable | Check `where mafft` (Windows) or `command -v mafft` (macOS/Linux) in the same terminal used to start Flask. |
+| GeoNames is not configured | Set `GEONAMES_USERNAME` and restart Flask. This is optional for the analysis. |
+| GeoNames is unavailable or rejected | Check the account's web-service activation and network access; use System Status for the readable result. Keep SSL verification enabled. |
+| Unknown genomic region | Supply explicit metadata/header annotation, or explicitly confirm genuinely complete genomes through the form. |
+| Accessions do not match | Compare FASTA first-header IDs with metadata accessions; only a final numeric version suffix is ignored. |
+| Missing measurements | Leave unavailable cells blank. Supply numeric frequencies as fractions, not percentage text. |
+| Zero strict clusters but candidate pairs exist | Genetic/date relationships exist, while usable geographic evidence is insufficient for the strict result. |
+| Download returns 404 | Its temporary cache entry expired, was evicted, or the server restarted. Rerun the analysis and download again. |
+| Full-suite `FileNotFoundError` after cloning | Check the local regression-fixture list above. |
+| Sprint 4: "The Anthropic Python SDK … is not installed" | The server's Python lacks the `anthropic` package. Run `python -m pip install -r requirements.txt` with the Python that starts the server (usually `.venv`), then restart. |
+| Sprint 4: "AI analysis is disabled on this server" | Expected until `.env` sets `AI_ENRICHMENT_ENABLED=true` and `ANTHROPIC_API_KEY` (setup step 7); restart after editing `.env`. |
+| Sprint 4: paid analysis refused ("only on the server computer or with the access code") | Open the site as `http://127.0.0.1:5000` on the same computer, or enter the `AI_ACCESS_CODE` value set in `.env`. |
+| Sprint 4: NCBI HTTP 429 or "limit of … requests" | Wait a minute and search again (answers are cached for an hour), search fewer samples, or add `NCBI_API_KEY` to `.env`. An incomplete search is reported as incomplete, never as "no evidence". |
+| Sprint 4 finds a paper but proposes nothing | Expected when the paper predates the samples, is linked only through a shared study, or never names the samples; the page shows the reason for each publication. |
+
+The local Flask development server uses `debug=False`. Each computer's
+`127.0.0.1` points to that computer; running locally does not automatically
+create a public website.
+
+## Optional local Docker workflow
+
+Docker provides a separate way to run the project with Python and Linux MAFFT
+inside the container. It is not required for the Python setup above.
+Start Docker Desktop/Engine, then from the project folder run:
+
+```console
+docker build -t bmi461-sprint2 .
+docker run --rm bmi461-sprint2 mafft --version
+docker run --rm -p 10000:10000 bmi461-sprint2
+```
+
+Open `http://127.0.0.1:10000` or
+`http://127.0.0.1:10000/wastewater-data`. Stop the foreground container with
+`Ctrl+C`.
+
+To use GeoNames in Docker, first set `GEONAMES_USERNAME` in your host terminal
+as shown earlier, then pass the variable by name:
+
+```console
+docker run --rm -p 10000:10000 --env GEONAMES_USERNAME bmi461-sprint2
+```
+
+The `.env` file is not copied into the image. To use the Sprint 4 settings
+(setup step 7) inside the container, pass the file at run time:
+
+```console
+docker run --rm -p 10000:10000 --env GEONAMES_USERNAME --env-file .env bmi461-sprint2
+```
+
+Paid Claude runs from the browser then need `AI_ACCESS_CODE`, because the
+container does not see the request as coming from `127.0.0.1`.
+
+The Dockerfile installs MAFFT through `apt-get`, installs `requirements.txt`,
+copies runtime modules/templates/examples, and starts one Gunicorn worker with
+a 180-second timeout. It listens on `0.0.0.0` using `PORT`, defaulting to
+`10000`. This README does not claim a new Docker build or hosted verification
+was performed during its documentation update.
+
+## GitHub and Render hosting
+
+Local use does not require GitHub or Render. To publish the existing code:
+
+1. Keep the root Python modules, `wastewater/`, `templates/`, `examples/`,
+   `requirements.txt`, `Dockerfile`, `.dockerignore`, and `.gitignore` in GitHub.
+   Include tests and this README for maintenance.
+2. Review `git status` before committing. Keep credentials, uploaded sample
+   data, caches, and generated output files out of commits. The ignore files
+   do not remove anything already tracked.
+3. In Render, create or update a **Web Service** connected to the repository
+   and branch. Select **Docker**, use the repository's Dockerfile, and choose
+   **Free** if suitable for the class demonstration.
+4. Use the Dockerfile's default start command. Set the health-check path to
+   `/health`. If desired, set `GEONAMES_USERNAME` in Render's Environment page.
+5. Deploy the current commit and open the service's assigned
+   `https://...onrender.com` URL. Use the same route suffixes listed above.
+6. Verify **Run Synthetic Example** on `/wastewater-data` and
+   **Check MAFFT & GeoNames** on the main page. Then test a permitted NCBI
+   FASTA/results-table upload with the chosen demonstration thresholds.
+
+For an existing Git-backed service, push updates to its linked branch and
+check Render's deploy result. If automatic deployment is disabled, trigger
+a deployment from the dashboard. Visitors to the hosted service need only
+a browser; MAFFT runs on the cloud server.
+
+Official setup references:
+[Render Docker](https://render.com/docs/docker),
+[Web Services](https://render.com/docs/web-services),
+[Environment Variables](https://render.com/docs/configure-environment-variables),
+and [Free hosting limitations](https://render.com/docs/free).
+Free services can sleep when idle and have an ephemeral filesystem. The app's
+temporary uploads/downloads are designed around that behavior. Use permitted
+classroom or appropriately de-identified data on this unauthenticated prototype.
+
+## Main files
+
+| File or folder | Role |
+|---|---|
+| `app.py` | Flask forms, results, diagnostics, and temporary downloads |
+| `validate_inputs.py` | FASTA/metadata validation and accession matching |
+| `genomic_regions.py` | Explicit genomic-region labels and consistency checks |
+| `geocode_locations.py` | Optional GeoNames lookup and its diagnostic |
+| `align_sequences.py` | MAFFT alignment within comparable groups |
+| `compare_genetic_distances.py` | Pairwise nucleotide differences and identity |
+| `add_temporal_geographic.py` | Date differences, Haversine distances, and location checks |
+| `detect_potential_clusters.py` | Strict related pairs and connected components |
+| `run_pipeline.py` | Six-stage individual-genome runner |
+| `system_diagnostics.py` | Small MAFFT test alignment |
+| `environmental_analysis.py` | Processed measurement loading, summaries, and charts (Sprint 3 legacy page) |
+| `wastewater/processed_snv.py` | Processed-SNV importer: paper Table 2, iVar TSV, SNV VCF, standardized tables |
+| `genomics/` | Shared reference-based model, QC, analyses, matching, figures, orchestration (Sprint 2 + 3 integration) |
+| `genomics/file_formats.py`, `genomics/column_detection.py`, `genomics/input_inspection.py` | Guided upload: formats and VCF, flexible columns, file roles, dataset review |
+| `integrated_view.py` | Arranges integrated results into the eight dashboard sections |
+| `literature/`, `literature_view.py` | Optional Sprint 4 AI literature and metadata enrichment (see `SPRINT4_AI_NLP_INTEGRATION_REPORT.md`) |
+| `validation/check_fontenele_2021.py` | Compares the import of the paper's real Supplementary Table 2 with its reported counts |
+| `ARTICLE_METHOD_VALIDATION.md` | Method-to-implementation table for Fontenele et al. (2021) |
+| `run_integrated_analysis.py` | Command-line integrated analysis (larger processed datasets) |
+| `offline_workflow/` | Optional BWA/iVar command template and tested output converters (not used by the website) |
+| `templates/` | Flask HTML templates (`index.html` is the unified dashboard) |
+| `examples/` | Bundled synthetic inputs; `examples/integrated/` is the paired demonstration |
+| `tests/` | Unit and integration tests; `tests/fixtures/` holds small invented regression files |
+| `INTEGRATION_IMPLEMENTATION_LOG.md` | Integration research facts, progress, and limitations |
+| `requirements.txt` | Python package requirements |
+| `Dockerfile` | Linux runtime, MAFFT, and Gunicorn |
+| `SPRINT_3_CHANGELOG.md` | Record of changes after the Sprint 2 baseline |
+
+The local historical `output/pdf/` guides and `PYTHON_LINE_BY_LINE_GUIDE.md`
+describe earlier code. Some `output/` and `outputs/` files are not included in
+GitHub. Use this README and the current source for the current setup.
+
+The website performs no raw FASTQ processing, read mapping, variant calling,
+lineage deconvolution, or advanced statistical modeling; an optional offline
+template for read processing is in `offline_workflow/`. Genomic similarity,
+shared variants, time/location proximity, and processed-table patterns need
+scientific context before interpretation.
 
 ## AI tools acknowledgment
 
-ChatGPT and Claude were used as supporting references during project development,
-including brainstorming, code explanation, debugging assistance, and documentation
-review. Their suggestions were reviewed by the project team, and the Python
-backend was verified with the automated tests described above. These tools were
-not treated as scientific evidence or as substitutes for peer-reviewed genomic
-epidemiology guidance.
+ChatGPT and Claude were used as supporting references during development for
+brainstorming, code explanation, debugging assistance, and documentation review.
+Their suggestions were reviewed by the project team. They are not scientific
+evidence or substitutes for peer-reviewed genomic epidemiology guidance.
 
 - OpenAI. *ChatGPT*. <https://chatgpt.com/>. Accessed September 28, 2026.
 - Anthropic. *Claude*. <https://claude.ai/>. Accessed September 28, 2026.

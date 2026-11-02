@@ -11,6 +11,10 @@ from Bio import SeqIO
 from validate_inputs import ALLOWED_SEQUENCE_CHARACTERS, clean_sequence
 
 
+# The hosted app's worker is stopped after 180 s, so MAFFT must stop first.
+MAFFT_TIMEOUT_SECONDS = 150
+
+
 def find_mafft():
     """Find the external MAFFT executable before analysis starts."""
 
@@ -21,6 +25,38 @@ def find_mafft():
             "then run the analysis again."
         )
     return mafft_path
+
+
+def run_mafft(mafft_path, input_path):
+    """Run MAFFT on one FASTA file and return the aligned FASTA text."""
+
+    input_path = Path(input_path)
+    command = [mafft_path, "--auto", "--nuc", str(input_path)]
+    folder = None
+
+    # The official Windows package may expose MAFFT as a batch file. cmd.exe
+    # drops the outer quotes when a command line has more than two, which
+    # breaks paths with spaces, so the input is passed by its plain file name
+    # from its own folder and only the MAFFT path can need quotes.
+    if Path(mafft_path).suffix.lower() in {".bat", ".cmd"}:
+        command = ["cmd.exe", "/c", mafft_path, "--auto", "--nuc", input_path.name]
+        folder = str(input_path.parent)
+
+    try:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            check=True,
+            cwd=folder,
+            timeout=MAFFT_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise RuntimeError(
+            f"MAFFT did not finish within {MAFFT_TIMEOUT_SECONDS} seconds. Use fewer or "
+            "shorter sequences on the website, or run_pipeline.py on your own computer."
+        ) from error
+    return result.stdout
 
 
 def align_samples(data, mafft_path=None):
@@ -48,19 +84,8 @@ def align_samples(data, mafft_path=None):
                         f">{sample['Sample_ID']}\n{sample['Sequence']}\n"
                     )
 
-            command = [mafft_path, "--auto", "--nuc", str(input_path)]
-
-            # The official Windows package may expose MAFFT as a batch file.
-            if Path(mafft_path).suffix.lower() in {".bat", ".cmd"}:
-                command = ["cmd.exe", "/c"] + command
-
             try:
-                result = subprocess.run(
-                    command,
-                    capture_output=True,
-                    text=True,
-                    check=True,
-                )
+                aligned_text = run_mafft(mafft_path, input_path)
             except (OSError, subprocess.CalledProcessError) as error:
                 details = getattr(error, "stderr", "") or str(error)
                 raise RuntimeError(
@@ -68,7 +93,7 @@ def align_samples(data, mafft_path=None):
                     f"{details.strip()}"
                 ) from error
 
-        records = list(SeqIO.parse(StringIO(result.stdout), "fasta"))
+        records = list(SeqIO.parse(StringIO(aligned_text), "fasta"))
         aligned_by_id = {}
         for record in records:
             sample_id = str(record.id)

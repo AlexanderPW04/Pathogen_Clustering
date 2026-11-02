@@ -22,6 +22,14 @@ class GeneticComparisonTests(unittest.TestCase):
         self.assertEqual(result["P_Distance"], 0.25)
         self.assertEqual(result["Percent_Identity"], 75.0)
 
+    def test_iupac_ambiguity_codes_are_ignored_like_n(self) -> None:
+        # R means A or G, so it cannot be counted as a match or a difference.
+        result = compare_sequences("ARGTY", "AAGTC")
+
+        self.assertEqual(result["Differences"], 0)
+        self.assertEqual(result["Comparable_Positions"], 3)
+        self.assertEqual(result["P_Distance"], 0.0)
+
     def test_n_values_are_ignored(self) -> None:
         result = compare_sequences("ACNT", "ACGT")
 

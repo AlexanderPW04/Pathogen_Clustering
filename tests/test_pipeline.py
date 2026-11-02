@@ -69,7 +69,7 @@ class PipelineIntegrationTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             fasta_path = Path(folder) / "sequences.fasta"
             fasta_path.write_text(
-                ">A.1\nACGT\n>B.1\nACGA\n>C.1\nACGA\n",
+                ">A.1\n" + "ACGT" * 5 + "\n>B.1\n" + "ACGA" * 5 + "\n>C.1\n" + "ACGA" * 5 + "\n",  # 20 bases: the minimum overlap for relatedness
                 encoding="utf-8",
             )
             metadata_path = Path(folder) / "samples.xlsx"
@@ -181,11 +181,9 @@ class PipelineIntegrationTest(unittest.TestCase):
         self.assertTrue((assignments["Gene_Segment_Source"] == "FASTA header").all())
 
     def test_both_existing_examples_still_produce_clusters(self) -> None:
-        example_folder = (
-            Path(__file__).resolve().parents[1]
-            / "outputs"
-            / "01a0e5b9-470b-7032-a8c4-c8465c89040b"
-        )
+        # Small invented demo files, copied from the historical local outputs/
+        # folder so this test no longer depends on untracked data.
+        example_folder = Path(__file__).resolve().parent / "fixtures"
         examples = [
             ("example_sequences.fasta", "example_metadata.csv", 36),
             ("ncbi_virus_style_sequences.fasta", "ncbi_virus_style_metadata.csv", 45),
