@@ -46,11 +46,11 @@ def observation_matrix(variants, samples, depth_lookup, minimum_depth):
     ].sort_values(["Reference_ID", "Position", "Alt"])
     sample_rows = samples[samples["Analysis_Included"]].sort_values(
         ["Collection_Date", "Sample_ID"]
-    )
+    ).to_dict("records")
 
     rows = []
     for variant in unique_variants.to_dict("records"):
-        for sample in sample_rows.to_dict("records"):
+        for sample in sample_rows:
             if variant["Reference_ID"] not in str(sample["Reference_ID"]).split("; "):
                 continue  # never place a sample on another reference's positions
             key = (sample["Sample_ID"], variant["Variant_Key"])
@@ -101,44 +101,41 @@ def frequency_trends(matrix):
         "First_Reported_Frequency", "Last_Reported_Frequency", "Change_In_Reported_Frequency",
         "Slope_Per_Week",
     ]
-    rows = []
     if matrix.empty:
         return pd.DataFrame(columns=columns)
 
-    for (key, location), group in matrix.groupby(["Variant_Key", "Location_Name"], sort=True):
-        group = group.sort_values("Collection_Date")
-        reported = group[group["Status"].eq(VARIANT_OBSERVED) & group["Collection_Date"].notna()]
-        status_text = group["Status"].astype(str)
-        row = {
-            "Variant_Key": key,
-            "Location_Name": location,
-            "Samples": len(group),
-            "Reported": int(group["Status"].eq(VARIANT_OBSERVED).sum()),
-            "Adequate_Depth_Not_Reported": int(status_text.str.startswith("Adequate").sum()),
-            "Low_Or_No_Coverage": int(
-                (status_text.str.startswith("Low") | status_text.str.startswith("Not covered")).sum()
-            ),
-            "Coverage_Unknown": int(status_text.eq("Coverage unknown").sum()),
-            "Excluded_By_QC": int(status_text.eq(EXCLUDED_BY_QC).sum()),
-            "First_Reported_Date": pd.NaT,
-            "Last_Reported_Date": pd.NaT,
-            "First_Reported_Frequency": np.nan,
-            "Last_Reported_Frequency": np.nan,
-            "Change_In_Reported_Frequency": np.nan,
-            "Slope_Per_Week": np.nan,
-        }
-        if not reported.empty:
-            dates = list(reported["Collection_Date"])
-            values = list(reported["Alt_Frequency"])
-            row["First_Reported_Date"] = dates[0]
-            row["Last_Reported_Date"] = dates[-1]
-            row["First_Reported_Frequency"] = values[0]
-            row["Last_Reported_Frequency"] = values[-1]
-            if len(values) >= 2:
-                row["Change_In_Reported_Frequency"] = values[-1] - values[0]
-            row["Slope_Per_Week"] = weekly_slope(dates, values)
-        rows.append(row)
-    return pd.DataFrame(rows, columns=columns)
+    # Count each status per variant and site with one grouped sum (a Python
+    # loop over every variant/site pair is far too slow for the paper's table).
+    keys = ["Variant_Key", "Location_Name"]
+    status = matrix["Status"].astype(str)
+    flags = matrix[keys].copy()
+    flags["Samples"] = 1
+    flags["Reported"] = status.eq(VARIANT_OBSERVED).astype(int)
+    flags["Adequate_Depth_Not_Reported"] = status.str.startswith("Adequate").astype(int)
+    flags["Low_Or_No_Coverage"] = (status.str.startswith("Low")
+                                   | status.str.startswith("Not covered")).astype(int)
+    flags["Coverage_Unknown"] = status.eq("Coverage unknown").astype(int)
+    flags["Excluded_By_QC"] = status.eq(EXCLUDED_BY_QC).astype(int)
+    table = flags.groupby(keys, sort=True).sum()
+
+    # First/last reported values in date order (ties broken by sample ID).
+    reported = matrix[status.eq(VARIANT_OBSERVED) & matrix["Collection_Date"].notna()]
+    order = keys + ["Collection_Date"] + (["Sample_ID"] if "Sample_ID" in reported else [])
+    reported = reported.sort_values(order, kind="mergesort")
+    groups = reported.groupby(keys, sort=True)
+    counts = groups.size()
+    table["First_Reported_Date"] = groups["Collection_Date"].first()
+    table["Last_Reported_Date"] = groups["Collection_Date"].last()
+    table["First_Reported_Frequency"] = groups["Alt_Frequency"].first()
+    table["Last_Reported_Frequency"] = groups["Alt_Frequency"].last()
+    change = table["Last_Reported_Frequency"] - table["First_Reported_Frequency"]
+    table["Change_In_Reported_Frequency"] = change.where(counts.reindex(table.index).ge(2))
+    table["Slope_Per_Week"] = np.nan
+    for group_key in counts[counts >= 3].index:
+        group = groups.get_group(group_key)
+        table.loc[group_key, "Slope_Per_Week"] = weekly_slope(
+            list(group["Collection_Date"]), list(group["Alt_Frequency"]))
+    return table.reset_index()[columns]
 
 
 def location_date_summary(variants, samples):
