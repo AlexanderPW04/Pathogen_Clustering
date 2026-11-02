@@ -1,8 +1,10 @@
-# Sprint 4 Implementation Log
+# Integration Implementation Log (Sprint 2 + Sprint 3)
 
-This log records what was actually implemented for the Sprint 4 integration,
-the research facts it relies on, and the remaining limitations. Newest entries
-are at the bottom of the progress section.
+This log records what was actually implemented to integrate the Sprint 2
+individual-sequence pipeline and the Sprint 3 pooled-sequencing work into one
+analysis, the research facts it relies on, and the remaining limitations. It
+is not Sprint 4 work; Sprint 4 requirements had not been released. Newest
+entries are at the bottom of the progress section.
 
 ## Research facts used (verified from the sources)
 
@@ -174,7 +176,7 @@ general mapping/variant-calling stage order.
 - Pooled site labels are never geocoded; cross-source geography is contextual.
 - Hosted uploads are limited to 10 MB; large tables need the command line.
 
-## Recommended next steps
+## Recommended next steps (candidates for Sprint 4, once its requirements are known)
 
 1. Run the integrated example with real MAFFT locally and in Docker, then
    compare with the mocked results.

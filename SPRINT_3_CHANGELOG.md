@@ -31,6 +31,47 @@ Sprint 2.
 
 ## Sprint 3 changes so far
 
+### November 1, 2026 — Integrate Sprint 2 and Sprint 3 into one reference-based analysis
+
+- **Added files:** `genomics/` package (`references.py`, `unified_schema.py`,
+  `pooled_observations.py`, `sequence_variants.py`, `quality_control.py`,
+  `temporal_analysis.py`, `diversity_analysis.py`, `variant_matching.py`,
+  `figures.py`, `integrated_analysis.py`); `integrated_view.py`;
+  `run_integrated_analysis.py`; the synthetic paired demo in
+  `examples/integrated/`; the optional `offline_workflow/`; `tests/fixtures/`,
+  `tests/fake_mafft.py`, and seven new test files;
+  `INTEGRATION_IMPLEMENTATION_LOG.md`.
+- **Changed files:** `app.py` and `templates/index.html` now form one dashboard
+  for individual, reference, and pooled inputs (the Sprint 3 pages remain
+  linked). `wastewater/processed_snv.py` keeps the paper's annotation columns
+  and reads iVar TSV files. `run_pipeline.py` can hand its validated sample
+  table to the integrated analysis. `align_sequences.py` factors out the
+  unchanged MAFFT command. `validate_inputs.py` and
+  `compare_genetic_distances.py` accept IUPAC ambiguity codes and treat them
+  like N. `system_diagnostics.py` reuses its MAFFT version lookup.
+  `Dockerfile` copies the new package; `requirements.txt` lists numpy.
+  Two regression tests now use committed synthetic fixtures; the real-NCBI
+  check became an optional, clearly skipped test.
+- **Removed files:** None. The Sprint 3 branch's generated `tmp/pdfs/` files
+  were left out of the merge.
+- **Before:** Sprint 2 compared individual sequences pairwise on a
+  sample-to-sample alignment; Sprint 3 summarized pooled SNVs and processed
+  feature tables on separate pages. The three data formats were unrelated.
+- **After:** Both evidence types share one reference-coordinate variant
+  table. Individual sequences receive true 1-based reference positions;
+  pooled records are checked with the Fontenele et al. (2021) settings where
+  the data allow; trends, a Yue–Clayton PCoA, and a cross-source comparison
+  (shared, source-specific, unresolved, incomparable) appear on one dashboard
+  with the Sprint 2 cluster screening as one section.
+- **Why:** The instructor's feedback was that the Sprint 3 addition was not
+  integrated with Sprint 2 and should use more of the article's methods.
+- **How it works:** See the README section "Integrated analysis (Sprint 2 and
+  Sprint 3)" and `INTEGRATION_IMPLEMENTATION_LOG.md`.
+- **Verification:** 164 tests run, 162 pass, 2 skipped (real MAFFT not
+  installed; optional real-NCBI data). MAFFT and GeoNames are mocked in tests.
+- **Limits or next steps:** Not yet checked with real MAFFT, a Docker build,
+  or the real `mmc2.xlsx`. The exact PCoA needs per-position A/C/G/T counts.
+
 ### October 19, 2026 — Complete local setup README refresh
 
 - **Changed files:** `README.md` now begins with Windows setup and repeat-run

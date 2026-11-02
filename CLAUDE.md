@@ -26,8 +26,8 @@ Core files on `sprint4-integration` (verified November 1, 2026):
 - `app.py` (unified dashboard route + legacy Sprint 3 routes), `integrated_view.py`, `templates/index.html`, `run_pipeline.py`, `run_integrated_analysis.py`
 - Sprint 2 backbone: `validate_inputs.py`, `genomic_regions.py`, `align_sequences.py`, `compare_genetic_distances.py`, `add_temporal_geographic.py`, `detect_potential_clusters.py`, `geocode_locations.py`, `system_diagnostics.py`
 - Sprint 3: `wastewater/processed_snv.py`, `environmental_analysis.py` (legacy pages)
-- Sprint 4: `genomics/` (references, unified_schema, pooled_observations, sequence_variants, quality_control, temporal_analysis, diversity_analysis, variant_matching, figures, integrated_analysis), `offline_workflow/`
-- `examples/` (including the synthetic paired demo in `examples/integrated/`), `tests/` (with `tests/fixtures/` and the test-only `tests/fake_mafft.py`), `Dockerfile`, `requirements.txt`, `README.md`, `SPRINT_4_IMPLEMENTATION_LOG.md`
+- Sprint 2 + Sprint 3 integration: `genomics/` (references, unified_schema, pooled_observations, sequence_variants, quality_control, temporal_analysis, diversity_analysis, variant_matching, figures, integrated_analysis), `offline_workflow/`
+- `examples/` (including the synthetic paired demo in `examples/integrated/`), `tests/` (with `tests/fixtures/` and the test-only `tests/fake_mafft.py`), `Dockerfile`, `requirements.txt`, `README.md`, `INTEGRATION_IMPLEMENTATION_LOG.md`, `SPRINT_3_CHANGELOG.md`
 
 ## How to verify the current checkout
 1. Start by inventorying files, git status/branch, imports, Flask routes, and schema references.
@@ -47,4 +47,4 @@ Core files on `sprint4-integration` (verified November 1, 2026):
 Use clear function names and small modules; produce a brief file-change summary and reproducible commands. Distinguish observed results, inference, and unverified assumptions. In plain-language explanations prefer general terms such as genomic samples, individual sequences, pooled wastewater, variant profiles, and genomic surveillance; retain precise existing internal data field names where code needs them.
 
 ## Session start instruction
-The first-session audit is done and the Sprint 4 integration has been implemented on `sprint4-integration`. At the start of a session, read `SPRINT_4_IMPLEMENTATION_LOG.md` (verified paper facts, progress, limitations) and the top section of `PROJECT_HANDOFF.md`, then run the test suite before changing code. Do not push, merge into `main`, or deploy without explicit approval.
+The first-session audit is done and the Sprint 2 + Sprint 3 integration has been implemented on `sprint4-integration` (the branch name predates the work; Sprint 4 requirements have not been released, so do not label work as Sprint 4 until they are). At the start of a session, read `INTEGRATION_IMPLEMENTATION_LOG.md` (verified paper facts, progress, limitations) and the top section of `PROJECT_HANDOFF.md`, then run the test suite before changing code. Do not push, merge into `main`, or deploy without explicit approval.

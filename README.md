@@ -14,8 +14,8 @@ branch as of November 1, 2026. A potential outbreak cluster, a shared variant,
 or a variant-profile overlap is a screening result; none of them confirms
 transmission, an outbreak, or the lineage present in a mixed sample.
 
-> **Sprint 4 summary:** see [Integrated analysis (Sprint 4)](#integrated-analysis-sprint-4)
-> below and `SPRINT_4_IMPLEMENTATION_LOG.md` for what was implemented, which
+> **Integration summary:** see [Integrated analysis (Sprint 2 and Sprint 3)](#integrated-analysis-sprint-2-and-sprint-3)
+> below and `INTEGRATION_IMPLEMENTATION_LOG.md` for what was implemented, which
 > methods of Fontenele et al. (2021) are reproduced, and what remains
 > approximate or unavailable.
 
@@ -129,7 +129,7 @@ the no-activation approach, replace `python` with
 
 The main page also has **Run Integrated Example** (needs MAFFT), which runs
 the entirely synthetic paired demonstration described in
-[Integrated analysis (Sprint 4)](#integrated-analysis-sprint-4). Pooled-only
+[Integrated analysis (Sprint 2 and Sprint 3)](#integrated-analysis-sprint-2-and-sprint-3). Pooled-only
 uploads (an SNV table without FASTA files) do not need MAFFT.
 
 For a first local demonstration of a Sprint 3 page without installing MAFFT:
@@ -150,7 +150,11 @@ One example record has a real place name with synthetic sample information
 so optional GeoNames lookup can be demonstrated. All example records are
 classroom data rather than actual outbreaks.
 
-## Integrated analysis (Sprint 4)
+## Integrated analysis (Sprint 2 and Sprint 3)
+
+This section describes the integration of the Sprint 2 individual-sequence
+pipeline with the Sprint 3 pooled-sequencing work. It is an update to those
+sprints, not Sprint 4 work.
 
 ### Architecture
 
@@ -434,8 +438,8 @@ ACGTACGTACGA
 ```
 
 Biopython reads the ID and full description. Sequences are uppercased and
-whitespace is removed. Allowed characters are `A C G T N -` and, since
-Sprint 4, the IUPAC ambiguity codes `R Y S W K M B D H V`, which real
+whitespace is removed. Allowed characters are `A C G T N -` and, since the
+Sprint 2 + Sprint 3 integration update, the IUPAC ambiguity codes `R Y S W K M B D H V`, which real
 consensus genomes often contain. Every stage treats an ambiguity code like
 `N`: it is never counted as a nucleotide difference or a variant, so p-distance
 results for `A C G T N -` input are unchanged. Empty sequences, other
@@ -834,14 +838,14 @@ classroom or appropriately de-identified data on this unauthenticated prototype.
 | `system_diagnostics.py` | Small MAFFT test alignment |
 | `environmental_analysis.py` | Processed measurement loading, summaries, and charts (Sprint 3 legacy page) |
 | `wastewater/processed_snv.py` | Processed-SNV importer: paper Table 2, iVar TSV, standardized tables |
-| `genomics/` | Sprint 4 shared reference-based model, QC, analyses, matching, figures, orchestration |
+| `genomics/` | Shared reference-based model, QC, analyses, matching, figures, orchestration (Sprint 2 + 3 integration) |
 | `integrated_view.py` | Formats integrated results for the dashboard template |
 | `run_integrated_analysis.py` | Command-line integrated analysis (larger processed datasets) |
 | `offline_workflow/` | Optional BWA/iVar command template and tested output converters (not used by the website) |
 | `templates/` | Flask HTML templates (`index.html` is the unified dashboard) |
 | `examples/` | Bundled synthetic inputs; `examples/integrated/` is the paired demonstration |
 | `tests/` | Unit and integration tests; `tests/fixtures/` holds small invented regression files |
-| `SPRINT_4_IMPLEMENTATION_LOG.md` | Sprint 4 research facts, progress, and limitations |
+| `INTEGRATION_IMPLEMENTATION_LOG.md` | Integration research facts, progress, and limitations |
 | `requirements.txt` | Python package requirements |
 | `Dockerfile` | Linux runtime, MAFFT, and Gunicorn |
 | `SPRINT_3_CHANGELOG.md` | Record of changes after the Sprint 2 baseline |
