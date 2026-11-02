@@ -12,6 +12,12 @@
     <div class="scroll"><table><thead><tr><th>Field</th><th>Samples with a gap</th><th>Resolved</th><th>Improved, still limited</th><th>Unresolved</th><th>Details</th></tr></thead>
       <tbody>{% for row in r.resolution %}<tr><td>{{ row.Field }}</td><td>{{ row['Samples with a gap'] }}</td><td>{{ row.Resolved }}</td><td>{{ row['Improved, still limited'] }}</td><td>{{ row.Unresolved }}</td><td>{% if row['Improved samples'] %}Improved: {{ row['Improved samples'] }}<br>{% endif %}{% if row['Unresolved samples'] %}Unresolved: {{ row['Unresolved samples'] }}{% endif %}</td></tr>{% endfor %}</tbody></table></div>
   {% endif %}
+  {% if r.per_sample %}
+    <h3>Per-sample enrichment summary</h3>
+    <p class="help">Every inspected sample: what was proposed, your decision, and the value the analysis used. Samples without an approved, applied value used their original metadata.</p>
+    <div class="scroll"><table><thead><tr><th>Sample</th><th>Field</th><th>Original</th><th>Proposed</th><th>Approval</th><th>Applied value</th><th>Publication</th></tr></thead>
+      <tbody>{% for row in r.per_sample %}<tr><td>{{ row.Sample }}</td><td>{{ row.Field }}</td><td>{{ row.Original }}</td><td>{{ row.Proposed }}</td><td>{{ row.Approval }}</td><td>{{ row.Applied }}</td><td>{{ row.Publication }}</td></tr>{% endfor %}</tbody></table></div>
+  {% endif %}
   {% if r.changes %}
     <h3>Values used in this analysis</h3>
     <div class="scroll"><table><thead><tr><th>Sample</th><th>Field</th><th>Original</th><th>Applied value</th><th>Evidence</th><th>Result</th></tr></thead>

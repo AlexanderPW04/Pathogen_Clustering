@@ -33,7 +33,8 @@
     </div>
   {% endif %}
 
-  <h3>A. Find evidence</h3>
+  <h3>Stages A–C · Find, retrieve, and assess publications (free)</h3>
+  <p class="help">A: which publications are linked to your records, and how. B: each unique publication's details and text are retrieved once. C: the text is assessed separately for every linked sample (publication date, sample named in the text, link strength). Nothing is sent to Claude in these stages.</p>
   <form method="post" action="{{ url_for('literature_find') }}">
     <input type="hidden" name="token" value="{{ lit.token }}">
     <details>
@@ -46,11 +47,40 @@
     <button type="submit" class="secondary">Find Relevant Literature</button>
   </form>
 
-  {% if lit.stats %}
-    <div class="summary-grid">{% for label, value in lit.stats %}<p class="stat"><strong>{{ label }}:</strong> {{ value }}</p>{% endfor %}</div>
+  {% if lit.review %}{% set rv = lit.review %}
+    <div class="card" id="review-outcome"><p><strong>{{ rv.headline }}</strong></p>
+      {% if lit.pre_analysis %}<p class="help">Whatever this review finds, the genomic analysis runs; without approved changes it uses your original metadata.</p>{% endif %}</div>
+    <div class="summary-grid">{% for label, value in rv.stats %}<p class="stat"><strong>{{ label }}:</strong> {{ value }}</p>{% endfor %}</div>
+    {% if rv.failures %}<h4>Retrieval problems</h4><ul class="warnings">{% for item in rv.failures %}<li>{{ item }}</li>{% endfor %}</ul>
+      <p class="note">An incomplete retrieval is not evidence that nothing exists. Search again later; responses that did arrive are cached for an hour.</p>{% endif %}
+    {% if lit.request_usage %}<p class="help"><strong>Requests for this search:</strong> {% for item in lit.request_usage %}{{ item.Service }} {{ item['Requests sent'] }} of {{ item['Limit per search'] }}{% if item['Answered from cache'] %} ({{ item['Answered from cache'] }} answered from cache){% endif %}{% if not loop.last %}; {% endif %}{% endfor %}.</p>{% endif %}
+    {% if rv.samples %}
+      <h4>Per-sample status</h4>
+      <div class="scroll"><table><thead><tr><th>Sample</th><th>Linked publications</th><th>Link</th><th>Status</th></tr></thead>
+        <tbody>{% for row in rv.samples %}<tr><td>{{ row.Sample_ID }}</td><td>{{ row.Publications }}</td><td>{{ row.Link }}</td><td>{{ row.Status }}</td></tr>{% endfor %}</tbody></table></div>
+    {% endif %}
+    {% if rv.cards %}
+      <details id="evidence-by-publication" {% if rv.cards|length <= 3 %}open{% endif %}><summary>Evidence by publication ({{ rv.cards|length }})</summary>
+        {% for card in rv.cards %}
+          <div class="card">
+            <p><strong>{% if card.url %}<a href="{{ card.url }}" rel="noopener noreferrer" target="_blank">{{ card.article }}</a>{% else %}{{ card.article }}{% endif %}</strong> — {{ card.title }}</p>
+            <p><span class="badge {% if card.outcome.startswith('Metadata improvements') %}completed{% elif 'API failure' in card.outcome or card.outcome.startswith('Not retrieved') %}needs{% else %}limited{% endif %}">{{ card.outcome }}</span></p>
+            <ul class="notes">
+              <li><strong>Published:</strong> {{ card.published or 'unknown' }}{% if card.epub %} (online {{ card.epub }}){% endif %}</li>
+              <li><strong>Retrieval:</strong> {{ card.retrieval }}</li>
+              <li><strong>Linked samples:</strong> {{ card.samples|length }} ({{ card.direct }} direct, {{ card.study }} study-level): {{ card.samples|join(', ') }}</li>
+              <li><strong>Usable for:</strong> {{ card.usable_samples|join(', ') if card.usable_samples else 'no sample' }}</li>
+              {% for line in card.reasons %}<li>{{ line }}</li>{% endfor %}
+              <li class="help">Link provenance: {{ card.evidence|join(' ') }}</li>
+            </ul>
+          </div>
+        {% endfor %}
+        <p class="help">A shared study (for example the same BioProject) is not evidence about a particular sample. A publication can support a sample's metadata only when it names that sample (by accession, isolate, BioSample, or a sample-to-site table) or the sample's own record links it, and it was not published before the sample was collected. A study's general location is never given to every sample.</p>
+      </details>
+    {% endif %}
     {% if lit.publications %}
-      <details {% if lit.stage == 'found' %}open{% endif %}>
-        <summary>Publication candidates ({{ lit.publications|length }})</summary>
+      <details>
+        <summary>All sample–publication links ({{ lit.publications|length }})</summary>
         <div class="scroll"><table>
           <thead><tr><th>Sample</th><th>Article</th><th>Relationship</th><th>Usable as evidence?</th><th>Verification</th><th>Text</th><th>Notes</th></tr></thead>
           <tbody>{% for row in lit.publications %}<tr>
@@ -64,22 +94,17 @@
     {% else %}
       <p class="unavailable">No publication with a traceable link was found. This is an acceptable result: nothing will be proposed.{% if lit.pre_analysis %} Continue the analysis with the original metadata below.{% endif %}</p>
     {% endif %}
-    {% if lit.no_evidence %}
-      <div class="unavailable" id="no-evidence">
-        <p><strong>{{ lit.no_evidence.message }}</strong></p>
-        <ul class="notes">{% for item in lit.no_evidence.reasons %}<li><strong>{{ item.article }}</strong>{% if item.title %} ({{ item.title }}){% endif %}, {{ item.links }}: {{ item.reasons|join(' ') }}</li>{% endfor %}</ul>
-        <p class="help">A shared study (for example the same BioProject) is not evidence about a particular sample. A publication can support a sample's metadata only when it names that sample (for example in a sample-to-site table) or the sample's own record links it, and it was not published before the sample was collected.</p>
-      </div>
-    {% endif %}
+    {% if lit.no_evidence %}<p class="note" id="no-evidence">No publication has usable sample-specific evidence, so nothing is sent to Claude and nothing is billed.{% if lit.pre_analysis %} Continue with the original metadata below.{% endif %}</p>{% endif %}
     {% if lit.notes %}<ul class="notes">{% for item in lit.notes %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
   {% endif %}
 
   {% if lit.plan %}
-    <h3>B. Analyze literature</h3>
+    <h3>Stage D · Claude extraction (optional; paid only after your approval)</h3>
     <div class="scroll"><table>
-      <thead><tr><th>Article</th><th>Samples</th><th>Passages sent</th><th>Characters</th></tr></thead>
-      <tbody>{% for item in lit.plan %}<tr><td>{{ item.article }}<br><span class="help">{{ item.title }}</span></td><td>{{ item.samples }}</td><td>{{ item.passages }}</td><td>{{ item.characters }}</td></tr>{% endfor %}</tbody>
+      <thead><tr><th>Batch</th><th>Article</th><th>Samples</th><th>Passages sent</th><th>Characters</th></tr></thead>
+      <tbody>{% for item in lit.plan %}<tr><td>{{ item.batch }}{% if item.analyzed %} <span class="badge completed">analyzed</span>{% endif %}</td><td>{{ item.article }}<br><span class="help">{{ item.title }}</span></td><td>{{ item.samples }}</td><td>{{ item.passages }}</td><td>{{ item.characters }}</td></tr>{% endfor %}</tbody>
     </table></div>
+    {% if lit.batches|length > 1 %}<p class="note">More articles have usable evidence than one paid run may analyze ({{ lit.batch_size }} per run), so they are split into {{ lit.batches|length }} batches. Each batch is estimated and approved separately; the per-run and per-day spending limits stay in force. Proposals from earlier batches are kept.</p>{% endif %}
     <p class="note">Only these passages are sent (methods, sample tables, and sentences naming a sample or describing collection). References, acknowledgements, and author affiliations are never sent.</p>
     {% if lit.explanation %}<p><strong>Extraction engine:</strong> {{ lit.explanation }}</p>{% endif %}
     {% if lit.stage in ['found', 'analyzed', 'applied'] and lit.provider_name %}
@@ -98,9 +123,11 @@
             {% endif %}
           </ul>
           {% if lit.live and not lit.estimate.fits %}<p class="problems">The plan could exceed the configured limits; select fewer samples first.</p>{% endif %}
+          <p><strong>Batch {{ lit.estimate.batch }}:</strong> {{ lit.estimate.articles|join(', ') }}</p>
           <form method="post" action="{{ url_for('literature_analyze') }}">
             <input type="hidden" name="token" value="{{ lit.token }}">
             <input type="hidden" name="confirm" value="1">
+            <input type="hidden" name="batch" value="{{ lit.estimate.batch }}">
             {% if lit.live %}
               <label><span><input type="checkbox" name="acknowledge"> I understand this uses the Anthropic API and may incur charges up to the cap above.</span></label>
               {% if lit.settings.access_code_set %}<label>Access code <input type="text" name="access_code" autocomplete="off"></label>{% endif %}
@@ -111,7 +138,11 @@
       {% else %}
         <form method="post" action="{{ url_for('literature_analyze') }}">
           <input type="hidden" name="token" value="{{ lit.token }}">
-          <button type="submit">{% if lit.stage in ['analyzed', 'applied'] %}Run the analysis again{% else %}Analyze Literature with Claude AI{% endif %}</button>
+          {% if lit.batches|length > 1 %}
+            <label>Batch to analyze
+              <select name="batch">{% for number in lit.batches %}<option value="{{ number }}" {% if number == lit.next_batch %}selected{% endif %}>Batch {{ number }}</option>{% endfor %}</select></label>
+          {% endif %}
+          <button type="submit">{% if lit.analyzed and lit.batch_plan and lit.batch_plan[0] not in lit.analyzed %}Analyze the next batch with Claude AI{% elif lit.stage in ['analyzed', 'applied'] %}Run the analysis again{% else %}Analyze Literature with Claude AI{% endif %}</button>
           <span class="help">The next screen shows the estimated tokens, cost, and data sharing before anything is sent.</span>
         </form>
       {% endif %}
@@ -127,7 +158,7 @@
   {% endif %}
 
   {% if lit.stage in ['analyzed', 'applied'] %}
-    <h3>C. Review proposed metadata</h3>
+    <h3>Stage E · Verify and review proposed metadata</h3>
     <div class="summary-grid">
       <p class="stat"><strong>Run status:</strong> {{ lit.run.state }}</p>
       <p class="stat"><strong>Proposals:</strong> {{ lit.facts|length }} <span class="detail">{{ lit.approvable_count }} approvable</span></p>
@@ -163,11 +194,16 @@
     {% else %}
       <p class="unavailable">No candidate metadata was proposed. Insufficient evidence is an acceptable answer.</p>
     {% endif %}
+    {% if lit.enrichment_summary %}
+      <h4>Per-sample enrichment summary</h4>
+      <div class="scroll"><table><thead><tr><th>Sample</th><th>Field</th><th>Original</th><th>Proposed</th><th>Approval</th><th>Applied value</th><th>Publication</th></tr></thead>
+        <tbody>{% for row in lit.enrichment_summary %}<tr><td>{{ row.Sample }}</td><td>{{ row.Field }}</td><td>{{ row.Original }}</td><td>{{ row.Proposed }}</td><td>{{ row.Approval }}</td><td>{{ row.Applied }}</td><td>{{ row.Publication }}</td></tr>{% endfor %}</tbody></table></div>
+    {% endif %}
     {% if lit.insufficient %}<p class="note"><strong>Reported as insufficient evidence:</strong> {% for item in lit.insufficient %}{{ item.Sample_ID }} ({{ item.Article_ID }}){% if not loop.last %}, {% endif %}{% endfor %}</p>{% endif %}
   {% endif %}
 
   {% if lit.applied %}
-    <h3>D. Original versus enriched metadata</h3>
+    <h3>Applied: original versus enriched metadata</h3>
     {% if lit.applied.summary %}
       <div class="scroll"><table><thead><tr><th>Screening result (individual sequences)</th><th>Original metadata</th><th>Enriched metadata</th></tr></thead>
         <tbody>{% for label, pair in lit.applied.summary.items() %}<tr><td>{{ label }}</td><td>{{ pair[0] }}</td><td>{{ pair[1] }}</td></tr>{% endfor %}</tbody></table></div>

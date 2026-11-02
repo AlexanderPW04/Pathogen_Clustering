@@ -126,4 +126,7 @@ def ncbi_settings():
     return {"api_key": os.getenv("NCBI_API_KEY", "").strip(),
             "email": os.getenv("NCBI_EMAIL", "").strip(),
             "max_requests": int(number_setting("LITERATURE_MAX_REQUESTS", 80, 1)),
-            "max_samples": int(number_setting("LITERATURE_MAX_SAMPLES", 25, 1))}
+            "max_samples": int(number_setting("LITERATURE_MAX_SAMPLES", 25, 1)),
+            # Unique publications retrieved per search (free services); the paid
+            # Claude limit per run is AI_MAX_ARTICLES_PER_RUN.
+            "max_articles": int(number_setting("LITERATURE_MAX_ARTICLES", 20, 1))}

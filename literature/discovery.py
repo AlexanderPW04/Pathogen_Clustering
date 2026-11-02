@@ -33,7 +33,8 @@ PUBLICATION_COLUMNS = [
     "Sample_ID", "Sample_Source", "Article_ID", "PMID", "PMCID", "DOI", "Title",
     "Publication_Date", "Epub_Date", "Source_URL", "Relationship_Type", "Association_Evidence",
     "Verification_Status", "Retrieval_Method", "Identifier_In_Text", "Text_Status",
-    "Ambiguity_Notes", "Chronology", "Eligibility_Reason", "Eligible_For_Enrichment",
+    "Ambiguity_Notes", "Retrieval_Status", "Chronology", "Predates_Collection", "Eligibility_Reason",
+    "Eligible_For_Enrichment",
 ]
 
 
@@ -54,9 +55,66 @@ def dataset_links(source, identifiers, notes):
     return links
 
 
+def identifier_key(kind, value):
+    """Identifiers that name the same record share a key (an accession with or without its version)."""
+
+    text = str(value).strip()
+    if kind == "Nucleotide":
+        return (kind, text.split(".")[0].upper())
+    return (kind, text)
+
+
+def batched(source):
+    """True for sources that answer many identifiers at once (LiveSource)."""
+
+    return getattr(source, "supports_batches", False) is True
+
+
+def lookup_links(source, identifiers, notes):
+    """{(kind, value): [(article_id, relationship, evidence, method)]} for unique identifiers.
+
+    Sources with a batch method (LiveSource) answer all identifiers in a few
+    requests; others are asked once per unique identifier.
+    """
+
+    if batched(source):
+        try:
+            return source.record_links_batch(identifiers)
+        except (ServiceUnavailable, RequestLimitReached) as problem:
+            notes.append(f"Record links could not be retrieved: {problem}")
+            return {}
+    found = {}
+    for kind, value in identifiers:
+        try:
+            found[(kind, value)] = source.record_links(kind, value)
+        except (ServiceUnavailable, RequestLimitReached) as problem:
+            notes.append(str(problem))
+            if isinstance(problem, RequestLimitReached):
+                break
+    return found
+
+
+def lookup_aliases(source, identifiers, notes):
+    """{(kind, value): [other identifiers of the same record]} (BioSample accessions)."""
+
+    try:
+        if batched(source):
+            return source.record_aliases_batch(identifiers)
+        return {(kind, value): source.record_aliases(kind, value) for kind, value in identifiers}
+    except (ServiceUnavailable, RequestLimitReached) as problem:
+        notes.append(f"Additional sample identifiers could not be looked up: {problem}")
+        return {}
+
+
 def discover_publications(samples, source, max_samples=25, max_articles=5, dataset_identifiers=(),
                           alias_store=None):
-    """Return (publication table, fetched articles, notes, unmatched samples).
+    """Return (publication table, retrieved articles, notes, unmatched samples).
+
+    Stage A (discovery): every unique identifier is looked up once, so ten
+    accessions of one study cost a few requests, and each sample keeps its own
+    association rows. Stage B (retrieval): each unique publication is
+    described and fetched once (at most `max_articles`, strongest links
+    first); the same text is then assessed separately for every linked sample.
 
     `dataset_identifiers` are (type, value) pairs entered for the whole
     dataset; they link the study's publication to every selected sample at
@@ -70,50 +128,63 @@ def discover_publications(samples, source, max_samples=25, max_articles=5, datas
     selected = samples.head(max_samples)
     if len(samples) > max_samples:
         notes.append(f"Only the first {max_samples} selected samples were searched (request limit).")
-    links = []  # one dictionary per (sample, article) candidate
-    aliases_by_sample = {}
-    collected = {}
-    stopped = False
+    sample_rows, unique = [], {}
     for _, row in selected.iterrows():
         sample_id = str(row["Sample_ID"])
         identifiers, aliases = sample_identifiers(row)
+        identifiers = identifiers + [("Sample", sample_id, "Sample_ID")]
+        keys = []
+        for kind, value, column in identifiers:
+            key = identifier_key(kind, value)
+            keys.append((key, column))
+            if key not in unique or ("." in value and "." not in unique[key][1]):
+                unique[key] = (kind, value)  # the versioned accession is the one looked up
+        sample_rows.append((sample_id, row, keys, aliases))
+    found_by_key = lookup_links(source, list(unique.values()), notes)
+    stopped = any("limit of" in note for note in notes)
+
+    links, aliases_by_sample, collected, searched = [], {}, {}, {}
+    linked_nucleotides = {}
+    for sample_id, row, keys, aliases in sample_rows:
         aliases_by_sample[sample_id] = aliases
         collected[sample_id] = row.get("Collection_Date")
         found = []
-        for kind, value, column in identifiers + [("Sample", sample_id, "Sample_ID")]:
-            if stopped:
-                break
-            try:
-                for article_id, relationship, evidence, method in source.record_links(kind, value):
-                    found.append({"Article_ID": article_id, "Relationship": relationship,
-                                  "Evidence": evidence, "Method": f"{method} ({column})"})
-            except (ServiceUnavailable, RequestLimitReached) as problem:
-                notes.append(str(problem))
-                stopped = isinstance(problem, RequestLimitReached)
-        if found and not stopped:
-            aliases_by_sample[sample_id] = record_aliases(source, identifiers, aliases, notes)
+        for key, column in keys:
+            for article_id, relationship, evidence, method in found_by_key.get(unique[key], []):
+                found.append({"Article_ID": article_id, "Relationship": relationship,
+                              "Evidence": evidence, "Method": f"{method} ({column})"})
+        if found:
+            linked_nucleotides[sample_id] = [unique[key] for key, _ in keys if key[0] == "Nucleotide"]
         found += [dict(link) for link in shared]
         if not found and not stopped:
             for alias in aliases:
                 if not source.searchable(alias):
                     continue
-                try:
-                    for article_id in source.text_search(alias):
-                        found.append({"Article_ID": article_id, "Relationship": "search",
-                                      "Evidence": f"Text search for '{alias}' returned this article.",
-                                      "Method": "Identifier text search (candidate only)"})
-                except (ServiceUnavailable, RequestLimitReached) as problem:
-                    notes.append(str(problem))
-                    stopped = isinstance(problem, RequestLimitReached)
-                    break
+                if alias not in searched:
+                    try:
+                        searched[alias] = source.text_search(alias)
+                    except (ServiceUnavailable, RequestLimitReached) as problem:
+                        notes.append(str(problem))
+                        stopped = isinstance(problem, RequestLimitReached)
+                        break
+                found += [{"Article_ID": article_id, "Relationship": "search",
+                           "Evidence": f"Text search for '{alias}' returned this article.",
+                           "Method": "Identifier text search (candidate only)"} for article_id in searched[alias]]
         seen = set()
         for item in found:
-            if item["Article_ID"] in seen:
-                continue
-            seen.add(item["Article_ID"])
-            links.append({"Sample_ID": sample_id, "Sample_Source": row.get("Sample_Source", ""), **item})
+            if item["Article_ID"] not in seen:
+                seen.add(item["Article_ID"])
+                links.append({"Sample_ID": sample_id, "Sample_Source": row.get("Sample_Source", ""), **item})
 
-    # Retrieve only a few articles, strongest associations first.
+    # Other names of linked samples (BioSample accessions), looked up together.
+    wanted = list(dict.fromkeys(item for items in linked_nucleotides.values() for item in items))
+    extra = lookup_aliases(source, wanted, notes) if wanted else {}
+    for sample_id, items in linked_nucleotides.items():
+        names = list(aliases_by_sample[sample_id])
+        names += [name for item in items for name in extra.get(item, []) if name not in names]
+        aliases_by_sample[sample_id] = sorted(names)
+
+    # Retrieve each unique publication once, strongest associations first.
     strength = {"direct": 0, "provided": 0, "study": 1, "search": 2}
     ranking = {}
     for link in links:
@@ -123,51 +194,75 @@ def discover_publications(samples, source, max_samples=25, max_articles=5, datas
     if len(ranking) > max_articles:
         notes.append(f"{len(ranking) - max_articles} candidate article(s) were not retrieved "
                      f"(limit {max_articles} articles per run).")
-    articles, summaries = {}, {}
-    try:
-        summaries = source.describe(chosen)
-        articles = source.fetch(chosen)
-    except (ServiceUnavailable, RequestLimitReached) as problem:
-        notes.append(f"Article retrieval stopped: {problem}")
+    articles, retrieval = retrieve_articles(source, chosen, notes)
+    for article_id in ranking:
+        retrieval.setdefault(article_id, f"Not retrieved (limit of {max_articles} articles per search)")
 
-    rows = [classify_link(link, aliases_by_sample[link["Sample_ID"]], summaries.get(link["Article_ID"], {}),
-                          articles.get(link["Article_ID"]), link["Article_ID"] in chosen,
+    rows = [classify_link(link, aliases_by_sample[link["Sample_ID"]], articles.get(link["Article_ID"], {}),
+                          articles.get(link["Article_ID"]) if articles.get(link["Article_ID"], {}).get("Text_Retrieved")
+                          else None, link["Article_ID"] in chosen,
                           sum(other["Sample_ID"] == link["Sample_ID"] for other in links),
-                          collected.get(link["Sample_ID"]))
+                          collected.get(link["Sample_ID"]), retrieval[link["Article_ID"]])
             for link in links]
     if alias_store is not None:
         alias_store.update(aliases_by_sample)
-    for article_id in chosen:
-        article = articles.get(article_id)
-        if article is not None:
-            article.update(summaries.get(article_id, {}))
-            article["Article_ID"] = article_id
     table = pd.DataFrame(rows, columns=PUBLICATION_COLUMNS)
     unmatched = [sample_id for sample_id in aliases_by_sample if sample_id not in set(table["Sample_ID"])]
     return table, articles, notes, unmatched
 
 
-def record_aliases(source, identifiers, aliases, notes):
-    """The sample's names plus other identifiers of the same record (BioSample accessions)."""
+def retrieve_articles(source, article_ids, notes):
+    """({article_id: article}, {article_id: retrieval status}) with one request per batch.
 
-    names = list(aliases)
-    for kind, value, _ in identifiers:
+    Publication details (title, dates) and text are requested separately, so
+    a failure of one does not hide the other. Every requested article gets an
+    entry, even without text, so its dates and status can be reported.
+    """
+
+    summaries, texts, retrieval = {}, {}, {}
+    summary_problem = text_problem = None
+    if article_ids:
         try:
-            names += [alias for alias in source.record_aliases(kind, value) if alias not in names]
+            summaries = source.describe(article_ids)
         except (ServiceUnavailable, RequestLimitReached) as problem:
-            notes.append(f"Additional sample identifiers could not be looked up: {problem}")
-            break
-    return sorted(names)
+            summary_problem = str(problem)
+            notes.append(f"Publication details could not be retrieved: {problem}")
+        try:
+            texts = source.fetch(article_ids)
+        except (ServiceUnavailable, RequestLimitReached) as problem:
+            text_problem = str(problem)
+            notes.append(f"Article text could not be retrieved: {problem}")
+    articles = {}
+    for article_id in article_ids:
+        text = texts.get(article_id)
+        article = {"Article_ID": article_id, "Passages": [], **summaries.get(article_id, {})}
+        if text is not None:
+            article.update(text)
+        article["Text_Retrieved"] = text is not None
+        if text_problem:
+            status = f"Retrieval incomplete: {text_problem}"
+        elif text is None:
+            status = "Not available from the text service"
+        else:
+            status = text.get("Text_Status", "Retrieved")
+        if summary_problem and article_id not in summaries:
+            status += f" Publication details unavailable: {summary_problem}"
+        article["Retrieval_Status"] = status
+        article["Retrieval_Failed"] = bool(text_problem or (summary_problem and article_id not in summaries))
+        retrieval[article_id] = status
+        articles[article_id] = article
+    return articles, retrieval
 
 
-def eligibility(category, in_text, has_text, predates, chronology_note):
+def eligibility(category, in_text, has_text, predates, chronology_note, retrieval_status=""):
     """(eligible, reason): can this article document this sample's collection?"""
 
     reasons = []
     if category not in ELIGIBLE:
         reasons.append("No verified link between this sample and the article.")
     if not has_text:
-        reasons.append("No article text is available.")
+        reasons.append(f"No article text is available ({retrieval_status})." if retrieval_status
+                       else "No article text is available.")
     if predates:
         reasons.append(chronology_note)
     if category == STUDY and not in_text:
@@ -180,7 +275,8 @@ def eligibility(category, in_text, has_text, predates, chronology_note):
     return True, "Usable: the article text names this sample."
 
 
-def classify_link(link, aliases, summary, article, retrieved, links_for_sample, collection_date=None):
+def classify_link(link, aliases, summary, article, retrieved, links_for_sample, collection_date=None,
+                  retrieval_status=""):
     """One row of the publication-candidate table."""
 
     in_text = article is not None and any(text_mentions(article, alias) for alias in aliases)
@@ -214,7 +310,7 @@ def classify_link(link, aliases, summary, article, retrieved, links_for_sample, 
     predates, chronology_note = chronology(
         [summary.get("Publication_Date", ""), summary.get("Epub_Date", "")], collection_date)
     eligible, reason = eligibility(category, in_text, bool(article and article.get("Passages")), predates,
-                                   chronology_note)
+                                   chronology_note, retrieval_status)
     return {
         "Sample_ID": link["Sample_ID"], "Sample_Source": link["Sample_Source"],
         "Article_ID": link["Article_ID"], "PMID": summary.get("PMID", ""),
@@ -224,8 +320,9 @@ def classify_link(link, aliases, summary, article, retrieved, links_for_sample, 
         "Source_URL": summary.get("Source_URL", ""), "Relationship_Type": category,
         "Association_Evidence": link["Evidence"], "Verification_Status": status,
         "Retrieval_Method": link["Method"], "Identifier_In_Text": in_text,
-        "Text_Status": text_status, "Ambiguity_Notes": " ".join(ambiguity),
-        "Chronology": chronology_note, "Eligibility_Reason": reason, "Eligible_For_Enrichment": eligible,
+        "Text_Status": text_status, "Ambiguity_Notes": " ".join(ambiguity), "Retrieval_Status": retrieval_status,
+        "Chronology": chronology_note, "Predates_Collection": bool(predates), "Eligibility_Reason": reason,
+        "Eligible_For_Enrichment": eligible,
     }
 
 

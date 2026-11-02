@@ -215,8 +215,10 @@ class UploadEnrichmentTest(unittest.TestCase):
         # Links come from identifiers already in the files (accessions, Publication_ID, BioProject).
         self.assertIn("Direct sample links:</strong> 10", found)
         self.assertIn("Study-level links:</strong> 1", found)
-        # Uploaded data keeps the default cost limit of 5 articles per run.
-        self.assertIn("not retrieved (limit 5 articles per run)", found)
+        # Every linked article is retrieved (free); the paid limit of 5 articles per run splits
+        # the Claude analysis into batches, each approved separately.
+        self.assertNotIn("not retrieved", found)
+        self.assertIn("batches of at most 5 (the per-run limit)", found)
         self.assertIn('id="enrichment-report"', result)
         self.assertIn("Newly meets all screening criteria", result)  # SYNLIT_01 – SYNLIT_09
         enriched = self.download(result, "literature_enriched_metadata.csv").set_index("Sample_ID")

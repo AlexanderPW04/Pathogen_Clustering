@@ -78,16 +78,16 @@ class LiteratureWebTest(unittest.TestCase):
     def test_find_analyze_review_apply(self):
         page, token = self.run_example()
         page = self.client.post("/literature/find", data={"token": token}).get_data(as_text=True)
-        self.assertIn("Publications found:</strong> 11", page)
+        self.assertIn("Unique publications found:</strong> 11", page)
         self.assertIn("Exact accession mentioned in article text", page)
         page = self.client.post("/literature/analyze", data={"token": token}).get_data(as_text=True)
         self.assertIn("Before you start", page)
         self.assertIn("Run offline demonstration", page)
-        self.assertNotIn("C. Review proposed metadata", page)  # nothing ran without confirmation
+        self.assertNotIn("Stage E · Verify and review proposed metadata", page)  # nothing ran without confirmation
         response = self.client.post("/literature/analyze", data={"token": token, "confirm": "1"})
         self.assertEqual(response.status_code, 302)
         page = self.client.get(response.headers["Location"]).get_data(as_text=True)
-        self.assertIn("C. Review proposed metadata", page)
+        self.assertIn("Stage E · Verify and review proposed metadata", page)
         approvable = re.findall(r'name="review_(F\d+)" value="approve"', page)
         self.assertEqual(len(approvable), 7)
         self.assertNotIn('name="review_F15"', page)  # Tucson was lowered by the second check
@@ -95,7 +95,7 @@ class LiteratureWebTest(unittest.TestCase):
         form = {"token": token, "review_F15": "approve", "review_F4": "approve",
                 **{f"review_{fact}": "approve" for fact in approvable}}
         page = self.client.post("/literature/apply", data=form).get_data(as_text=True)
-        self.assertIn("D. Original versus enriched metadata", page)
+        self.assertIn("Applied: original versus enriched metadata", page)
         self.assertIn("Newly meets all screening criteria", page)
         self.assertIn("not confirmed transmission", page)
         enriched = re.search(r'href="(/results/[^"]+/literature_enriched_metadata\.csv)"', page).group(1)

@@ -47,6 +47,7 @@ from dashboard_guide import GLOSSARY
 from integrated_view import build_dashboard, download_files
 from literature.config import ai_status
 from literature.providers import ProviderError
+from literature.review import enrichment_summary
 from literature.pubtator import check_pubtator
 from literature.identifiers import parse_identifiers
 from literature.preanalysis import (
@@ -55,9 +56,9 @@ from literature.preanalysis import (
 )
 from literature.workflow import new_session, record_decisions
 from literature_view import (
-    LITERATURE_EXAMPLE_FILES, LITERATURE_FOLDER, check_claude, choose_provider, enrichment_downloads,
-    find, get_session, live_request_allowed, prepare, review_and_apply, run_settings, start,
-    store_session, view,
+    LITERATURE_EXAMPLE_FILES, LITERATURE_FOLDER, check_claude, choose_provider, chosen_batch,
+    enrichment_downloads, find, get_session, live_request_allowed, prepare, review_and_apply, run_settings,
+    start, store_session, view,
 )
 from wastewater.processed_snv import load_processed_snvs, summarize_snvs
 
@@ -1437,7 +1438,9 @@ def enrichment_report(session, derived, log, outcome, thresholds, page):
     changed_pairs = []
     if comparison is not None:
         changed_pairs = comparison[comparison["Change"] != "Unchanged"].fillna("").astype(str).to_dict("records")
+    session["applied_count"] = sum(item["Outcome"].startswith("Applied") for item in log)
     return {"summary": contribution(session, derived, log, sections), "changes": changes,
+            "per_sample": enrichment_summary(session, log),
             "resolution": gap_resolution(session, derived),
             "screening": screening, "changed_pairs": changed_pairs[:40],
             "changed_pair_total": len(changed_pairs), "files": sorted(files),
@@ -1608,8 +1611,9 @@ def literature_analyze():
                                "No article passages are ready for analysis. Run 'Find Relevant Literature' first.")
     if session["run"].get("state") == "running":
         return redirect(url_for("literature_status", token=token))
+    batch = chosen_batch(session, request.form.get("batch"))
     try:
-        provider, explanation, estimate = prepare(session)
+        provider, explanation, estimate = prepare(session, batch)
     except ProviderError as problem:
         app.logger.warning("Preparing the literature analysis failed: %s", problem)
         return literature_page(token, session, f"The analysis could not be prepared: {problem} Nothing was "
@@ -1637,7 +1641,7 @@ def literature_analyze():
         if problem:
             return literature_page(token, session, problem, confirm=True)
     session["download_id"] = None
-    start(session, provider, inline=app.config.get("LITERATURE_INLINE_JOBS", False))
+    start(session, provider, inline=app.config.get("LITERATURE_INLINE_JOBS", False), batch=batch)
     return redirect(url_for("literature_status", token=token))
 
 

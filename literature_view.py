@@ -17,11 +17,11 @@ import pandas as pd
 
 from geocode_locations import lookup_place
 from literature.config import SDK_MISSING, ai_settings, ai_status, ncbi_settings
-from literature.discovery import DIRECT, IN_TEXT, STUDY, article_overview
 from literature.providers import ClaudeProvider, ExtractionCache, LocalModelProvider, MockProvider
 from literature.sources import LiveSource, LocalCorpusSource
-from literature.workflow import (apply_session, downloads, estimate_plan, find_literature,
-                                 record_decisions, run_analysis)
+from literature.review import enrichment_summary, review_summary
+from literature.workflow import (apply_session, batch_items, batches, downloads, estimate_plan, find_literature,
+                                 next_batch, record_decisions, run_analysis)
 
 LITERATURE_FOLDER = Path(__file__).resolve().parent / "examples" / "literature"
 LITERATURE_EXAMPLE_FILES = {"fasta": "synthetic_literature_sequences.fasta",
@@ -109,21 +109,31 @@ def find(session, selected_ids):
     settings = run_settings(session)
     limits = ncbi_settings()
     find_literature(session, literature_source(session), selected_ids, limits["max_samples"],
-                    settings["max_articles"])
+                    settings["max_articles"], max_retrieved=max(limits["max_articles"], settings["max_articles"]))
 
 
-def prepare(session):
-    """Provider, explanation, and cost estimate shown before any paid request."""
+def chosen_batch(session, value):
+    """A batch number from the form, or the first batch not analyzed yet."""
+
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return next_batch(session)
+    return number if number in batches(session) else next_batch(session)
+
+
+def prepare(session, batch=None):
+    """Provider, explanation, and cost estimate of one batch, shown before any paid request."""
 
     settings = run_settings(session)
     provider, explanation = choose_provider(session, settings)
-    estimate = estimate_plan(session, provider, settings) if provider and session["plan"] else None
+    estimate = estimate_plan(session, provider, settings, batch) if provider and session["plan"] else None
     session["estimate"] = estimate
     return provider, explanation, estimate
 
 
-def start(session, provider, inline=False):
-    """Run stage A/B in a background thread (or inline for tests); cancellable between requests."""
+def start(session, provider, inline=False, batch=None):
+    """Run one batch of stages D-E in a background thread (or inline for tests); cancellable."""
 
     settings = run_settings(session)
     cancel = threading.Event()
@@ -133,7 +143,7 @@ def start(session, provider, inline=False):
 
     def work():
         try:
-            run_analysis(session, provider, settings, cache, cancel)
+            run_analysis(session, provider, settings, cache, cancel, batch)
         except Exception as problem:  # report, never crash the web process
             session["run"] = {"state": "failed", "progress": "", "messages": [
                 f"The analysis stopped unexpectedly ({type(problem).__name__})."]}
@@ -191,25 +201,9 @@ def view(token, session, provider=None, explanation="", confirm=False, download_
 
     publications = session["publications"]
     stage = "start"
-    stats, publication_rows = [], []
+    publication_rows = []
     if publications is not None:
         stage = "found"
-        inspected = len(session.get("selected", []))
-        overview = article_overview(publications, inspected)
-        # Publications (unique articles) first, then sample-publication links.
-        stats = [
-            ("Samples inspected", inspected),
-            ("Publications found", overview["articles"]),
-            ("Publications linked directly to a sample", overview["direct"]),
-            ("Publications linked only through a broader study", overview["study_only"]),
-            ("Publications naming a sample in their text", overview["named"]),
-            ("Publications usable for metadata enrichment", overview["usable"]),
-            ("Publications not usable for metadata enrichment", overview["unsuitable"]),
-            ("Direct sample links", int((publications["Relationship_Type"] == DIRECT).sum())),
-            ("Study-level links", int((publications["Relationship_Type"] == STUDY).sum())),
-            ("Identifier found in text", int((publications["Relationship_Type"] == IN_TEXT).sum())),
-            ("Samples with no usable evidence", overview["samples_without"]),
-        ]
         publication_rows = [{
             "sample": row["Sample_ID"], "article": row["Article_ID"], "title": short(row["Title"], 120),
             "url": safe_url(row["Source_URL"]), "date": row["Publication_Date"], "relationship": row["Relationship_Type"],
@@ -255,9 +249,16 @@ def view(token, session, provider=None, explanation="", confirm=False, download_
         "gaps": [row for row in session.get("gaps", []) if row["Gaps"]],
         "gap_total": len(session.get("gaps", [])),
         "dataset_identifiers": session.get("dataset_identifiers", []),
-        "stats": stats, "publications": publication_rows, "notes": session["discovery_notes"] + session["plan_notes"],
+        "publications": publication_rows, "notes": session["discovery_notes"] + session["plan_notes"],
         "no_evidence": session.get("no_evidence"),
-        "plan": [{"article": item["Article_ID"], "title": short(item["Title"], 120),
+        "review": review_summary(session) if publications is not None else None,
+        "request_usage": session.get("request_usage", []),
+        "batches": batches(session), "next_batch": next_batch(session), "batch_size": session.get("batch_size", 5),
+        "analyzed": session.get("analyzed", {}),
+        "batch_plan": [item["Article_ID"] for item in batch_items(session)] if session["plan"] else [],
+        "enrichment_summary": enrichment_summary(session) if session["facts"] else [],
+        "plan": [{"article": item["Article_ID"], "title": short(item["Title"], 120), "batch": item.get("Batch", 1),
+                  "analyzed": item["Article_ID"] in session.get("analyzed", {}),
                   "samples": ", ".join(sample["Sample_ID"] for sample in item["Samples"]),
                   "passages": len(item["Passages"]),
                   "characters": sum(len(passage["Text"]) for passage in item["Passages"])}

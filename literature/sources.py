@@ -17,6 +17,7 @@ from literature.pubtator import PubTatorClient
 class LiveSource:
     label = "NCBI E-utilities and PubTator3 (live public services)"
     synthetic = False
+    supports_batches = True  # record_links_batch / record_aliases_batch / usage
 
     def __init__(self, session=None):
         settings = ncbi_settings()
@@ -42,12 +43,38 @@ class LiveSource:
                     for pmid, relationship, evidence in self.ncbi.pubmed_for_record(kind, value)]
         return []
 
+    def record_links_batch(self, identifiers):
+        """{(kind, value): links} for many identifiers with a few batched NCBI requests."""
+
+        results, by_kind = {}, {}
+        for kind, value in identifiers:
+            if kind in {"Nucleotide", "BioSample", "BioProject", "SRA"} and is_standard(kind, value):
+                by_kind.setdefault(kind, []).append(value)
+            else:
+                results[(kind, value)] = self.record_links(kind, value)
+        for kind, values in by_kind.items():
+            found = self.ncbi.pubmed_for_records(kind, values)
+            for value in values:
+                results[(kind, value)] = [(f"PMID:{pmid}", relationship, evidence, "NCBI E-utilities record links")
+                                          for pmid, relationship, evidence in found.get(value, [])]
+        return results
+
     def record_aliases(self, kind, value):
         """Other identifiers of the same sample in NCBI records (BioSample accessions)."""
 
-        if kind != "Nucleotide" or not is_standard(kind, value):
-            return []
-        return self.ncbi.biosample_accessions(value)
+        return self.record_aliases_batch([(kind, value)]).get((kind, value), [])
+
+    def record_aliases_batch(self, identifiers):
+        nucleotides = [value for kind, value in identifiers if kind == "Nucleotide" and is_standard(kind, value)]
+        found = self.ncbi.biosample_accessions_for(nucleotides) if nucleotides else {}
+        return {(kind, value): found.get(value, []) for kind, value in identifiers}
+
+    def usage(self):
+        """Requests sent, cache hits, and limits per service for this search."""
+
+        return [{"Service": client.name, "Requests sent": client.requests_sent,
+                 "Answered from cache": client.cache_hits, "Limit per search": client.max_requests,
+                 "Failures": "; ".join(client.failures)} for client in (self.ncbi.client, self.pubtator.client)]
 
     def searchable(self, alias):
         return any(PATTERNS[kind].match(alias) for kind in ["Nucleotide", "SRA", "BioSample"])

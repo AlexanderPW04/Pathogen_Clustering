@@ -2,6 +2,23 @@
 
 **Purpose:** Transfer working context for a biomedical informatics class coding project. This handoff was prepared from discussion, Codex-reported summaries, and screenshots. It is **not** a code audit or an assertion that every file exists in the present repository. Verify the current files before editing.
 
+## Sprint 4 literature review: batched retrieval, review outcomes, and batches (November 2, 2026)
+
+- **Bug:** on the ten real NCBI records (QB228092.1-QB228101.1), discovery used the whole budget of 80 E-utilities requests before the shared publication could be retrieved. The result was "article text not retrieved", an unknown publication date, and sometimes HTTP 429.
+- **Root cause:** every record was looked up one at a time and twice (`QB228092` from the Accession column and `QB228092.1` from the FASTA ID). Each lookup made searches plus link requests to PubMed, BioSample and BioProject, and retries counted toward the budget. Publication details and text sat in one `try`, so the exhausted budget blocked both.
+- **Fix: requests.** `literature/ncbi.py` batches lookups: one ESummary maps all accession versions to record IDs, and ELink with repeated `id` returns one link set per record. Shared BioProjects and BioSamples are looked up once, and each unique publication is described and fetched once. The ten records now need **8 E-utilities + 1 PubTator3 requests**, measured live (previously 80 and failing).
+- **Fix: HTTP client.** `literature/http_client.py` adds:
+  - one rate limiter per service shared by the whole server process (E-utilities: 3/s, 10/s with `NCBI_API_KEY`; PubTator3: its API page asks for at most three per second);
+  - bounded retries for 429/5xx that honor `Retry-After` (waits over 30 s stop the search);
+  - a shared one-hour response cache, separate connect/read timeouts, and request counts shown on the page.
+- **Review outcomes (`literature/review.py`):**
+  - Stages A–E: discovery, retrieval, free evidence assessment, paid Claude extraction, then verification and review.
+  - Each publication gets one outcome: improvements proposed, reviewed with no supported improvements, study-only, predates collection, retrieved but relevant information unavailable, retrieval incomplete (API failure), or not retrieved.
+  - Each sample gets a status; failures are reported as an *incomplete* review.
+  - The page shows the summary counts, a per-sample status table, one expandable evidence card per publication, and a per-sample enrichment summary (original, proposed, approval, applied value, publication), also in the pre-analysis report.
+- **Batches:** all linked publications are retrieved (`LITERATURE_MAX_ARTICLES`, default 20, free). Claude analyzes at most `AI_MAX_ARTICLES_PER_RUN` per paid run, in batches the user estimates and approves one at a time. Proposals from earlier batches are kept, and per-run and per-day spending limits are unchanged.
+- **Tests:** `tests/test_literature_review.py` (10), including ten publications with mixed outcomes (5 usable, 3 without details, 1 ambiguous, 1 contradictory) analyzed in two batches and run through the genomic analysis.
+
 ## Sprint 4 on real NCBI records: preparation failure and evidence eligibility (November 2, 2026)
 
 - **Bug and root cause:** on the real ten-record NCBI example (QB228092.1-QB228101.1), "Analyze Literature with Claude AI" showed only "The analysis could not be prepared."

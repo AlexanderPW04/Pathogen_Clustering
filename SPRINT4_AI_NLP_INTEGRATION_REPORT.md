@@ -2,6 +2,14 @@
 
 Integration report for the BMI 461 genomic surveillance prototype, branch `sprint4-integration`, written November 2, 2026.
 
+> **Update (batched literature review, November 2, 2026).**
+> - **Batching:** NCBI lookups are batched and each unique publication is retrieved once (ten real accessions: 8 E-utilities + 1 PubTator3 requests, down from an exhausted budget of 80).
+> - **HTTP client:** a shared rate limiter, bounded retries honoring Retry-After, and a response cache.
+> - **Outcomes:** every publication gets an outcome category (including "reviewed, no supported improvements" and "retrieval incomplete").
+> - **Batched Claude runs:** a plan larger than the per-run article limit is analyzed in separately approved batches.
+>
+> See `PROJECT_HANDOFF.md`.
+
 > **Update (evidence eligibility, November 2, 2026).** A linked publication is now analyzed for a sample only when it could document that sample's collection:
 > - it was not published before the sample was collected (`literature/chronology.py`);
 > - a study-level link also needs the sample named in the article text, for example in a sample-to-site table.

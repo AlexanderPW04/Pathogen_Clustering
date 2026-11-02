@@ -78,11 +78,17 @@ def new_session(individual=None, pooled=None, pairs=None, thresholds=None, synth
             "synthetic": synthetic, "label": label, "created": time.time(), "source_label": "",
             "publications": None, "articles": {}, "aliases": {}, "discovery_notes": [], "unmatched": [],
             "plan": [], "plan_notes": [], "no_evidence": None, "facts": [], "insufficient": [],
-            "run": {"state": "not started"}, "decisions": {}, "applied": None}
+            "run": {"state": "not started"}, "decisions": {}, "applied": None, "analyzed": {},
+            "batch_size": 5, "request_usage": []}
 
 
-def find_literature(session, source, selected_ids=None, max_samples=25, max_articles=5):
-    """Step A: publication candidates, retrieved text, and the analysis plan."""
+def find_literature(session, source, selected_ids=None, max_samples=25, max_articles=5, max_retrieved=None):
+    """Stages A-C: publication candidates, retrieved text (each publication once), and the plan.
+
+    max_retrieved caps how many unique publications are retrieved (free
+    services); max_articles is the number sent to Claude in one paid run,
+    so a larger plan is analyzed in batches the user starts one at a time.
+    """
 
     samples = session["samples"]
     if selected_ids:
@@ -90,10 +96,12 @@ def find_literature(session, source, selected_ids=None, max_samples=25, max_arti
     session["selected"] = list(samples["Sample_ID"])
     aliases = {str(row["Sample_ID"]): sample_identifiers(row)[1] for _, row in samples.iterrows()}
     table, articles, notes, unmatched = discover_publications(
-        samples, source, max_samples, max_articles, session.get("dataset_identifiers", ()), alias_store=aliases)
+        samples, source, max_samples, max_retrieved or max_articles, session.get("dataset_identifiers", ()),
+        alias_store=aliases)
     session.update(publications=table, articles=articles, discovery_notes=notes, unmatched=unmatched,
                    source_label=source.label, run={"state": "not started"}, facts=[],
-                   insufficient=[], decisions={}, applied=None, estimate=None)
+                   insufficient=[], decisions={}, applied=None, estimate=None, analyzed={},
+                   request_usage=source.usage() if getattr(source, "supports_batches", False) is True else [])
     session["aliases"] = aliases
     build_plan(session, max_articles)
     return session
@@ -115,10 +123,11 @@ def sample_row(session, sample_id):
 
 
 def build_plan(session, max_articles):
-    """One extraction request per eligible article, with its selected passages.
+    """One extraction request per eligible article, with its selected passages, in batches.
 
     Articles that cannot document any selected sample's collection are never
-    sent: no request, no cost. session["no_evidence"] then says why.
+    sent: no request, no cost. session["no_evidence"] then says why. Each
+    paid run analyzes one batch of at most max_articles articles.
     """
 
     plan, notes = [], []
@@ -157,28 +166,54 @@ def build_plan(session, max_articles):
         plan.append({"Article_ID": article_id, "Title": article.get("Title", ""),
                      "Source_URL": article.get("Source_URL", ""), "Samples": samples, "Linkage": linkage,
                      "Passages": passages, "User": extraction_message(samples, article, passages, best)})
-    session["plan"], session["plan_notes"] = plan[:max_articles], notes
+    for number, item in enumerate(plan):
+        item["Batch"] = number // max_articles + 1
+    session["plan"], session["plan_notes"], session["batch_size"] = plan, notes, max_articles
+    if len(plan) > max_articles:
+        notes.append(f"{len(plan)} articles have usable evidence; they are analyzed in "
+                     f"{plan[-1]['Batch']} batches of at most {max_articles} (the per-run limit). "
+                     "Each batch needs its own cost approval.")
     if not plan:
         session["no_evidence"] = no_evidence_summary(table)
 
 
-def estimate_plan(session, provider, settings):
-    """Token counts and the worst-case cost of the planned extraction requests."""
+def batch_items(session, batch=None):
+    """Plan items of one batch (default: the first batch not analyzed yet)."""
+
+    return [item for item in session["plan"] if item.get("Batch", 1) == (batch or next_batch(session))]
+
+
+def batches(session):
+    return sorted({item.get("Batch", 1) for item in session["plan"]})
+
+
+def next_batch(session):
+    done = session.get("analyzed", {})
+    for number in batches(session):
+        if any(item["Article_ID"] not in done for item in session["plan"] if item.get("Batch", 1) == number):
+            return number
+    return batches(session)[0] if session["plan"] else 1
+
+
+def estimate_plan(session, provider, settings, batch=None):
+    """Token counts and the worst-case cost of one batch of extraction requests."""
 
     budget = RunBudget(settings, provider.is_live)
     total_tokens, method = 0, "none"
-    for item in session["plan"]:
+    items = batch_items(session, batch)
+    for item in items:
         tokens, method = provider.count_tokens(EXTRACTION_SYSTEM, item["User"], EXTRACTION_SCHEMA)
         item["Estimated_Input_Tokens"] = tokens
         total_tokens += tokens
-    worst = sum(budget.worst_case_cost(item["Estimated_Input_Tokens"]) for item in session["plan"])
+    worst = sum(budget.worst_case_cost(item["Estimated_Input_Tokens"]) for item in items)
     # Association checks (at most one per article) run afterwards only while
     # the same limits still allow them, so they can never exceed the caps.
-    return {"requests": len(session["plan"]), "input_tokens": total_tokens, "token_method": method,
+    return {"batch": items[0].get("Batch", 1) if items else 1, "articles": [item["Article_ID"] for item in items],
+            "requests": len(items), "input_tokens": total_tokens, "token_method": method,
             "max_output_tokens": settings["max_output_tokens"], "worst_case_cost": round(worst, 4),
             "cost_limit": settings["max_cost_usd"],
             "fits": worst <= settings["max_cost_usd"] and total_tokens <= settings["max_input_tokens"]
-            and len(session["plan"]) <= settings["max_requests"]}
+            and len(items) <= settings["max_requests"]}
 
 
 def call_provider(provider, budget, cache, run, task, system, user, schema, article_id, tokens=None):
@@ -211,34 +246,47 @@ def call_provider(provider, budget, cache, run, task, system, user, schema, arti
     return outcome
 
 
-def run_analysis(session, provider, settings, cache=None, cancel=None):
-    """Step B: extraction (stage A), verification, and selective association checks (stage B)."""
+def run_analysis(session, provider, settings, cache=None, cancel=None, batch=None):
+    """Stage D-E for one batch: extraction, verification, and selective association checks.
+
+    Proposals from other batches are kept; analyzing a batch again replaces
+    only that batch's proposals and decisions. The per-run limits apply to
+    each batch, and the daily spending limit to all of them together.
+    """
 
     budget = RunBudget(settings, provider.is_live)
+    items = batch_items(session, batch)
+    batch_articles = {item["Article_ID"] for item in items}
     run = {"state": "running", "progress": "Starting", "provider": provider.name, "model": provider.model,
            "prompt_version": PROMPT_VERSION, "started": time.strftime("%Y-%m-%d %H:%M:%S"),
-           "messages": [], "budget": budget, "fatal": False}
+           "messages": [], "budget": budget, "fatal": False, "batch": items[0].get("Batch", 1) if items else 1}
     session["run"] = run
-    facts, insufficient = [], []
+    kept = [fact for fact in session.get("facts", []) if fact["Article_ID"] not in batch_articles]
+    facts = list(kept)
+    insufficient = [item for item in session.get("insufficient", []) if item["Article_ID"] not in batch_articles]
+    session["decisions"] = {key: value for key, value in session.get("decisions", {}).items()
+                            if key in {fact["Fact_ID"] for fact in kept}}
+    first_new = 1 + max([int(fact["Fact_ID"][1:]) for fact in kept] or [0])
     sent = {}
-    for number, item in enumerate(session["plan"], start=1):
+    for number, item in enumerate(items, start=1):
         if cancel is not None and cancel.is_set():
             run["state"] = "cancelled"
             break
         if run["fatal"] or budget.stopped:
             break
-        run["progress"] = f"Extraction: article {number} of {len(session['plan'])} ({item['Article_ID']})"
+        run["progress"] = f"Extraction: article {number} of {len(items)} ({item['Article_ID']})"
         outcome = call_provider(provider, budget, cache, run, "extraction", EXTRACTION_SYSTEM, item["User"],
                                 EXTRACTION_SCHEMA, item["Article_ID"], item.get("Estimated_Input_Tokens"))
         if outcome is None:
             continue
         sent[item["Article_ID"]] = item
+        session.setdefault("analyzed", {})[item["Article_ID"]] = run["batch"]
         passages = {passage["Passage_ID"]: passage for passage in item["Passages"]}
         request_samples = {sample["Sample_ID"]: {"Aliases": sample["Aliases"],
                                                  "Row": sample_row(session, sample["Sample_ID"])}
                            for sample in item["Samples"]}
         for fact in outcome["data"]["facts"]:
-            fact = {**fact, "Fact_ID": f"F{len(facts) + 1}", "Article_ID": item["Article_ID"],
+            fact = {**fact, "Fact_ID": f"F{first_new + len(facts) - len(kept)}", "Article_ID": item["Article_ID"],
                     "Article_Title": item["Title"], "Article_URL": item["Source_URL"],
                     "Sample_Article_Linkage": item["Linkage"].get(str(fact["Sample_ID"]), "Study-level fact"),
                     "Model_Name": outcome["model"], "Prompt_Version": PROMPT_VERSION, "Provider": provider.name,
@@ -255,7 +303,7 @@ def run_analysis(session, provider, settings, cache=None, cancel=None):
         for article_id, item in sent.items():
             if (cancel is not None and cancel.is_set()) or budget.stopped:
                 break
-            candidates = [fact for fact in facts if fact["Article_ID"] == article_id and fact["Approvable"]]
+            candidates = [fact for fact in facts[len(kept):] if fact["Article_ID"] == article_id and fact["Approvable"]]
             if not candidates:
                 continue
             run["progress"] = f"Association check: {article_id}"
@@ -264,7 +312,7 @@ def run_analysis(session, provider, settings, cache=None, cancel=None):
                                     ASSOCIATION_SCHEMA, article_id)
             if outcome is not None:
                 apply_association(candidates, outcome["data"]["decisions"])
-    for fact in facts:
+    for fact in facts[len(kept):]:
         if fact["Approvable"] and fact["Second_Stage"] == "Not run":
             fact["Second_Stage"] = "Not run (stopped before this check)"
         fact["Review_Status"] = "Pending review" if fact["Approvable"] else "Not approvable"

@@ -37,6 +37,9 @@ ACCESSIONS = [f"QB228{number:03d}" for number in range(92, 102)]
 OLD_STUDY = "PMID:9000001"
 NO_EVIDENCE = ("One study-associated publication was found, but it does not provide verifiable collection "
                "information for these samples. No metadata changes are proposed")
+REVIEWED_NO_CHANGE = ("Ten accession records were associated with one study publication. The publication was "
+                      "retrieved and reviewed once. No verifiable collection-site improvements were found for "
+                      "these records. The original metadata remains unchanged.")
 OFFLINE_AI = {"AI_ENRICHMENT_ENABLED": "true", "ANTHROPIC_API_KEY": "test-key-not-real",
               "ANTHROPIC_MODEL": "claude-opus-5-5", "AI_ACCESS_CODE": "", "GEONAMES_USERNAME": ""}
 
@@ -264,13 +267,13 @@ class RouteTest(unittest.TestCase):
             token, page = self.session_token(ten_record_source())
             analyzed = self.client.post("/literature/analyze", data={"token": token, "confirm": "1",
                                                                        "acknowledge": "on"}).get_data(as_text=True)
-        self.assertIn(NO_EVIDENCE, page.replace("&#39;", "'"))
-        self.assertIn("Publications linked only through a broader study:</strong> 1", page)
-        self.assertIn("Publications usable for metadata enrichment:</strong> 0", page)
-        self.assertIn("Samples with no usable evidence:</strong> 10", page)
+        self.assertIn(REVIEWED_NO_CHANGE, page)
+        self.assertIn("Publications with study-level links only:</strong> 1", page)
+        self.assertIn("Publications with usable sample-specific evidence:</strong> 0", page)
+        self.assertIn("Samples without a supported improvement:</strong> 10", page)
         self.assertNotIn("Analyze Literature with Claude AI", page)
         self.assertNotIn("Analysis could not be completed", analyzed)
-        self.assertIn(NO_EVIDENCE, analyzed.replace("&#39;", "'"))
+        self.assertIn(REVIEWED_NO_CHANGE, analyzed)
         count.assert_not_called()
         run.assert_not_called()
 
@@ -329,7 +332,7 @@ class RouteTest(unittest.TestCase):
             token = re.search(r'name="token" value="([^"]+)"', page[page.index('id="literature"'):]).group(1)
             found = self.client.post("/literature/find", data={"token": token}).get_data(as_text=True)
             result = self.client.post("/enrich/run", data={"token": token, "skip": "1"}).get_data(as_text=True)
-        self.assertIn(NO_EVIDENCE, found.replace("&#39;", "'"))
+        self.assertIn(REVIEWED_NO_CHANGE, found)
         self.assertIn("Continue with the original metadata", found)
         self.assertIn("Pairwise comparisons:</strong> 2", result)
         self.assertNotIn('id="enrichment-report"', result)  # nothing was applied

@@ -351,23 +351,30 @@ class FakeSession:
 
 
 class LiveClientParsingTest(unittest.TestCase):
-    def test_ncbi_record_links_and_summaries(self):
-        session = FakeSession([
-            ("esummary", FakeResponse(200, {"result": {"32015508": {
-                "title": "A new coronavirus", "pubdate": "2020 Mar",
+    def ncbi_session(self):
+        # Rules match the endpoint and database in the request (url + JSON of the parameters).
+        nuccore = {"uids": ["1798172431"], "1798172431": {"caption": "MN908947", "accessionversion": "MN908947.3"}}
+        return FakeSession([
+            ('"db": "nuccore", "id"', FakeResponse(200, {"result": nuccore})),
+            ('"dbfrom": "nuccore", "db": "pubmed"', FakeResponse(200, {"linksets": [{"ids": ["1798172431"],
+                "linksetdbs": [{"linkname": "nuccore_pubmed", "links": ["32015508"]}]}]})),
+            ('"dbfrom": "nuccore", "db": "biosample"', FakeResponse(200, {"linksets": [{"ids": ["1798172431"],
+                "linksetdbs": [{"linkname": "nuccore_biosample", "links": ["555"]}]}]})),
+            ('"dbfrom": "nuccore", "db": "bioproject"', FakeResponse(200, {"linksets": [{"ids": ["1798172431"]}]})),
+            ('"dbfrom": "biosample", "db": "pubmed"', FakeResponse(200, {"linksets": [{"ids": ["555"],
+                "linksetdbs": [{"linkname": "biosample_pubmed", "links": ["40000001"]}]}]})),
+            ('"db": "biosample", "id"', FakeResponse(200, {"result": {"uids": ["555"],
+                                                                      "555": {"accession": "SAMN00000555"}}})),
+            ('"db": "pubmed", "id"', FakeResponse(200, {"result": {"32015508": {
+                "title": "A new coronavirus", "pubdate": "2020 Mar", "epubdate": "2020 Feb 3",
                 "articleids": [{"idtype": "pmc", "value": "PMC7094943"}, {"idtype": "doi", "value": "10.1/x"}]}}})),
-            ("esearch", FakeResponse(200, {"esearchresult": {"idlist": ["1798172431"]}})),
-            ('"dbfrom": "biosample"', FakeResponse(200, {"linksets": [{"linksetdbs": [
-                {"linkname": "biosample_pubmed", "links": ["40000001"]}]}]})),
-            ('"db": "pubmed"', FakeResponse(200, {"linksets": [{"linksetdbs": [
-                {"linkname": "nuccore_pubmed", "links": ["32015508"]}]}]})),
-            ('"db": "biosample"', FakeResponse(200, {"linksets": [{"linksetdbs": [
-                {"linkname": "nuccore_biosample", "links": ["555"]}]}]})),
-            ('"db": "bioproject"', FakeResponse(200, {"linksets": [{}]})),
         ])
+
+    def test_ncbi_record_links_and_summaries(self):
+        session = self.ncbi_session()
         with patch("literature.http_client.time.sleep"):
             client = NcbiClient(session=session)
-            links = client.pubmed_for_record("Nucleotide", "MN908947")
+            links = client.pubmed_for_record("Nucleotide", "MN908947.3")
             summaries = client.summaries(["32015508"])
         self.assertEqual(links[0][:2], ("32015508", "direct"))
         self.assertIn("nuccore_pubmed", links[0][2])
@@ -375,19 +382,15 @@ class LiveClientParsingTest(unittest.TestCase):
         self.assertEqual(links[1][:2], ("40000001", "direct"))
         self.assertIn("BioSample uid 555", links[1][2])
         self.assertEqual(summaries["32015508"]["PMCID"], "PMC7094943")
+        self.assertEqual(summaries["32015508"]["Epub_Date"], "2020 Feb 3")
+        self.assertTrue(all(call[1]["tool"] == "bmi461_genomic_surveillance" for call in session.calls))
 
     def test_biosample_accessions_become_sample_aliases(self):
-        session = FakeSession([
-            ("esummary", FakeResponse(200, {"result": {"uids": ["555"], "555": {"accession": "SAMN00000555"}}})),
-            ("esearch", FakeResponse(200, {"esearchresult": {"idlist": ["1798172431"]}})),
-            ('"db": "biosample"', FakeResponse(200, {"linksets": [{"linksetdbs": [
-                {"linkname": "nuccore_biosample", "links": ["555"]}]}]})),
-        ])
+        session = self.ncbi_session()
         with patch("literature.http_client.time.sleep"):
             source = LiveSource(session=session)
             self.assertEqual(source.record_aliases("Nucleotide", "MN908947.3"), ["SAMN00000555"])
             self.assertEqual(source.record_aliases("Nucleotide", "SYNLIT_01"), [])  # not an NCBI accession
-        self.assertTrue(all(call[1]["tool"] == "bmi461_genomic_surveillance" for call in session.calls))
 
     def test_live_source_skips_project_specific_identifiers(self):
         source = LiveSource(session=FakeSession([]))
