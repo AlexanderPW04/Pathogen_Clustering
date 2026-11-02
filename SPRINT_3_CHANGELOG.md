@@ -31,6 +31,13 @@ Sprint 2.
 
 ## Sprint 3 changes so far
 
+### November 1, 2026 — Pre-Sprint 4 full audit and corrections
+
+- **Report:** `SPRINT2_3_FULL_AUDIT.md` (architecture, file-by-file review, scientific validation, article comparison, formats, visuals, 47-entry issue register, tests, Windows instructions, manual checklist, Sprint 4 readiness). Checkpoint tag: `checkpoint/before-full-audit`.
+- **Scientific rule changes (documented and tested):** related pairs need at least 20 comparable positions; US country/state-level labels and placeholder words such as "not provided" never count as precise or same locations; placeholder dates/coordinates are missing values; mixed day-first/month-first numeric dates are rejected; reported 0% rows are set aside; VCF INFO/AF is used only for sites-only files and VCF depth equals the allele-count total; QC-excluded pooled calls are never counted as reports or non-detections; state-level pooled coordinates give no kilometre distances.
+- **Reliability and safety:** sample IDs such as `001` are kept as text; MAFFT has a 150 s timeout and works through `.bat` paths with spaces; one decompression budget per upload; malformed files no longer cause server errors; uploads are deleted after a run.
+- **Verification:** 224 tests (222 passed, 2 optional real-data tests skipped) with real MAFFT; 20 new regression tests, 19 of which fail on the pre-audit code; a 33-check end-to-end matrix with real MAFFT; real H5N1 and Fontenele baselines unchanged. GeoNames live and the Docker build were not verified.
+
 ### November 1, 2026 — Guided upload, more formats, flexible metadata, and richer integrated dashboard
 
 This responds to the professor's review of the Sprint 2 + Sprint 3
