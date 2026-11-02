@@ -12,7 +12,7 @@ import pandas as pd
 
 from literature.apply import apply_approved, precision_counts, rescreen
 from literature.budget import RunBudget
-from literature.discovery import CATEGORY_RANK, discover_publications
+from literature.discovery import CATEGORY_RANK, discover_publications, no_evidence_summary
 from literature.identifiers import column_key, linkable_columns, sample_identifiers
 from literature.passages import select_passages
 from literature.prompts import (ASSOCIATION_SYSTEM, EXTRACTION_SYSTEM, association_message,
@@ -77,7 +77,7 @@ def new_session(individual=None, pooled=None, pairs=None, thresholds=None, synth
     return {"samples": samples, "pairs": pairs, "thresholds": thresholds,
             "synthetic": synthetic, "label": label, "created": time.time(), "source_label": "",
             "publications": None, "articles": {}, "aliases": {}, "discovery_notes": [], "unmatched": [],
-            "plan": [], "plan_notes": [], "facts": [], "insufficient": [],
+            "plan": [], "plan_notes": [], "no_evidence": None, "facts": [], "insufficient": [],
             "run": {"state": "not started"}, "decisions": {}, "applied": None}
 
 
@@ -88,12 +88,13 @@ def find_literature(session, source, selected_ids=None, max_samples=25, max_arti
     if selected_ids:
         samples = samples[samples["Sample_ID"].isin(selected_ids)]
     session["selected"] = list(samples["Sample_ID"])
+    aliases = {str(row["Sample_ID"]): sample_identifiers(row)[1] for _, row in samples.iterrows()}
     table, articles, notes, unmatched = discover_publications(
-        samples, source, max_samples, max_articles, session.get("dataset_identifiers", ()))
+        samples, source, max_samples, max_articles, session.get("dataset_identifiers", ()), alias_store=aliases)
     session.update(publications=table, articles=articles, discovery_notes=notes, unmatched=unmatched,
                    source_label=source.label, run={"state": "not started"}, facts=[],
-                   insufficient=[], decisions={}, applied=None)
-    session["aliases"] = {str(row["Sample_ID"]): sample_identifiers(row)[1] for _, row in samples.iterrows()}
+                   insufficient=[], decisions={}, applied=None, estimate=None)
+    session["aliases"] = aliases
     build_plan(session, max_articles)
     return session
 
@@ -114,14 +115,23 @@ def sample_row(session, sample_id):
 
 
 def build_plan(session, max_articles):
-    """One extraction request per eligible article, with its selected passages."""
+    """One extraction request per eligible article, with its selected passages.
+
+    Articles that cannot document any selected sample's collection are never
+    sent: no request, no cost. session["no_evidence"] then says why.
+    """
 
     plan, notes = [], []
+    session["no_evidence"] = None
     table = session["publications"]
     eligible = table[table["Eligible_For_Enrichment"]] if table is not None and not table.empty else table
     if eligible is None or eligible.empty:
-        session["plan"], session["plan_notes"] = [], ["No publication has a traceable link and retrievable text."]
+        session["plan"], session["plan_notes"] = [], []
+        if table is not None and not table.empty:
+            session["no_evidence"] = no_evidence_summary(table)
         return
+    for article_id, group in table[~table["Article_ID"].isin(eligible["Article_ID"])].groupby("Article_ID"):
+        notes.append(f"{article_id}: not sent for analysis. {group['Eligibility_Reason'].iloc[0]}")
     for article_id, group in eligible.groupby("Article_ID", sort=False):
         article = session["articles"].get(article_id)
         sample_ids = list(dict.fromkeys(group["Sample_ID"]))[:MAX_SAMPLES_PER_REQUEST]
@@ -130,6 +140,11 @@ def build_plan(session, max_articles):
         if not passages:
             notes.append(f"{article_id}: no passage describes sample collection; it is not sent for analysis.")
             continue
+        excluded = sorted(set(table.loc[table["Article_ID"] == article_id, "Sample_ID"]) - set(group["Sample_ID"]))
+        if excluded:
+            notes.append(f"{article_id}: sent only for {len(sample_ids)} sample(s) it can document; "
+                         f"{len(excluded)} other linked sample(s) are left out ({', '.join(excluded[:5])}"
+                         f"{', …' if len(excluded) > 5 else ''}).")
         samples = []
         for sample_id in sample_ids:
             row = sample_row(session, sample_id)
@@ -143,6 +158,8 @@ def build_plan(session, max_articles):
                      "Source_URL": article.get("Source_URL", ""), "Samples": samples, "Linkage": linkage,
                      "Passages": passages, "User": extraction_message(samples, article, passages, best)})
     session["plan"], session["plan_notes"] = plan[:max_articles], notes
+    if not plan:
+        session["no_evidence"] = no_evidence_summary(table)
 
 
 def estimate_plan(session, provider, settings):

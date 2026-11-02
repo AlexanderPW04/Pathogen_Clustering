@@ -357,8 +357,12 @@ class LiveClientParsingTest(unittest.TestCase):
                 "title": "A new coronavirus", "pubdate": "2020 Mar",
                 "articleids": [{"idtype": "pmc", "value": "PMC7094943"}, {"idtype": "doi", "value": "10.1/x"}]}}})),
             ("esearch", FakeResponse(200, {"esearchresult": {"idlist": ["1798172431"]}})),
+            ('"dbfrom": "biosample"', FakeResponse(200, {"linksets": [{"linksetdbs": [
+                {"linkname": "biosample_pubmed", "links": ["40000001"]}]}]})),
             ('"db": "pubmed"', FakeResponse(200, {"linksets": [{"linksetdbs": [
                 {"linkname": "nuccore_pubmed", "links": ["32015508"]}]}]})),
+            ('"db": "biosample"', FakeResponse(200, {"linksets": [{"linksetdbs": [
+                {"linkname": "nuccore_biosample", "links": ["555"]}]}]})),
             ('"db": "bioproject"', FakeResponse(200, {"linksets": [{}]})),
         ])
         with patch("literature.http_client.time.sleep"):
@@ -367,7 +371,22 @@ class LiveClientParsingTest(unittest.TestCase):
             summaries = client.summaries(["32015508"])
         self.assertEqual(links[0][:2], ("32015508", "direct"))
         self.assertIn("nuccore_pubmed", links[0][2])
+        # A BioSample describes one specimen, so its PubMed link is sample-specific.
+        self.assertEqual(links[1][:2], ("40000001", "direct"))
+        self.assertIn("BioSample uid 555", links[1][2])
         self.assertEqual(summaries["32015508"]["PMCID"], "PMC7094943")
+
+    def test_biosample_accessions_become_sample_aliases(self):
+        session = FakeSession([
+            ("esummary", FakeResponse(200, {"result": {"uids": ["555"], "555": {"accession": "SAMN00000555"}}})),
+            ("esearch", FakeResponse(200, {"esearchresult": {"idlist": ["1798172431"]}})),
+            ('"db": "biosample"', FakeResponse(200, {"linksets": [{"linksetdbs": [
+                {"linkname": "nuccore_biosample", "links": ["555"]}]}]})),
+        ])
+        with patch("literature.http_client.time.sleep"):
+            source = LiveSource(session=session)
+            self.assertEqual(source.record_aliases("Nucleotide", "MN908947.3"), ["SAMN00000555"])
+            self.assertEqual(source.record_aliases("Nucleotide", "SYNLIT_01"), [])  # not an NCBI accession
         self.assertTrue(all(call[1]["tool"] == "bmi461_genomic_surveillance" for call in session.calls))
 
     def test_live_source_skips_project_specific_identifiers(self):
@@ -584,7 +603,10 @@ class WorkflowTest(unittest.TestCase):
         self.assertEqual(facts_for(session, "SYNLIT_11")[0]["Evidence_Status"], "Contradictory")
         self.assertTrue(facts_for(session, "SYNLIT_10", "Collection_Date_Range")[0]["Approvable"])
         self.assertNotIn("context", session)  # no article summaries or epidemiological statements
-        self.assertEqual(len(status), 21)
+        # SYNPUB-007 is linked to SYNLIT_08 only through its study and does not name the
+        # sample, so it is no longer sent: its two study-level facts are not produced.
+        self.assertEqual(len(status), 19)
+        self.assertNotIn("SYNPUB-007", [item["Article_ID"] for item in session["plan"]])
 
     def test_cancel_and_budget_stop_between_requests(self):
         session = demo_session()

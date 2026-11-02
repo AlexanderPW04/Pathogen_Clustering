@@ -52,16 +52,24 @@
       <details {% if lit.stage == 'found' %}open{% endif %}>
         <summary>Publication candidates ({{ lit.publications|length }})</summary>
         <div class="scroll"><table>
-          <thead><tr><th>Sample</th><th>Article</th><th>Relationship</th><th>Verification</th><th>Text</th><th>Notes</th></tr></thead>
+          <thead><tr><th>Sample</th><th>Article</th><th>Relationship</th><th>Usable as evidence?</th><th>Verification</th><th>Text</th><th>Notes</th></tr></thead>
           <tbody>{% for row in lit.publications %}<tr>
             <td>{{ row.sample }}</td>
             <td>{% if row.url %}<a href="{{ row.url }}" rel="noopener noreferrer" target="_blank">{{ row.article }}</a>{% else %}{{ row.article }}{% endif %}<br><span class="help">{{ row.title }}{% if row.date %} ({{ row.date }}){% endif %}</span></td>
-            <td>{{ row.relationship }}{% if row.eligible %} <span class="badge completed">used</span>{% else %} <span class="badge skipped">not used</span>{% endif %}</td>
+            <td>{{ row.relationship }}</td>
+            <td>{% if row.eligible %}<span class="badge completed">used</span>{% else %}<span class="badge skipped">not used</span>{% endif %}<br><span class="help">{{ row.reason }}</span>{% if row.chronology and row.chronology not in row.reason %}<br><span class="help">{{ row.chronology }}</span>{% endif %}</td>
             <td>{{ row.status }}</td><td>{{ row.text }}</td><td>{{ row.notes }}</td></tr>{% endfor %}</tbody>
         </table></div>
       </details>
     {% else %}
       <p class="unavailable">No publication with a traceable link was found. This is an acceptable result: nothing will be proposed.{% if lit.pre_analysis %} Continue the analysis with the original metadata below.{% endif %}</p>
+    {% endif %}
+    {% if lit.no_evidence %}
+      <div class="unavailable" id="no-evidence">
+        <p><strong>{{ lit.no_evidence.message }}</strong></p>
+        <ul class="notes">{% for item in lit.no_evidence.reasons %}<li><strong>{{ item.article }}</strong>{% if item.title %} ({{ item.title }}){% endif %}, {{ item.links }}: {{ item.reasons|join(' ') }}</li>{% endfor %}</ul>
+        <p class="help">A shared study (for example the same BioProject) is not evidence about a particular sample. A publication can support a sample's metadata only when it names that sample (for example in a sample-to-site table) or the sample's own record links it, and it was not published before the sample was collected.</p>
+      </div>
     {% endif %}
     {% if lit.notes %}<ul class="notes">{% for item in lit.notes %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
   {% endif %}

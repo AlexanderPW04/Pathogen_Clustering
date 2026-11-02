@@ -2,6 +2,26 @@
 
 **Purpose:** Transfer working context for a biomedical informatics class coding project. This handoff was prepared from discussion, Codex-reported summaries, and screenshots. It is **not** a code audit or an assertion that every file exists in the present repository. Verify the current files before editing.
 
+## Sprint 4 on real NCBI records: preparation failure and evidence eligibility (November 2, 2026)
+
+- **Bug and root cause:** on the real ten-record NCBI example (QB228092.1-QB228101.1), "Analyze Literature with Claude AI" showed only "The analysis could not be prepared."
+  - The project's `.venv` lacks the `anthropic` package: it is in `requirements.txt` but was never installed there.
+  - `ClaudeProvider.count_tokens` imports it during preparation. The `ModuleNotFoundError` is not an `anthropic.APIError`, so it reached the generic handler in `app.py`.
+  - No request was ever sent; key, model, and request format were fine.
+- **Fix for the error:**
+  - The missing SDK is reported before any request: `sdk_installed` in `literature/config.py`, shown by `choose_provider` and the status panel.
+  - Token-counting errors the paid request would also hit (rejected key, unknown model, invalid request) stop with a specific message; temporary outages fall back to an approximation.
+  - Any other preparation error names its type, says nothing was billed, and logs the details on the server.
+  - **To use Claude locally, install the requirements in `.venv`.**
+- **Evidence eligibility (`literature/discovery.py`, new `literature/chronology.py`):**
+  - A publication is analyzed for a sample only when it was not published before the sample's collection.
+  - A study-level link (shared BioProject or dataset identifier) also needs the sample named in the text, for example in a sample-to-site table.
+  - Each candidate row records `Chronology` and `Eligibility_Reason`; the page separates unique, direct, study-only, naming, usable, and unusable publications.
+- **No evidence:** when no article is usable, nothing is sent to Claude. The page shows "One study-associated publication was found, but it does not provide verifiable collection information for these samples. No metadata changes are proposed…" and the analysis can continue with the original metadata.
+- **Discovery:** nuccore → BioSample → PubMed links count as sample-specific. BioSample accessions from NCBI records are added as sample aliases (the real records gained, e.g., SAMN63447205).
+- **Synthetic literature example:** SYNPUB-007 (study-level, names no sample) is no longer sent, so 19 instead of 21 facts are produced. Association scoring in `literature/evaluation.py` still counts it as correctly found.
+- **Tests:** `tests/test_literature_eligibility.py` (16).
+
 ## Metadata readiness on the review step (November 2, 2026)
 
 - **What it shows:** `genomics/metadata_readiness.py` adds a "Metadata readiness for: <analysis>" table to Step 2. Requirements depend on the chosen or detected mode (individual, pooled, combined). Each field is labeled:

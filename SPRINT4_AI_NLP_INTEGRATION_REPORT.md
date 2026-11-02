@@ -2,6 +2,12 @@
 
 Integration report for the BMI 461 genomic surveillance prototype, branch `sprint4-integration`, written November 2, 2026.
 
+> **Update (evidence eligibility, November 2, 2026).** A linked publication is now analyzed for a sample only when it could document that sample's collection:
+> - it was not published before the sample was collected (`literature/chronology.py`);
+> - a study-level link also needs the sample named in the article text, for example in a sample-to-site table.
+>
+> When no article qualifies, nothing is sent to Claude (no cost) and the page says why, so the analysis continues with the original metadata. nuccore → BioSample → PubMed links count as sample-specific, and BioSample accessions from NCBI records are used as sample aliases. Preparation errors are now specific: the real failure was a missing `anthropic` package in the server's Python environment, which is reported before any request. See `PROJECT_HANDOFF.md`.
+
 > **Update (Sprint 4 from the upload page, November 2, 2026).** Sprint 4 is now chosen with an upload-page toggle (off by default) and runs **before** the genomic analysis.
 > - **Steps:** the review step lists metadata gaps; you then find linked publications, approve a cost estimate before any Claude call, and review each proposal. The analysis runs once with the approved values, and genetic distances are unchanged.
 > - **Individual values** are written into a copy of the prepared metadata, so the pipeline's GeoNames step places approved names (approximate).

@@ -46,6 +46,7 @@ from genomics.integrated_analysis import run_integrated_analysis
 from dashboard_guide import GLOSSARY
 from integrated_view import build_dashboard, download_files
 from literature.config import ai_status
+from literature.providers import ProviderError
 from literature.pubtator import check_pubtator
 from literature.identifiers import parse_identifiers
 from literature.preanalysis import (
@@ -1602,14 +1603,23 @@ def literature_analyze():
     if session is None:
         return expired_page()
     if not session["plan"]:
-        return literature_page(token, session, "No article passages are ready for analysis.")
+        # No usable evidence is an expected result, explained in the section itself, not an error.
+        return literature_page(token, session, None if session.get("no_evidence") else
+                               "No article passages are ready for analysis. Run 'Find Relevant Literature' first.")
     if session["run"].get("state") == "running":
         return redirect(url_for("literature_status", token=token))
     try:
         provider, explanation, estimate = prepare(session)
-    except Exception:
+    except ProviderError as problem:
+        app.logger.warning("Preparing the literature analysis failed: %s", problem)
+        return literature_page(token, session, f"The analysis could not be prepared: {problem} Nothing was "
+                                               "sent for extraction and nothing was billed.")
+    except Exception as problem:
         app.logger.exception("Preparing the literature analysis failed")
-        return literature_page(token, session, "The analysis could not be prepared.")
+        return literature_page(token, session, (
+            f"The analysis could not be prepared because of an unexpected server error "
+            f"({type(problem).__name__}). Nothing was sent to Claude and nothing was billed; details "
+            "are in the server log. You can continue with the original metadata."))
     if provider is None:
         return literature_page(token, session, explanation)
     if request.form.get("confirm") != "1":

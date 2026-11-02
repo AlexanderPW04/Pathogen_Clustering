@@ -51,6 +51,16 @@ class NcbiClient:
             for linkname, pmids in self.links(database, uid, "pubmed"):
                 for pmid in pmids[:5]:
                     results.append((pmid, direct, f"NCBI {database} record {value} links PubMed {pmid} ({linkname})."))
+            if kind == "Nucleotide":
+                # A BioSample describes one specimen, so its PubMed links are
+                # sample-specific (unlike a BioProject, which covers a study).
+                for _, biosamples in self.links(database, uid, "biosample"):
+                    for biosample in biosamples[:2]:
+                        for linkname, pmids in self.links("biosample", biosample, "pubmed"):
+                            for pmid in pmids[:5]:
+                                results.append((pmid, "direct",
+                                                f"NCBI {database} record {value} has BioSample uid {biosample}, "
+                                                f"which links PubMed {pmid} ({linkname})."))
             if kind != "BioProject":
                 for _, projects in self.links(database, uid, "bioproject"):
                     for project in projects[:2]:
@@ -60,6 +70,21 @@ class NcbiClient:
                                                 f"NCBI {database} record {value} belongs to BioProject uid "
                                                 f"{project}, which links PubMed {pmid} ({linkname})."))
         return results
+
+    def biosample_accessions(self, nucleotide):
+        """BioSample accessions (SAMN...) of a nucleotide record: other names for the same sample.
+
+        These requests repeat calls already made by pubmed_for_record, which
+        the HTTP client answers from its cache, plus one esummary.
+        """
+
+        uids = [biosample for uid in self.uids("nuccore", f"{nucleotide}[Accession]")[:1]
+                for _, biosamples in self.links("nuccore", uid, "biosample") for biosample in biosamples[:2]]
+        if not uids:
+            return []
+        result = self.call("esummary.fcgi", db="biosample", id=",".join(uids)).get("result", {})
+        return [str(result[uid]["accession"]) for uid in uids
+                if isinstance(result.get(uid), dict) and result[uid].get("accession")]
 
     def pmid_for(self, kind, value):
         """Convert a PMCID or DOI to a PMID with a PubMed search."""
@@ -83,6 +108,7 @@ class NcbiClient:
             summaries[str(pmid)] = {
                 "Title": record.get("title", ""),
                 "Publication_Date": record.get("pubdate", ""),
+                "Epub_Date": record.get("epubdate", ""),
                 "PMID": str(pmid), "PMCID": ids.get("pmc", ""), "DOI": ids.get("doi", ""),
                 "Source_URL": f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/",
             }

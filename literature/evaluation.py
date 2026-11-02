@@ -60,9 +60,12 @@ def evaluate(session, labels_path):
     facts = session["facts"]
     rows = []
     for sample_id, expected in gold.items():
+        # Association discovery is scored on verified links with retrieved text,
+        # whether or not the article is later usable as evidence (a study-level
+        # article that does not name the sample is found, then not analyzed).
         found = publications[(publications["Sample_ID"] == sample_id)
                              & publications["Relationship_Type"].isin(ELIGIBLE)
-                             & publications["Eligible_For_Enrichment"]]
+                             & ~publications["Text_Status"].isin(["No text available", "Not retrieved"])]
         articles = sorted(found["Article_ID"])
         raw = location_facts(facts, sample_id, approvable_only=False)
         approvable = location_facts(facts, sample_id, approvable_only=True)

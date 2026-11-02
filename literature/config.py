@@ -5,6 +5,7 @@ and ANTHROPIC_API_KEY is set. The key itself is never returned, logged, or
 sent to the browser; only "configured" / "not configured" is reported.
 """
 
+import importlib.util
 import os
 from pathlib import Path
 
@@ -29,6 +30,10 @@ FALLBACK_WORST_CASE = (5.00, 25.00)
 FALLBACK_MODELS = {"claude-opus-5-5", "claude-sonnet-5-5", "claude-opus-5", "claude-fable-5-1"}
 
 TRUE_WORDS = {"1", "true", "yes", "on"}
+SDK_MISSING = ("The Anthropic Python SDK (the 'anthropic' package listed in requirements.txt) is not "
+               "installed in the Python environment running this server, so Claude cannot be called. "
+               "Install the requirements in that environment (python -m pip install -r requirements.txt) "
+               "and restart the server. Nothing was sent to Claude and nothing was billed.")
 
 
 def load_env_file(path=ENV_FILE):
@@ -72,6 +77,7 @@ def ai_settings():
     return {
         "enabled": os.getenv("AI_ENRICHMENT_ENABLED", "").strip().casefold() in TRUE_WORDS,
         "key_configured": bool(os.getenv("ANTHROPIC_API_KEY", "").strip()),
+        "sdk_installed": importlib.util.find_spec("anthropic") is not None,
         "model": model,
         "effort": os.getenv("AI_EFFORT", "low").strip() or "low",
         "prices": prices,
@@ -99,6 +105,9 @@ def ai_status():
     elif not settings["key_configured"]:
         state = "Not configured"
         message = "AI enrichment is enabled but ANTHROPIC_API_KEY is not set on this server."
+    elif not settings["sdk_installed"] and not settings["local_model_url"]:
+        state = "Not configured"
+        message = SDK_MISSING
     elif settings["prices"] is None:
         state = "Not configured"
         message = (f"No price is known for {settings['model']}; set AI_PRICE_INPUT_PER_MTOK and "

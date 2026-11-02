@@ -42,6 +42,13 @@ class LiveSource:
                     for pmid, relationship, evidence in self.ncbi.pubmed_for_record(kind, value)]
         return []
 
+    def record_aliases(self, kind, value):
+        """Other identifiers of the same sample in NCBI records (BioSample accessions)."""
+
+        if kind != "Nucleotide" or not is_standard(kind, value):
+            return []
+        return self.ncbi.biosample_accessions(value)
+
     def searchable(self, alias):
         return any(PATTERNS[kind].match(alias) for kind in ["Nucleotide", "SRA", "BioSample"])
 
@@ -91,6 +98,9 @@ class LocalCorpusSource:
                               "Sample record link (synthetic)"))
         return links
 
+    def record_aliases(self, kind, value):
+        return []
+
     def searchable(self, alias):
         return True
 
@@ -102,7 +112,7 @@ class LocalCorpusSource:
 
     def describe(self, article_ids):
         return {article_id: {key: self.articles[article_id].get(key, "") for key in
-                             ["Title", "Publication_Date", "PMID", "PMCID", "DOI", "Source_URL"]}
+                             ["Title", "Publication_Date", "Epub_Date", "PMID", "PMCID", "DOI", "Source_URL"]}
                 for article_id in article_ids if article_id in self.articles}
 
     def fetch(self, article_ids):

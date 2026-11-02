@@ -76,7 +76,13 @@ class ClaudeProvider:
                                   "effort": self.settings["effort"]}}
 
     def count_tokens(self, system, user, schema):
-        """Input tokens from the free token-counting endpoint, or an approximation."""
+        """Input tokens from the free token-counting endpoint, or an approximation.
+
+        Problems the paid request would hit as well (rejected key, unknown
+        model, invalid request, missing client settings) raise ProviderError
+        now, before anything is billed; temporary outages fall back to an
+        approximation.
+        """
 
         import anthropic
         try:
@@ -84,8 +90,21 @@ class ClaudeProvider:
                 model=self.model, system=system, messages=[{"role": "user", "content": user}],
                 output_config={"format": {"type": "json_schema", "schema": schema}})
             return counted.input_tokens, "Counted with the Anthropic token-counting API"
-        except anthropic.APIError:
-            return approximate_tokens(system, user), "Approximate (token counting unavailable)"
+        except (anthropic.AuthenticationError, anthropic.PermissionDeniedError) as error:
+            raise ProviderError(f"The Claude API rejected the configured key while counting tokens "
+                                f"(HTTP {error.status_code}). Check ANTHROPIC_API_KEY on the server.") from None
+        except anthropic.NotFoundError:
+            raise ProviderError(f"Model {self.model} is not available to this API key "
+                                "(token counting returned HTTP 404). Check ANTHROPIC_MODEL.") from None
+        except anthropic.BadRequestError as error:
+            raise ProviderError(f"The Claude API rejected the token-count request as invalid "
+                                f"(HTTP {error.status_code}). The request format may not match this model.") from None
+        except anthropic.APIError as error:
+            return approximate_tokens(system, user), (
+                f"Approximate (token counting unavailable: {type(error).__name__})")
+        except anthropic.AnthropicError as error:  # raised before any request, e.g. missing client settings
+            raise ProviderError(f"The Claude client could not be created ({type(error).__name__}). "
+                                "Check the server's Anthropic settings.") from None
 
     def run(self, task, system, user, schema, max_tokens, article_id=""):
         import anthropic

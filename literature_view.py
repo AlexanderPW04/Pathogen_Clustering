@@ -16,8 +16,8 @@ from time import monotonic
 import pandas as pd
 
 from geocode_locations import lookup_place
-from literature.config import ai_settings, ai_status, ncbi_settings
-from literature.discovery import DIRECT, IN_TEXT, STUDY
+from literature.config import SDK_MISSING, ai_settings, ai_status, ncbi_settings
+from literature.discovery import DIRECT, IN_TEXT, STUDY, article_overview
 from literature.providers import ClaudeProvider, ExtractionCache, LocalModelProvider, MockProvider
 from literature.sources import LiveSource, LocalCorpusSource
 from literature.workflow import (apply_session, downloads, estimate_plan, find_literature,
@@ -88,6 +88,8 @@ def choose_provider(session, settings):
         return LocalModelProvider(settings["local_model_url"]), "A locally hosted model (LOCAL_MODEL_URL)."
     if not settings["key_configured"]:
         return None, "AI analysis is enabled but ANTHROPIC_API_KEY is not set on this server."
+    if not settings["sdk_installed"]:
+        return None, SDK_MISSING
     if settings["prices"] is None:
         return None, (f"No price is known for {settings['model']}; set AI_PRICE_INPUT_PER_MTOK and "
                       "AI_PRICE_OUTPUT_PER_MTOK so the spending limit can be enforced.")
@@ -193,20 +195,27 @@ def view(token, session, provider=None, explanation="", confirm=False, download_
     if publications is not None:
         stage = "found"
         inspected = len(session.get("selected", []))
-        linked = set(publications.loc[publications["Eligible_For_Enrichment"], "Sample_ID"])
+        overview = article_overview(publications, inspected)
+        # Publications (unique articles) first, then sample-publication links.
         stats = [
             ("Samples inspected", inspected),
-            ("Publications found", publications["Article_ID"].nunique()),
+            ("Publications found", overview["articles"]),
+            ("Publications linked directly to a sample", overview["direct"]),
+            ("Publications linked only through a broader study", overview["study_only"]),
+            ("Publications naming a sample in their text", overview["named"]),
+            ("Publications usable for metadata enrichment", overview["usable"]),
+            ("Publications not usable for metadata enrichment", overview["unsuitable"]),
             ("Direct sample links", int((publications["Relationship_Type"] == DIRECT).sum())),
             ("Study-level links", int((publications["Relationship_Type"] == STUDY).sum())),
             ("Identifier found in text", int((publications["Relationship_Type"] == IN_TEXT).sum())),
-            ("Samples without a usable publication", inspected - len(linked)),
+            ("Samples with no usable evidence", overview["samples_without"]),
         ]
         publication_rows = [{
             "sample": row["Sample_ID"], "article": row["Article_ID"], "title": short(row["Title"], 120),
             "url": safe_url(row["Source_URL"]), "date": row["Publication_Date"], "relationship": row["Relationship_Type"],
             "status": row["Verification_Status"], "text": row["Text_Status"], "notes": row["Ambiguity_Notes"],
-            "eligible": bool(row["Eligible_For_Enrichment"]),
+            "eligible": bool(row["Eligible_For_Enrichment"]), "chronology": row.get("Chronology", ""),
+            "reason": row.get("Eligibility_Reason", ""),
         } for _, row in publications.iterrows()]
     run = session["run"]
     if run.get("state") not in {None, "not started"}:
@@ -247,6 +256,7 @@ def view(token, session, provider=None, explanation="", confirm=False, download_
         "gap_total": len(session.get("gaps", [])),
         "dataset_identifiers": session.get("dataset_identifiers", []),
         "stats": stats, "publications": publication_rows, "notes": session["discovery_notes"] + session["plan_notes"],
+        "no_evidence": session.get("no_evidence"),
         "plan": [{"article": item["Article_ID"], "title": short(item["Title"], 120),
                   "samples": ", ".join(sample["Sample_ID"] for sample in item["Samples"]),
                   "passages": len(item["Passages"]),
