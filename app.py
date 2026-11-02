@@ -1,9 +1,11 @@
 """Flask interface: one dashboard for individual and pooled genomic evidence.
 
-The page runs the original Sprint 2 sequence-relationship pipeline when
-FASTA + metadata are uploaded, and the reference-based integrated analysis
-(genomics.integrated_analysis) when a reference FASTA and/or a pooled SNV
-table is supplied. The earlier Sprint 3 single-source pages remain available.
+The page guides the visitor through three steps: upload any mix of files,
+review what each file was recognized as (and correct it), then run every
+analysis the files allow. The original Sprint 2 sequence-relationship
+pipeline runs for individual sequences, and the reference-based integrated
+analysis (genomics.integrated_analysis) connects them with pooled samples.
+The earlier Sprint 3 single-source pages remain available.
 """
 
 from base64 import b64encode
@@ -12,8 +14,8 @@ from io import BytesIO, StringIO
 from math import isfinite
 from pathlib import Path
 from secrets import token_urlsafe
-from shutil import copyfile
-from tempfile import TemporaryDirectory
+from shutil import copyfile, rmtree
+from tempfile import TemporaryDirectory, gettempdir, mkdtemp
 from threading import Lock
 from time import monotonic
 
@@ -25,6 +27,12 @@ from run_pipeline import output_paths, region_assignment_path, run_pipeline
 from system_diagnostics import check_mafft
 from validate_inputs import FASTA_EXTENSIONS, METADATA_EXTENSIONS
 from environmental_analysis import load_measurements, make_charts, summarize_measurements, table_records
+from genomics.file_formats import (
+    EXCEL_KIND, FASTA_KIND, VCF_KIND, detect_kind, plain_copy, split_name,
+)
+from genomics.input_inspection import (
+    ROLE_LABELS, empty_info, inspect_file, prepare_inputs, review_dataset, suggest_roles,
+)
 from genomics.integrated_analysis import run_integrated_analysis
 from integrated_view import build_dashboard, download_files
 from wastewater.processed_snv import load_processed_snvs, summarize_snvs
@@ -58,7 +66,7 @@ TABLE_EXTENSIONS = {".csv", ".tsv", ".xlsx"}
 # (form field, input key, allowed extensions, readable name)
 OPTIONAL_UPLOADS = [
     ("reference_file", "reference", FASTA_EXTENSIONS, "reference FASTA"),
-    ("snv_file", "snv", TABLE_EXTENSIONS, "pooled SNV table"),
+    ("snv_file", "snv", TABLE_EXTENSIONS | {".vcf"}, "pooled SNV table"),
     ("pooled_metadata_file", "pooled_metadata", TABLE_EXTENSIONS, "pooled-sample metadata"),
     ("position_file", "positions", TABLE_EXTENSIONS, "per-position depth table"),
     ("masked_sites_file", "masked_sites", TABLE_EXTENSIONS, "masked-site list"),
@@ -78,6 +86,15 @@ RESULT_DOWNLOADS = {}  # Short-lived integrated-result files; no database.
 RESULT_LOCK = Lock()
 RESULT_DOWNLOAD_SECONDS = 600
 RESULT_DOWNLOAD_LIMIT = 4
+
+# Guided uploads wait on disk (not in Git, not permanent) between the review
+# and run steps; each set is deleted after 30 minutes or when newer sets need room.
+STAGING_ROOT = Path(gettempdir()) / "genomic_surveillance_uploads"
+STAGED = {}
+STAGED_LOCK = Lock()
+STAGED_SECONDS = 1800
+STAGED_LIMIT = 6
+MAX_GUIDED_FILES = 20
 
 
 def default_values(form):
@@ -157,7 +174,7 @@ def system_status():
     results, cached = get_system_status()
     values = default_values({})
     return render_template(
-        "index.html", values=values, system_status=results, status_cached=cached
+        "index.html", values=values, system_status=results, status_cached=cached, step=1
     )
 
 
@@ -561,10 +578,33 @@ def run_relationship_analysis(fasta_path, metadata_path, thresholds, complete_ge
 
     outcome["clusters"] = clusters
     outcome["candidates"] = candidates
+    outcome["pairs"] = enriched_pairs
     for path in list(output_files) + [region_assignment_path(metadata_path)]:
         outcome["files"][f"sequence_relationships_{path.name}"] = path.read_bytes()
     outcome["complete"] = True
     return outcome
+
+
+def accepted_name(filename, extensions):
+    """True when the base extension (ignoring a final .gz) is allowed."""
+
+    extension, _ = split_name(filename)
+    return extension in extensions
+
+
+def save_upload(upload, folder, key):
+    """Save one named-field upload, decompressing .gz into a plain file."""
+
+    name = Path(upload.filename).name
+    extension, _ = split_name(name)
+    raw = folder / f"{key}_upload"
+    upload.save(raw)
+    path = folder / f"{key}{extension}"
+    try:
+        plain_copy(raw, path)
+    finally:
+        raw.unlink(missing_ok=True)
+    return path, name
 
 
 def save_inputs(folder, use_example, use_integrated, fasta_upload, metadata_upload, uploads):
@@ -587,31 +627,128 @@ def save_inputs(folder, use_example, use_integrated, fasta_upload, metadata_uplo
         return paths, names
 
     if fasta_upload is not None and fasta_upload.filename:
-        names["fasta"] = Path(fasta_upload.filename).name
-        names["metadata"] = Path(metadata_upload.filename).name
-        paths["fasta"] = folder / f"sequences{Path(names['fasta']).suffix.lower()}"
-        paths["metadata"] = folder / f"metadata{Path(names['metadata']).suffix.lower()}"
-        fasta_upload.save(paths["fasta"])
-        metadata_upload.save(paths["metadata"])
+        paths["fasta"], names["fasta"] = save_upload(fasta_upload, folder, "sequences")
+        paths["metadata"], names["metadata"] = save_upload(metadata_upload, folder, "metadata")
     for key, upload in uploads.items():
-        names[key] = Path(upload.filename).name
-        paths[key] = folder / f"{key}{Path(names[key]).suffix.lower()}"
-        upload.save(paths[key])
+        paths[key], names[key] = save_upload(upload, folder, key)
     return paths, names
 
 
-@app.route("/", methods=["GET", "POST"])
-def index():
-    """Show the unified dashboard and run the requested analysis."""
-
-    values = default_values(request.form)
-    page = {
+def new_page():
+    return {
         "error": None, "notice": None, "analysis_complete": False, "clusters": [],
         "related_pair_count": 0, "candidates": [], "summary": {}, "input_names": None,
         "is_synthetic_example": False, "is_integrated_example": False, "dashboard": None,
         "integrated_error": None, "download_id": None, "downloads": [],
-        "skipped_downloads": [],
+        "skipped_downloads": [], "review": None, "token": None, "step": 1,
+        "analysis_plan": None, "declared_pathogen": "",
     }
+
+
+def check_settings(values):
+    """Validate thresholds and options; return (thresholds, date_window, error)."""
+
+    if values["genomic_region_mode"] not in {"automatic", "complete_genomes"}:
+        return None, None, "Choose Automatic detection or Complete genomes."
+    if values["genomic_region_mode"] == "complete_genomes" and not values["confirm_complete_genomes"]:
+        return None, None, "Please confirm that all sequences are complete genomes of one pathogen."
+    thresholds, error = read_thresholds(values)
+    if error:
+        return None, None, error
+    date_window, error = read_date_window(values)
+    if error:
+        return None, None, error
+    if values["qc_mode"] not in {"paper", "exploratory"}:
+        return None, None, "Choose the paper-reproduction or exploratory quality-control mode."
+    return thresholds, date_window, None
+
+
+def relationship_tables(relationship, thresholds):
+    """The Sprint 2 pairwise results that the dashboard turns into figures."""
+
+    return {"pairs": relationship.get("pairs"), "thresholds": thresholds,
+            "candidates": relationship["candidates"], "clusters": relationship["clusters"]}
+
+
+def run_analyses(paths, names, values, thresholds, date_window, temporary_folder, page):
+    """Run every analysis the saved inputs allow and fill the results page."""
+
+    page["input_names"] = names
+    page["step"] = 3
+    relationship = None
+    if "fasta" in paths:
+        relationship = run_relationship_analysis(
+            paths["fasta"], paths["metadata"], thresholds,
+            values["genomic_region_mode"] == "complete_genomes", temporary_folder,
+        )
+        page["error"] = relationship["error"]
+        page["notice"] = relationship["notice"]
+        page["analysis_complete"] = relationship["complete"]
+        page["clusters"] = relationship["clusters"]
+        page["related_pair_count"] = relationship["related_pair_count"]
+        page["candidates"] = relationship["candidates"]
+        page["summary"] = relationship["summary"]
+
+    relationship_files = relationship["files"] if relationship else {}
+    completed = relationship is not None and relationship["complete"]
+    if not ("reference" in paths or "snv" in paths or completed):
+        return page
+    individual_data = None
+    mafft_path = None
+    if completed:
+        individual_data = relationship["analysis_data"].get("samples")
+        mafft_path = relationship["analysis_data"].get("mafft_path")
+    try:
+        result = run_integrated_analysis(
+            individual_data=individual_data,
+            mafft_path=mafft_path,
+            reference_path=paths.get("reference"),
+            snv_path=paths.get("snv"),
+            pooled_metadata_path=paths.get("pooled_metadata"),
+            position_path=paths.get("positions"),
+            masked_sites_path=paths.get("masked_sites"),
+            signature_path=paths.get("signatures"),
+            settings={"qc_mode": values["qc_mode"], "date_window_days": date_window},
+            input_labels=names,
+            relationship=relationship_tables(relationship, thresholds) if completed else None,
+        )
+    except (ValueError, RuntimeError) as problem:
+        page["integrated_error"] = str(problem).replace(str(temporary_folder), "[temporary upload]")
+    except Exception:
+        app.logger.exception("Integrated analysis failed")
+        page["integrated_error"] = (
+            "The integrated analysis could not be completed. Check the reference and "
+            "pooled-sample files."
+        )
+    else:
+        files, skipped = download_files(result, relationship_files)
+        page["download_id"] = store_result_files(files)
+        page["dashboard"] = build_dashboard(result, page["download_id"])
+        page["downloads"] = sorted(files)
+        page["skipped_downloads"] = skipped
+        return page
+    if relationship_files:
+        files = {name: (content, "text/csv") for name, content in relationship_files.items()}
+        page["download_id"] = store_result_files(files)
+        page["downloads"] = sorted(files)
+    return page
+
+
+def render_page(values, page):
+    return render_template("index.html", values=values, input_labels=INPUT_LABELS,
+                           role_labels=ROLE_LABELS, **page)
+
+
+@app.route("/", methods=["GET", "POST"])
+def index():
+    """Show the dashboard; POST runs the examples or a direct named-field upload.
+
+    The named fields (fasta_file, metadata_file, reference_file, snv_file, ...)
+    are kept for scripts and tests; the page itself uses the guided workflow.
+    """
+
+    values = default_values(request.form)
+    page = new_page()
 
     if request.method == "POST":
         use_example = "run_example" in request.form
@@ -637,10 +774,8 @@ def index():
         error = None
         if values["genomic_region_mode"] not in {"automatic", "complete_genomes"}:
             error = "Choose Automatic detection or Complete genomes."
-        elif (
-            values["genomic_region_mode"] == "complete_genomes"
-            and not values["confirm_complete_genomes"]
-        ):
+        elif (values["genomic_region_mode"] == "complete_genomes"
+              and not values["confirm_complete_genomes"]):
             error = "Please confirm that all sequences are complete genomes of one pathogen."
         elif use_example and not all(
             (EXAMPLE_FOLDER / name).is_file()
@@ -656,99 +791,197 @@ def index():
                      "table, or both.")
         elif has_metadata and not has_fasta:
             error = "Please choose a FASTA sequence file."
-        elif has_fasta and Path(fasta_upload.filename).suffix.lower() not in FASTA_EXTENSIONS:
-            error = "The sequence file must use .fasta, .fa, or .fna."
+        elif has_fasta and not accepted_name(fasta_upload.filename, FASTA_EXTENSIONS):
+            error = "The sequence file must use .fasta, .fa, or .fna (optionally .gz)."
         elif has_fasta and not has_metadata:
             error = "Please choose a metadata file."
-        elif has_metadata and Path(metadata_upload.filename).suffix.lower() not in METADATA_EXTENSIONS:
+        elif has_metadata and not accepted_name(metadata_upload.filename, METADATA_EXTENSIONS):
             error = "The metadata file must use .xlsx or .csv."
 
         if error is None:
             for _, key, extensions, label in OPTIONAL_UPLOADS:
-                if key in uploads and Path(uploads[key].filename).suffix.lower() not in extensions:
-                    error = f"The {label} must use " + ", ".join(sorted(extensions)) + "."
+                if key in uploads and not accepted_name(uploads[key].filename, extensions):
+                    error = (f"The {label} must use " + ", ".join(sorted(extensions))
+                             + " (text files may be .gz).")
                     break
         if error is None and "snv" not in uploads and any(
             key in uploads for key in ("pooled_metadata", "positions", "masked_sites")
         ):
             error = "Pooled-sample metadata, position, and masked-site files need a pooled SNV table."
 
-        thresholds = None
-        date_window = None
+        thresholds = date_window = None
         if error is None:
-            thresholds, error = read_thresholds(values)
-        if error is None:
-            date_window, error = read_date_window(values)
-        if error is None and values["qc_mode"] not in {"paper", "exploratory"}:
-            error = "Choose the paper-reproduction or exploratory quality-control mode."
+            thresholds, date_window, error = check_settings(values)
 
         if error is None:
             # Every request gets its own folder, which is deleted automatically.
             with TemporaryDirectory() as temporary_folder:
                 folder = Path(temporary_folder)
-                paths, names = save_inputs(folder, use_example, use_integrated,
-                                           fasta_upload, metadata_upload, uploads)
-                page["input_names"] = names
-
-                relationship = None
-                if "fasta" in paths:
-                    relationship = run_relationship_analysis(
-                        paths["fasta"], paths["metadata"], thresholds,
-                        values["genomic_region_mode"] == "complete_genomes", temporary_folder,
-                    )
-                    page["error"] = relationship["error"]
-                    page["notice"] = relationship["notice"]
-                    page["analysis_complete"] = relationship["complete"]
-                    page["clusters"] = relationship["clusters"]
-                    page["related_pair_count"] = relationship["related_pair_count"]
-                    page["candidates"] = relationship["candidates"]
-                    page["summary"] = relationship["summary"]
-
-                relationship_files = relationship["files"] if relationship else {}
-                if "reference" in paths or "snv" in paths:
-                    individual_data = None
-                    mafft_path = None
-                    if relationship and relationship["complete"] and "reference" in paths:
-                        individual_data = relationship["analysis_data"].get("samples")
-                        mafft_path = relationship["analysis_data"].get("mafft_path")
-                    try:
-                        result = run_integrated_analysis(
-                            individual_data=individual_data,
-                            mafft_path=mafft_path,
-                            reference_path=paths.get("reference"),
-                            snv_path=paths.get("snv"),
-                            pooled_metadata_path=paths.get("pooled_metadata"),
-                            position_path=paths.get("positions"),
-                            masked_sites_path=paths.get("masked_sites"),
-                            signature_path=paths.get("signatures"),
-                            settings={"qc_mode": values["qc_mode"],
-                                      "date_window_days": date_window},
-                            input_labels=names,
-                        )
-                    except (ValueError, RuntimeError) as problem:
-                        page["integrated_error"] = str(problem).replace(
-                            str(temporary_folder), "[temporary upload]")
-                    except Exception:
-                        app.logger.exception("Integrated analysis failed")
-                        page["integrated_error"] = (
-                            "The integrated analysis could not be completed. Check the "
-                            "reference and pooled-sample files."
-                        )
-                    else:
-                        files, skipped = download_files(result, relationship_files)
-                        page["download_id"] = store_result_files(files)
-                        page["dashboard"] = build_dashboard(result, page["download_id"])
-                        page["downloads"] = sorted(files)
-                        page["skipped_downloads"] = skipped
-                elif relationship_files:
-                    files = {name: (content, "text/csv") for name, content in relationship_files.items()}
-                    page["download_id"] = store_result_files(files)
-                    page["downloads"] = sorted(files)
+                try:
+                    paths, names = save_inputs(folder, use_example, use_integrated,
+                                               fasta_upload, metadata_upload, uploads)
+                except ValueError as problem:
+                    error = str(problem)
+                else:
+                    run_analyses(paths, names, values, thresholds, date_window,
+                                 temporary_folder, page)
 
         if error is not None:
             page["error"] = error
 
-    return render_template("index.html", values=values, input_labels=INPUT_LABELS, **page)
+    return render_page(values, page)
+
+
+# ----------------------------------------------------------------------------
+# Guided workflow: Step 1 upload -> Step 2 review -> Step 3 results
+# ----------------------------------------------------------------------------
+
+def remove_staged(token):
+    item = STAGED.pop(token, None)
+    if item is not None:
+        rmtree(item["folder"], ignore_errors=True)
+
+
+def clean_staged():
+    """Delete expired staged uploads and keep at most STAGED_LIMIT sets."""
+
+    now = monotonic()
+    for token in [key for key, item in STAGED.items() if now - item["created"] > STAGED_SECONDS]:
+        remove_staged(token)
+    while len(STAGED) >= STAGED_LIMIT:
+        remove_staged(min(STAGED, key=lambda key: STAGED[key]["created"]))
+
+
+PLAIN_EXTENSIONS = {FASTA_KIND: ".fasta", VCF_KIND: ".vcf", EXCEL_KIND: ".xlsx"}
+
+
+def stage_uploads(uploads):
+    """Save, decompress, and inspect the uploaded files; return a staging token."""
+
+    if len(uploads) > MAX_GUIDED_FILES:
+        raise ValueError(f"Choose at most {MAX_GUIDED_FILES} files at a time.")
+    STAGING_ROOT.mkdir(parents=True, exist_ok=True)
+    folder = Path(mkdtemp(prefix="upload_", dir=STAGING_ROOT))
+    staged = {}
+    inspections = []
+    try:
+        for index, upload in enumerate(uploads):
+            name = Path(upload.filename).name
+            raw = folder / f"raw_{index}"
+            upload.save(raw)
+            plain = folder / f"file_{index}"
+            try:
+                plain_copy(raw, plain)
+            except ValueError as problem:
+                info = empty_info(name)
+                info.update(kind="Unreadable", refused=True, problems=[str(problem)])
+                inspections.append(info)
+                continue
+            finally:
+                raw.unlink(missing_ok=True)
+            kind = detect_kind(plain, name)
+            extension = PLAIN_EXTENSIONS.get(kind)
+            if extension is None:
+                base, _ = split_name(name)
+                extension = base if base in {".csv", ".tsv", ".txt"} else ".txt"
+            path = plain.rename(folder / f"file_{index}{extension}")
+            staged[index] = path
+            inspections.append(inspect_file(path, name))
+    except Exception:
+        rmtree(folder, ignore_errors=True)
+        raise
+    suggest_roles(inspections)
+    with STAGED_LOCK:
+        clean_staged()
+        token = token_urlsafe(16)
+        STAGED[token] = {"folder": folder, "created": monotonic(), "files": staged,
+                         "inspections": inspections}
+    return token
+
+
+def review_choices(form, inspections):
+    """Read the role, column, and pathogen choices from the review form."""
+
+    roles = {}
+    choices = {}
+    for index in range(len(inspections)):
+        role = form.get(f"role_{index}")
+        if role in ROLE_LABELS:
+            roles[index] = role
+        prefix = f"map_{index}_"
+        picks = {key[len(prefix):]: value for key, value in form.items()
+                 if key.startswith(prefix) and value}
+        if picks:
+            choices[index] = picks
+    options = {"declared_pathogen": form.get("declared_pathogen", "").strip()[:120],
+               "complete_genomes": form.get("genomic_region_mode") == "complete_genomes"}
+    return roles, choices, options
+
+
+def staged_item(token):
+    with STAGED_LOCK:
+        item = STAGED.get(token or "")
+        if item is None or monotonic() - item["created"] > STAGED_SECONDS:
+            return None
+        return item
+
+
+@app.route("/review", methods=["POST"])
+def review_upload():
+    """Step 2: show what each file is and which analyses the dataset allows."""
+
+    values = default_values(request.form)
+    page = new_page()
+    page["step"] = 2
+    token = request.form.get("token")
+    uploads = [upload for upload in request.files.getlist("files") if upload and upload.filename]
+    try:
+        if uploads:
+            token = stage_uploads(uploads)
+        item = staged_item(token)
+        if item is None:
+            raise ValueError("Choose one or more files to upload. Uploaded files are kept for "
+                             "30 minutes while you review them.")
+        roles, choices, options = review_choices(request.form, item["inspections"])
+        page["review"] = review_dataset(item["files"], item["inspections"], roles, choices, options)
+        page["token"] = token
+        page["declared_pathogen"] = options["declared_pathogen"]
+    except ValueError as problem:
+        page["error"] = str(problem)
+        page["step"] = 1
+    return render_page(values, page)
+
+
+@app.route("/run", methods=["POST"])
+def run_reviewed():
+    """Step 3: run the applicable analyses on the reviewed files."""
+
+    values = default_values(request.form)
+    page = new_page()
+    token = request.form.get("token")
+    item = staged_item(token)
+    if item is None:
+        page["error"] = "The uploaded files have expired. Please upload them again."
+        return render_page(values, page)
+    roles, choices, options = review_choices(request.form, item["inspections"])
+    review = review_dataset(item["files"], item["inspections"], roles, choices, options)
+    thresholds, date_window, error = check_settings(values)
+    if error is None and not review["ready"]:
+        error = "Resolve the problems listed in Step 2 before running the analysis."
+    if error is not None:
+        page.update(error=error, review=review, token=token, step=2,
+                    declared_pathogen=options["declared_pathogen"])
+        return render_page(values, page)
+    with TemporaryDirectory() as temporary_folder:
+        try:
+            paths, names = prepare_inputs(item["files"], review, temporary_folder, options)
+        except ValueError as problem:
+            page["error"] = str(problem)
+        else:
+            run_analyses(paths, names, values, thresholds, date_window, temporary_folder, page)
+    page["analysis_plan"] = review["analyses"]
+    page["token"] = token
+    return render_page(values, page)
 
 
 if __name__ == "__main__":

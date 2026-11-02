@@ -24,7 +24,18 @@ from add_temporal_geographic import haversine_km
 from genomics.pooled_observations import pooled_position_status, read_any_table, standard_name
 from genomics.references import reference_base, references_compatible
 from genomics.sequence_variants import CALL_REFERENCE, CALL_VARIANT
-from genomics.unified_schema import COVERED_NOT_DETECTED, variant_key
+from genomics.unified_schema import (
+    COVERED_NOT_DETECTED,
+    EXCLUDED_BY_QC,
+    INDIVIDUAL,
+    NOT_COVERED,
+    POOLED,
+    REFERENCE_OBSERVED,
+    VARIANT_OBSERVED,
+    variant_key,
+)
+
+OTHER_ALLELE = "Other alternative base called"  # individual sequences only
 
 
 SHARED = "Shared: observed in both sources"
@@ -105,12 +116,20 @@ def join_names(values):
     return "; ".join(names)
 
 
-def compare_evidence(individual, pooled, reference, registry, minimum_depth, date_window_days):
+def compare_evidence(individual, pooled, reference, registry, minimum_depth, date_window_days,
+                     cells=None):
     """Build the cross-source comparison table.
 
     `individual` holds the outputs of build_individual_profiles(); `pooled`
-    holds QC-checked pooled variants, samples, and the depth lookup.
+    holds QC-checked pooled variants, samples, and the depth lookup. When
+    `cells` is a list, it receives one row per sample and comparable variant
+    with the status used for the counts (for the evidence-matrix figure).
     """
+
+    def add_cell(key, sample_id, sample_type, status, frequency=np.nan):
+        if cells is not None:
+            cells.append({"Variant_Key": key, "Sample_ID": sample_id, "Sample_Type": sample_type,
+                          "Status": status, "Alt_Frequency": frequency})
 
     individual_samples = individual["samples"]
     mapped = individual_samples[
@@ -165,14 +184,18 @@ def compare_evidence(individual, pooled, reference, registry, minimum_depth, dat
         not_callable = 0
         for sample_id, call_text in calls.items():
             if sample_id in carrier_ids:
+                add_cell(key, sample_id, INDIVIDUAL, VARIANT_OBSERVED)
                 continue
             call = call_text[position - 1]
             if call == CALL_REFERENCE:
                 reference_calls += 1
+                add_cell(key, sample_id, INDIVIDUAL, REFERENCE_OBSERVED)
             elif call == CALL_VARIANT:
                 other_allele += 1
+                add_cell(key, sample_id, INDIVIDUAL, OTHER_ALLELE)
             else:
                 not_callable += 1
+                add_cell(key, sample_id, INDIVIDUAL, NOT_COVERED)
 
         reported = reported_by_key.get(key)
         reported_ids = list(reported["Sample_ID"]) if reported is not None else []
@@ -180,17 +203,22 @@ def compare_evidence(individual, pooled, reference, registry, minimum_depth, dat
         low_or_none = 0
         unknown = 0
         excluded_samples = excluded_by_key.get(key, set())
+        reported_frequency = ({} if reported is None else
+                              dict(zip(reported["Sample_ID"], reported["Alt_Frequency"])))
         for sample_id in pooled_on_reference:
             if sample_id in reported_ids:
+                add_cell(key, sample_id, POOLED, VARIANT_OBSERVED, reported_frequency[sample_id])
                 continue
             if sample_id in excluded_samples:
                 unknown += 1  # a QC-excluded call is not evidence either way
+                add_cell(key, sample_id, POOLED, EXCLUDED_BY_QC)
                 continue
             # Depth tables use the pooled sample's own reference label.
             original_reference = original_reference_by_sample.get(sample_id, reference["Reference_ID"])
             status, _ = pooled_position_status(
                 pooled["depth_lookup"], sample_id, original_reference, position, minimum_depth
             )
+            add_cell(key, sample_id, POOLED, status)
             if status == COVERED_NOT_DETECTED:
                 adequate += 1
             elif status == "Coverage unknown":

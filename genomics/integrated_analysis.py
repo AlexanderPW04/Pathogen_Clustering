@@ -20,6 +20,7 @@ from importlib.metadata import PackageNotFoundError, version
 import numpy as np
 import pandas as pd
 
+from geocode_locations import is_state_only_location
 from genomics import figures
 from genomics.diversity_analysis import EXPLORATORY_ORDINATION, population_structure
 from genomics.pooled_observations import (
@@ -48,7 +49,10 @@ from genomics.temporal_analysis import (
     observation_matrix,
     variants_per_sample,
 )
+from genomics.unified_schema import INDIVIDUAL, POOLED
 from genomics.variant_matching import (
+    CATEGORY_ORDER,
+    INCOMPARABLE,
     category_counts,
     compare_evidence,
     compare_signatures,
@@ -64,6 +68,7 @@ DEFAULT_SETTINGS = {
 }
 
 TRAJECTORY_VARIANTS = 6
+MATRIX_VARIANTS = 40
 HEATMAP_VARIANTS = 40
 
 
@@ -146,14 +151,19 @@ def add_figure(result, name, title, caption, make):
 def run_integrated_analysis(individual_data=None, mafft_path=None, reference_path=None,
                             snv_path=None, pooled_metadata_path=None, position_path=None,
                             masked_sites_path=None, signature_path=None, settings=None,
-                            input_labels=None):
-    """Return a dictionary of tables, figures, summaries, notes, and provenance."""
+                            input_labels=None, relationship=None):
+    """Return a dictionary of tables, figures, summaries, notes, and provenance.
+
+    `relationship` optionally carries the Sprint 2 pairwise results
+    ({"pairs", "thresholds", "candidates", "clusters"}) so their figures are
+    drawn with the rest of the dashboard; they are not recalculated here.
+    """
 
     settings = {**DEFAULT_SETTINGS, **(settings or {})}
     labels = input_labels or {}
     result = {"tables": {}, "figures": {}, "notes": {}, "summary": {}, "reference": None,
               "individual": None, "pooled": None, "population": None, "comparison": None,
-              "settings": settings}
+              "settings": settings, "relationship": relationship}
 
     def note(section, text):
         result["notes"].setdefault(section, []).append(text)
@@ -206,6 +216,7 @@ def run_integrated_analysis(individual_data=None, mafft_path=None, reference_pat
             variants, samples, settings["qc_mode"], masked, settings, reference, registry
         )
         pooled = {"variants": variants, "samples": samples, "report": report,
+                  "metadata_supplied": metadata is not None,
                   "warnings": warnings, "input_format": input_format,
                   "position_table": position_table,
                   "depth_lookup": build_depth_lookup(position_table)}
@@ -228,6 +239,15 @@ def run_integrated_analysis(individual_data=None, mafft_path=None, reference_pat
         add_figure(result, "variants_per_sample", "SNVs per pooled sample",
                    "Analogue of the paper's Fig 2A. Hatched bars were excluded by quality control.",
                    lambda: figures.variants_per_sample_figure(per_sample))
+        add_figure(result, "qc_outcomes", "Quality checks applied to pooled records",
+                   "Each paper filter is applied only to values the files supply; hatched segments "
+                   "are checks that could not be verified, never counted as passes.",
+                   lambda: figures.qc_outcome_figure(variants))
+        add_figure(result, "depth_distribution", "Read-depth distribution",
+                   "Left: depth at each reported variant (dashed line: the paper's 20x minimum). "
+                   "Right, when a per-position table is supplied: depth at every listed position.",
+                   lambda: figures.depth_distribution_figure(
+                       variants, settings["min_variant_depth"], pooled["position_table"]))
 
         fit = depth_regression(per_sample)
         result["regression"] = fit
@@ -283,6 +303,20 @@ def run_integrated_analysis(individual_data=None, mafft_path=None, reference_pat
             add_figure(result, "heatmap", "Sample-by-variant heatmap",
                        f"Up to {HEATMAP_VARIANTS} variants reported in the most samples.",
                        lambda: figures.heatmap_figure(matrix_for_figures, heatmap_keys))
+            add_figure(result, "observation_status", "Missing and unknown observations",
+                       "Share of the analyzed variant positions with a reported frequency, adequate "
+                       "depth without a report, low or no coverage, unknown coverage, or a QC-excluded "
+                       "call. Unknown is never treated as 0%.",
+                       lambda: figures.observation_status_figure(matrix_for_figures))
+            if trends["Change_In_Reported_Frequency"].notna().any():
+                add_figure(result, "frequency_changes", "Changes between collection dates",
+                           "First versus last reported frequency for each variant reported at least "
+                           "twice at one site, with the number of days between them. Intervals are "
+                           "irregular, so the changes are not rates.",
+                           lambda: figures.frequency_change_figure(trends))
+            else:
+                note("temporal", "No variant has two reported frequencies at the same site, so "
+                                 "changes between dates cannot be shown.")
 
         population = population_structure(samples, variants, pooled["position_table"])
         result["population"] = population
@@ -307,14 +341,39 @@ def run_integrated_analysis(individual_data=None, mafft_path=None, reference_pat
 
     # 5. Cross-source comparison.
     if individual is not None and pooled is not None:
+        cells = []
         comparison = compare_evidence(individual, pooled, reference, registry,
-                                      settings["min_variant_depth"], settings["date_window_days"])
+                                      settings["min_variant_depth"], settings["date_window_days"],
+                                      cells=cells)
         counts = category_counts(comparison)
         result["comparison"] = {"table": comparison, "counts": counts}
         result["tables"]["cross_source_comparison.csv"] = comparison
+        result["tables"]["cross_source_evidence_by_sample.csv"] = pd.DataFrame(
+            cells, columns=["Variant_Key", "Sample_ID", "Sample_Type", "Status", "Alt_Frequency"])
         add_figure(result, "cross_source", "Cross-source evidence categories",
                    "Each reference-based variant is counted once.",
                    lambda: figures.cross_source_figure(counts))
+        matrix_keys = evidence_matrix_keys(comparison)
+        if matrix_keys and cells:
+            individual_ids = sorted({cell["Sample_ID"] for cell in cells
+                                     if cell["Sample_Type"] == INDIVIDUAL})
+            pooled_rows = pooled["samples"][pooled["samples"]["Sample_ID"].isin(
+                {cell["Sample_ID"] for cell in cells if cell["Sample_Type"] == POOLED})]
+            pooled_rows = pooled_rows.sort_values(["Collection_Date", "Sample_ID"])
+            pooled_labels = [f"{row['Sample_ID']} ({row['Collection_Date'].date()})"
+                             if pd.notna(row["Collection_Date"]) else str(row["Sample_ID"])
+                             for row in pooled_rows.to_dict("records")]
+            add_figure(result, "evidence_matrix", "Variant-overlap matrix across both sources",
+                       f"Up to {MATRIX_VARIANTS} comparable variants (shared first). Each column is "
+                       "one sample; pooled samples are ordered by collection date. Detection, "
+                       "non-detection with adequate coverage, and unknown coverage are drawn "
+                       "differently.",
+                       lambda: figures.evidence_matrix_figure(
+                           cells, matrix_keys, individual_ids, list(pooled_rows["Sample_ID"]),
+                           pooled_labels))
+            add_figure(result, "cross_source_positions", "Reference positions by evidence category",
+                       "Every comparable variant at its reference position, one row per category.",
+                       lambda: figures.cross_source_positions_figure(comparison, reference["Length"]))
         if not comparison.empty:
             add_figure(result, "cross_source_timeline", "When variants were seen in each source",
                        "Triangles: individual sequences carrying the variant. Circles: pooled "
@@ -330,6 +389,14 @@ def run_integrated_analysis(individual_data=None, mafft_path=None, reference_pat
         note("cross_source", "Cross-source comparison needs individual sequences with a "
                              "reference FASTA and a pooled SNV table on a compatible reference.")
 
+    if individual is not None and individual["calls"] is not None:
+        add_figure(result, "callable_positions", "Callable and uncallable reference positions",
+                   "How each reference position was called in each individual sequence after "
+                   "alignment to the reference (N, ambiguity codes, deletions, and unsequenced ends "
+                   "are never treated as reference bases).",
+                   lambda: figures.callable_positions_figure(
+                       individual["samples"], individual["calls"], reference["Length"]))
+
     if pooled is not None or individual is not None:
         add_figure(result, "quality", "Sequencing quality by source",
                    "Pooled genome coverage at 10x (paper threshold >90%) and individual callable "
@@ -344,10 +411,286 @@ def run_integrated_analysis(individual_data=None, mafft_path=None, reference_pat
     note("geography", "Locations are context, not proof of transmission. State-only names and "
                       "sewershed site labels are never treated as precise collection points, and "
                       "pooled site labels are not geocoded.")
+    located = geography_samples(individual_data, pooled["samples"] if pooled else None)
+    if not located.empty:
+        result["tables"]["sample_locations.csv"] = located
+        add_figure(result, "geography", "Geographic precision",
+                   "Exact source-provided coordinates, approximate GeoNames place coordinates, broad "
+                   "administrative areas, named sites without coordinates, and missing locations. "
+                   "The coordinate panel is a plain latitude/longitude plot, not a map; broad areas "
+                   "are never drawn as points.",
+                   lambda: figures.geography_figure(located))
+        if located["Collection_Date"].notna().any():
+            add_figure(result, "sampling_timeline", "Sampling dates and sites",
+                       "Every sample at its collection date, grouped by site, for both sources. "
+                       "Gaps are real gaps in sampling; nothing is interpolated.",
+                       lambda: figures.sampling_timeline_figure(located))
+        else:
+            note("temporal", "No collection dates were supplied, so no sampling timeline is drawn.")
+    result["completeness"] = completeness_rows(individual_data, individual, pooled)
+    if result["completeness"]:
+        add_figure(result, "completeness", "Metadata completeness",
+                   "Share of samples in each source that carry each kind of information. Fields "
+                   "the uploaded files cannot provide are labeled instead of drawn as 0%.",
+                   lambda: figures.completeness_figure(result["completeness"]))
+    if relationship is not None and relationship.get("pairs") is not None:
+        relationship_figures(result, relationship, note)
 
     result["summary"] = build_summary(result, individual_data)
+    result["analyses"] = analysis_status(result, individual_data, relationship)
+    result["integration"] = integration_summary(result, individual_data)
+    result["tables"]["analysis_status.csv"] = pd.DataFrame(
+        result["analyses"], columns=["Analysis", "Status", "Detail"])
     result["tables"]["provenance.csv"] = provenance(result, settings, labels, mafft_path)
     return result
+
+
+def evidence_matrix_keys(comparison, limit=None):
+    """Comparable variants for the evidence matrix: shared first, then by position."""
+
+    limit = limit or MATRIX_VARIANTS
+    priority = {category: index for index, category in enumerate(CATEGORY_ORDER)}
+    data = comparison[~comparison["Category"].eq(INCOMPARABLE)].copy()
+    if data.empty:
+        return []
+    data["Priority"] = data["Category"].map(priority)
+    chosen = data.sort_values(["Priority", "Position"]).head(limit)
+    return list(chosen.sort_values(["Position", "Variant_Key"])["Variant_Key"])
+
+
+def precision_category(row):
+    """Sort one sample's location into a precision class without upgrading it."""
+
+    location = row.get("Location_Name")
+    location = "" if location is None or pd.isna(location) else str(location).strip()
+    precision = str(row.get("Geographic_Precision") or "")
+    source = str(row.get("Coordinate_Source") or "")
+    has_point = pd.notna(row.get("Latitude")) and pd.notna(row.get("Longitude"))
+    if "too coarse" in precision or is_state_only_location(location):
+        return "Broad administrative area"
+    if has_point and source == "GeoNames":
+        return "Approximate (GeoNames place)"
+    if has_point:
+        return "Source-provided coordinates"
+    if location:
+        return "Named place or site, no coordinates"
+    return "No location"
+
+
+def geography_samples(individual_data, pooled_samples):
+    """One row per sample with its location precision class and dates."""
+
+    columns = ["Sample_ID", "Sample_Type", "Collection_Date", "Location_Name", "Latitude",
+               "Longitude", "Coordinate_Source", "Geographic_Precision", "Precision_Category",
+               "Analysis_Included"]
+    frames = []
+    if individual_data is not None:
+        frame = individual_data.copy()
+        frame["Sample_Type"] = INDIVIDUAL
+        frame["Analysis_Included"] = True
+        frames.append(frame)
+    if pooled_samples is not None:
+        frames.append(pooled_samples.copy())
+    if not frames:
+        return pd.DataFrame(columns=columns)
+    rows = []
+    for frame in frames:
+        for row in frame.to_dict("records"):
+            rows.append({column: row.get(column, pd.NA) for column in columns})
+            rows[-1]["Precision_Category"] = precision_category(row)
+    table = pd.DataFrame(rows, columns=columns)
+    table["Collection_Date"] = pd.to_datetime(table["Collection_Date"], errors="coerce")
+    table["Latitude"] = pd.to_numeric(table["Latitude"], errors="coerce")
+    table["Longitude"] = pd.to_numeric(table["Longitude"], errors="coerce")
+    return table
+
+
+def completeness_rows(individual_data, individual, pooled):
+    """Counts of samples per source with dates, locations, coordinates, and coverage."""
+
+    rows = []
+    if individual_data is not None:
+        categories = [precision_category(row) for row in individual_data.to_dict("records")]
+        location = individual_data["Location_Name"].astype("string").str.strip().fillna("")
+        rows.append({
+            "Source": "Individual sequences", "Samples": len(individual_data),
+            "With_Collection_Date": int(individual_data["Collection_Date"].notna().sum()),
+            "With_Location": int(location.ne("").sum()),
+            "With_Coordinates": sum(category in {"Source-provided coordinates",
+                                                 "Approximate (GeoNames place)"}
+                                    for category in categories),
+            "With_Genome_Coverage": (int(individual["samples"]["Genome_Coverage_Percent"].notna().sum())
+                                     if individual is not None else "needs a reference FASTA"),
+        })
+    if pooled is not None:
+        samples = pooled["samples"]
+        location = samples["Location_Name"].astype("string").str.strip().fillna("")
+        coverage = int(samples["Genome_Coverage_Percent"].notna().sum())
+        rows.append({
+            "Source": "Pooled samples", "Samples": len(samples),
+            "With_Collection_Date": int(samples["Collection_Date"].notna().sum()),
+            "With_Location": int(location.ne("").sum()),
+            "With_Coordinates": (int((samples["Latitude"].notna() & samples["Longitude"].notna()).sum())
+                                 if pooled.get("metadata_supplied") else "needs pooled metadata"),
+            "With_Genome_Coverage": coverage if coverage else "not supplied",
+        })
+    return rows
+
+
+def relationship_figures(result, relationship, note):
+    """Figures for the original Sprint 2 pairwise screening (values not recalculated)."""
+
+    pairs = relationship["pairs"]
+    thresholds = relationship["thresholds"]
+    result["tables"]["pairwise_distances.csv"] = pairs
+    if pairs.empty:
+        note("relationships", "Fewer than two comparable sequences: no pairwise distances.")
+        return
+    add_figure(result, "genetic_distances", "Genetic-distance distribution",
+               "Left: p-distance of every compared pair (dashed line: your cutoff). Right: genetic "
+               "versus temporal distance; the shaded box meets both the genetic and date cutoffs, "
+               "and the marker shows whether geography could be checked.",
+               lambda: figures.distance_figure(pairs, thresholds))
+    if relationship.get("clusters") is None or relationship.get("candidates") is None:
+        return  # no screening lists supplied, so no network is drawn
+    strict = []
+    for cluster in relationship["clusters"]:
+        members = set(cluster["samples"])
+        strict += [(row["Sample_ID_1"], row["Sample_ID_2"]) for row in pairs.to_dict("records")
+                   if row["Sample_ID_1"] in members and row["Sample_ID_2"] in members
+                   and passes_all(row, thresholds)]
+    candidates = [(pair["sample_1"], pair["sample_2"]) for pair in relationship["candidates"]]
+    samples = sorted(set(pairs["Sample_ID_1"].astype(str)) | set(pairs["Sample_ID_2"].astype(str)))
+    if len(samples) > 40:
+        note("relationships", "The relationship network is drawn only for 40 or fewer sequences.")
+        return
+    add_figure(result, "relationship_network", "Sample-relationship network",
+               "Each point is an individual sequence. Solid lines join pairs that meet the genetic, "
+               "date, and distance cutoffs; dashed lines join pairs that meet the genetic and date "
+               "cutoffs but whose geography could not be checked. Screening signals only.",
+               lambda: figures.relationship_network_figure(samples, strict, candidates))
+
+
+def passes_all(row, thresholds):
+    """Mirror of the Sprint 2 strict rule, used only to draw lines for existing clusters."""
+
+    max_p, max_days, max_km = thresholds
+    if pd.isna(row["P_Distance"]) or pd.isna(row["Days_Apart"]):
+        return False
+    if row["P_Distance"] > max_p or row["Days_Apart"] > max_days:
+        return False
+    if pd.notna(row["Km_Apart"]):
+        return row["Km_Apart"] <= max_km
+    return str(row.get("Same_Location")).strip().casefold() == "true"
+
+
+def analysis_status(result, individual_data, relationship):
+    """What actually ran in this analysis, and why anything was skipped."""
+
+    rows = []
+
+    def add(name, status, detail):
+        rows.append({"Analysis": name, "Status": status, "Detail": detail})
+
+    pairs = relationship.get("pairs") if relationship else None
+    if pairs is not None:
+        add("Sequence comparison (MAFFT, p-distance)", "Completed", f"{len(pairs)} sequence pairs compared")
+        dated = int(pd.to_numeric(pairs["Days_Apart"], errors="coerce").notna().sum())
+        add("Temporal screening of sequence pairs", "Completed" if dated else "Skipped",
+            f"{dated} of {len(pairs)} pairs have two collection dates")
+        km = int(pd.to_numeric(pairs["Km_Apart"], errors="coerce").notna().sum())
+        add("Geographic-distance screening", "Completed" if km else "Limited",
+            f"{km} of {len(pairs)} pairs have two sufficiently precise coordinates")
+    elif individual_data is None:
+        add("Sequence comparison (MAFFT, p-distance)", "Skipped", "No individual sequences supplied")
+    individual = result["individual"]
+    if individual is not None:
+        mapped = int(individual["samples"]["Variant_Profile_Status"].eq("Mapped to reference").sum())
+        add("Reference-coordinate variant profiles", "Completed",
+            f"{mapped} of {len(individual['samples'])} sequences mapped to the reference")
+    elif individual_data is not None:
+        add("Reference-coordinate variant profiles", "Skipped", "No reference FASTA supplied")
+    pooled = result["pooled"]
+    if pooled is not None:
+        add("Pooled variant QC and frequencies", "Completed",
+            f"{int(pooled['variants']['Analysis_Included'].sum())} of {len(pooled['variants'])} "
+            "records retained")
+        coverage = int(pooled["samples"]["Genome_Coverage_Percent"].notna().sum())
+        add("Paper coverage filter (>90% at 10x)", "Completed" if coverage else "Not evaluable",
+            f"Genome coverage known for {coverage} of {len(pooled['samples'])} pooled samples")
+        add("Depth-versus-SNV regression (Fig 2B analogue)",
+            "Completed" if result.get("regression") else "Skipped",
+            "Needs mean depth for at least three included pooled samples"
+            if not result.get("regression") else f"n = {result['regression']['n']}")
+        add("Temporal frequency trends", "Completed" if "trajectories" in result["figures"] else "Limited",
+            "Trajectories need a variant reported in two or more included samples"
+            if "trajectories" not in result["figures"] else "Reported frequencies over collection dates")
+        population = result["population"]
+        if population is not None:
+            add("Population structure", "Completed" if population["available"] else "Skipped",
+                population["method"] if population["available"] else population["message"])
+        add("Coverage-aware non-detection", "Completed" if pooled["position_table"] is not None else "Skipped",
+            "Per-position depth supplied" if pooled["position_table"] is not None else
+            "No per-position depth: unreported variants stay 'coverage unknown' (never 0%)")
+    else:
+        add("Pooled variant QC and frequencies", "Skipped", "No pooled variant file supplied")
+    if result["comparison"] is not None:
+        add("Cross-source comparison", "Completed",
+            f"{len(result['comparison']['table'])} variants placed in evidence categories")
+    else:
+        add("Cross-source comparison", "Skipped",
+            "Needs individual sequences, a reference FASTA, and pooled variants on the same reference")
+    return rows
+
+
+def integration_summary(result, individual_data):
+    """Plain facts about how the two sources were connected in this analysis."""
+
+    reference = result["reference"]
+    individual = result["individual"]
+    pooled = result["pooled"]
+    facts = []
+    if reference is not None:
+        facts.append(("Shared reference", f"{reference['Reference_ID']}, {reference['Length']} bases, "
+                                          f"SHA-256 {reference['Checksum'][:16]}..."))
+    if individual is not None:
+        mapped = individual["samples"]["Variant_Profile_Status"].eq("Mapped to reference")
+        facts.append(("Individual sequences on the reference",
+                      f"{int(mapped.sum())} of {len(mapped)} aligned to the reference with MAFFT "
+                      f"(at least {MINIMUM_MAPPING_IDENTITY:.0%} identity over "
+                      f"{MINIMUM_CALLABLE_POSITIONS} or more callable positions)"))
+    if pooled is not None and reference is not None:
+        variants = pooled["variants"]
+        same_label = variants["Reference_ID"].eq(reference["Reference_ID"])
+        checks = variants["QC_Reference_Base"].astype(str)
+        facts.append(("Pooled records on the reference",
+                      f"{int(same_label.sum())} of {len(variants)} name {reference['Reference_ID']}; "
+                      f"Ref base agrees with the reference for {int(checks.eq('Pass').sum())} and "
+                      f"disagrees for {int(checks.str.startswith('Fail').sum())}"))
+        other = sorted(set(variants.loc[~same_label, "Reference_ID"]))
+        if other:
+            facts.append(("Kept apart", "Records on " + ", ".join(other) + " are incomparable: a "
+                                        "different label is never assumed to be the same genome"))
+    if result["comparison"] is not None:
+        counts = result["comparison"]["counts"].set_index("Category")["Variants"]
+        facts.append(("Variants by evidence", "; ".join(f"{name.split(':')[0]} {int(value)}"
+                                                       for name, value in counts.items() if value)))
+    date_ranges = []
+    if individual_data is not None and individual_data["Collection_Date"].notna().any():
+        dates = individual_data["Collection_Date"].dropna()
+        date_ranges.append(("Individual", dates.min(), dates.max()))
+    if pooled is not None and pooled["samples"]["Collection_Date"].notna().any():
+        dates = pooled["samples"]["Collection_Date"].dropna()
+        date_ranges.append(("Pooled", dates.min(), dates.max()))
+    if date_ranges:
+        text = "; ".join(f"{name} {first.date()} to {last.date()}" for name, first, last in date_ranges)
+        if len(date_ranges) == 2:
+            overlap = (min(date_ranges[0][2], date_ranges[1][2])
+                       - max(date_ranges[0][1], date_ranges[1][1])).days
+            text += (f"; the periods overlap for {overlap + 1} days" if overlap >= 0
+                     else f"; the periods do not overlap ({-overlap} days apart)")
+        facts.append(("Collection dates", text))
+    return facts
 
 
 def geographic_summary(individual_data, pooled_samples):

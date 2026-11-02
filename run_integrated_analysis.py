@@ -22,8 +22,11 @@ import shutil
 import sys
 from pathlib import Path
 
+import pandas as pd
+
+from genomics.file_formats import plain_copy, split_name
 from genomics.integrated_analysis import run_integrated_analysis
-from run_pipeline import run_pipeline
+from run_pipeline import output_paths, run_pipeline
 
 
 PROJECT = Path(__file__).resolve().parent
@@ -42,10 +45,11 @@ def parse_arguments(arguments=None):
     parser = argparse.ArgumentParser(description="Run the integrated genomic surveillance analysis.")
     parser.add_argument("--example", action="store_true",
                         help="Use the SYNTHETIC paired example in examples/integrated/")
-    parser.add_argument("--fasta", type=Path, help="Individual sequences (.fasta/.fa/.fna)")
+    parser.add_argument("--fasta", type=Path, help="Individual sequences (.fasta/.fa/.fna, optionally .gz)")
     parser.add_argument("--metadata", type=Path, help="Individual metadata (.csv/.xlsx)")
     parser.add_argument("--reference", type=Path, help="Reference FASTA with one sequence")
-    parser.add_argument("--snv", type=Path, help="Pooled processed SNV table")
+    parser.add_argument("--snv", type=Path,
+                        help="Pooled SNV table (.csv/.tsv/.xlsx), iVar table, or SNV VCF (.vcf, .vcf.gz)")
     parser.add_argument("--pooled-metadata", type=Path, help="Pooled-sample metadata")
     parser.add_argument("--positions", type=Path, help="Per-position depth or A/C/G/T counts")
     parser.add_argument("--masked-sites", type=Path, help="Problematic-site list")
@@ -94,8 +98,23 @@ def main(arguments=None):
     output = options.output_folder
     output.mkdir(parents=True, exist_ok=True)
 
+    # Gzip-compressed inputs are decompressed (with a size limit) into the
+    # output folder so every loader reads an ordinary file.
+    for key, path in supplied.items():
+        _, compressed = split_name(path.name)
+        if compressed:
+            folder = output / "decompressed_inputs"
+            folder.mkdir(exist_ok=True)
+            name = path.name[: path.name.lower().rfind(".gz")]
+            try:
+                inputs[key] = plain_copy(path, folder / name)
+            except ValueError as error:
+                print(f"ERROR: {error}", file=sys.stderr)
+                return 2
+
     individual_data = None
     mafft_path = None
+    relationship = None
     if inputs["fasta"]:
         # Work on copies so pipeline CSVs are written to the output folder.
         fasta_copy = output / Path(inputs["fasta"]).name
@@ -108,13 +127,15 @@ def main(arguments=None):
                               complete_genomes=options.complete_genomes, analysis_data=shared)
         if status != 0:
             return status
-        if inputs["reference"]:
-            individual_data = shared["samples"]
-            mafft_path = shared["mafft_path"]
-
-    if not inputs["reference"] and not inputs["snv"]:
-        print("Sequence-relationship results written; no reference or pooled table was given.")
-        return 0
+        individual_data = shared["samples"]
+        mafft_path = shared["mafft_path"]
+        pairs = pd.read_csv(output_paths(metadata_copy)[1],
+                            dtype={"Sample_ID_1": "string", "Sample_ID_2": "string"})
+        # Cluster and candidate lists are only built by the web page, so the
+        # network figure is drawn there; the distance figure is drawn here too.
+        relationship = {"pairs": pairs, "candidates": None, "clusters": None,
+                        "thresholds": [options.max_p_distance, options.max_days_apart,
+                                       options.max_km_apart]}
 
     try:
         result = run_integrated_analysis(
@@ -124,6 +145,7 @@ def main(arguments=None):
             masked_sites_path=inputs["masked_sites"], signature_path=inputs["signatures"],
             settings={"qc_mode": options.qc_mode, "date_window_days": options.date_window_days},
             input_labels={key: Path(path).name for key, path in supplied.items()},
+            relationship=relationship,
         )
     except (ValueError, RuntimeError) as error:
         print(f"ERROR: {error}", file=sys.stderr)

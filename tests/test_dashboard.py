@@ -43,10 +43,12 @@ class DashboardTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn("SYNTHETIC integrated example", page)
         self.assertNotIn("Synthetic example analysis", page)
-        for heading in ["1. Overview", "2. Sequencing quality", "3. Genomic variation",
-                        "4. Temporal patterns", "5. Population structure", "6. Geographic context",
-                        "7. Cross-source evidence", "8. Individual sequence relationships"]:
-            self.assertIn(heading, page)
+        # Integrated (both-source) sections come before source-specific ones.
+        headings = ["1. Overview", "2. Cross-source evidence", "3. Genomic variation",
+                    "4. Temporal patterns", "5. Geographic context", "6. Sequencing quality",
+                    "7. Population structure", "8. Individual sequence relationships"]
+        positions = [page.index(f"<h2>{heading}</h2>") for heading in headings]
+        self.assertEqual(positions, sorted(positions))
         self.assertIn("Shared: observed in both sources", page)
         self.assertIn("Incomparable: reference not verified as the same", page)
         self.assertIn("Variants observed in both sources:</strong> 2", page)
@@ -86,7 +88,8 @@ class DashboardTest(unittest.TestCase):
             "metadata_file": upload("synthetic_individual_metadata.csv"),
             "reference_file": upload("synthetic_reference.fasta"),
         }, multipart=True)
-        self.assertIn("Individual sequences:</strong> 5 (4 mapped to the reference)", page)
+        self.assertIn("Individual sequences:</strong> 5 <span", page)
+        self.assertIn("(4 mapped to the reference)", page)
         self.assertIn("Reference mapping not established", page)
         self.assertIn("Cross-source comparison needs individual sequences", page)
         self.assertTrue(any(link.endswith("individual_variants.csv") for link in links))
