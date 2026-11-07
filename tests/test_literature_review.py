@@ -34,9 +34,8 @@ from literature.sources import LiveSource  # noqa: E402
 from literature.workflow import find_literature, new_session, run_analysis  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
-REVIEWED_NO_CHANGE = ("Ten accession records were associated with one study publication. The publication was "
-                      "retrieved and reviewed once. No verifiable collection-site improvements were found for "
-                      "these records. The original metadata remains unchanged.")
+REVIEWED_NO_CHANGE = ("10 accession records searched. One publication found. No verified collection locations could be "
+                      "assigned to these samples. No metadata was changed.")
 
 
 class Response:
@@ -247,7 +246,8 @@ class NcbiShapedReviewTest(unittest.TestCase):
         summary = review_summary(session)
         self.assertEqual(summary["cards"][0]["outcome"], REVIEWED_NONE)
         self.assertEqual(summary["samples"][0]["Status"], "Reviewed; no supported improvement")
-        self.assertIn("retrieved and reviewed once. No verifiable collection-site improvements", summary["headline"])
+        self.assertIn("No verified collection locations could be assigned", summary["headline"])
+        self.assertEqual(summary["cards"][0]["claude"], "Yes")
 
 
 # --- Ten samples, ten publications, mixed outcomes -------------------------------------------
@@ -353,7 +353,7 @@ class MixedOutcomeTest(unittest.TestCase):
                     patch("align_sequences.subprocess.run", side_effect=make_fake_mafft(reference)):
                 page = self.post("/enrich/start", {"token": staged, "enrich": "on", "enrich_shown": "1"})
                 token = re.search(r'name="token" value="([^"]+)"', page[page.index('id="literature"'):]).group(1)
-                found = self.post("/literature/find", {"token": token})
+                found = page  # the free search ran when Sprint 4 started
                 estimate = self.post("/literature/analyze", {"token": token})
                 first = self.post("/literature/analyze", {"token": token, "confirm": "1", "batch": "1"})
                 second = self.post("/literature/analyze", {"token": token, "confirm": "1", "batch": "2"})

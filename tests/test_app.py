@@ -96,8 +96,9 @@ class FlaskInterfaceTest(unittest.TestCase):
                     },
                     content_type="multipart/form-data",
                 )
-        self.assertEqual(response.status_code, 500)
-        self.assertIn("analysis could not be completed", response.get_data(as_text=True))
+        # A controlled page (not a bare 500): the type is named, internal details are not.
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("unexpected server error (RuntimeError)", response.get_data(as_text=True))
         self.assertNotIn("private server path", response.get_data(as_text=True))
 
     def test_dual_upload_runs_pipeline_and_displays_cluster(self) -> None:

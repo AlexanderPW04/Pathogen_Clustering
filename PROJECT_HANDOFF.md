@@ -2,6 +2,28 @@
 
 **Purpose:** Transfer working context for a biomedical informatics class coding project. This handoff was prepared from discussion, Codex-reported summaries, and screenshots. It is **not** a code audit or an assertion that every file exists in the present repository. Verify the current files before editing.
 
+## Sprint 3 Excel stability and the simplified Sprint 4 page (November 7, 2026)
+
+- **Crash cause (measured, not from Render's logs):** the published workbook `mmc2.xlsx` always parsed correctly and raised no Python exception on any route. The analysis exhausted the hosted resources. The worker peaked at about 500 MB locally (limit 512 MB), grew to 555 MB after repeated runs, and took 143 s at 0.1 CPU in a single sync worker with a 180 s timeout.
+  - `observation_matrix` built one Python dict per variant and sample (5,677 x 52 = 295,000).
+  - `heatmap_figure` turned the whole matrix into another dict to draw 40 variants.
+  - `position_summary` used per-group `iloc`.
+  - Figures lingered in reference cycles, and result files stayed uncompressed in memory.
+- **Fixes:** the three functions above now avoid those copies, figures are cleared and collected, and stored downloads are compressed. **All 74 result files of `mmc2` and the integrated example are byte-identical to the baseline.** Peak is about 285 MB and stable across runs; time is about 10 s (119 s at 0.1 CPU).
+- **Importer:** new `genomics/excel_tables.py` streams a sheet once, finds the header row by recognized columns, offers a worksheet choice when several look like data, and refuses oversized sheets. `explain_snv_columns` names what is missing (for example in `mmc3.xlsx`). Review checks numeric columns; loader errors give the first bad row. The review page has a preview.
+- **Limits and errors:**
+  - `MAX_OBSERVATION_CELLS` (Dockerfile: 700,000) refuses oversized analyses; nothing is trimmed.
+  - `MemoryError` and unexpected errors become controlled pages and are logged.
+  - One analysis runs at a time (`ANALYSIS_SLOT`); a busy server keeps the upload for a retry.
+  - Gunicorn uses `gthread`, so the site answers during an analysis.
+- **Sprint 4 page:** three steps (find and check, review findings, continue).
+  - The search runs on the first click.
+  - Conclusion first, then a short answer table (location found / applies / improvement possible / Claude reviewed) and a stage strip that says exactly what ran and why Claude did not.
+  - Location mentions are deterministic (`article_places`), separate from sample association, and "Could not check" replaces "No" when retrieval fails.
+  - Provenance moved to *Technical details*.
+  - A sticky action bar holds the next step; returning from the file review reopens the same findings.
+- **Tests:** `tests/test_excel_import.py` (22), `tests/test_sprint4_interface.py` (15). Render itself was not tested; limits were imitated with a Windows Job Object (512 MB, 10% of one core).
+
 ## Sprint 4 literature review: batched retrieval, review outcomes, and batches (November 2, 2026)
 
 - **Bug:** on the ten real NCBI records (QB228092.1-QB228101.1), discovery used the whole budget of 80 E-utilities requests before the shared publication could be retrieved. The result was "article text not retrieved", an unknown publication date, and sometimes HTTP 429.

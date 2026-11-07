@@ -22,6 +22,8 @@ from pathlib import Path
 
 import pandas as pd
 
+from genomics.excel_tables import read_sheet
+
 
 SEQUENCE_EXTENSIONS = {".fasta", ".fa", ".fna"}
 TABLE_EXTENSIONS = {".csv", ".tsv", ".txt", ".xlsx"}
@@ -180,12 +182,12 @@ def table_separator(path, filename):
     return "\t" if header.count("\t") > header.count(",") else ","
 
 
-def read_table(path, filename=None, nrows=None):
+def read_table(path, filename=None, nrows=None, sheet=None):
     """Read a plain CSV/TSV/XLSX table as text (nothing is converted or guessed)."""
 
     filename = filename or Path(path).name
     if detect_kind(path, filename) == EXCEL_KIND:
-        return pd.read_excel(path, dtype=str, keep_default_na=False, nrows=nrows)
+        return read_sheet(path, sheet, nrows)
     return pd.read_csv(path, sep=table_separator(path, filename), dtype=str,
                        keep_default_na=False, encoding="utf-8-sig", nrows=nrows)
 

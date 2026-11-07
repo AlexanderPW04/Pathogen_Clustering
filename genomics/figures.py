@@ -61,6 +61,7 @@ def style_axis(axis):
 def to_png(figure):
     image = BytesIO()
     figure.savefig(image, format="png", dpi=110, facecolor=SURFACE)
+    figure.clear()  # figures hold reference cycles; empty this one before the next is drawn
     return image.getvalue()
 
 
@@ -273,7 +274,9 @@ def heatmap_figure(matrix, variant_keys):
     figure = new_figure(max(6.5, 0.45 * len(variant_keys) + 3.5), max(3.2, 0.32 * len(sample_ids) + 1.8))
     axis = figure.subplots()
     axis.set_facecolor(SURFACE)
-    lookup = {(row["Sample_ID"], row["Variant_Key"]): row for row in matrix.to_dict("records")}
+    # Only the displayed variants: the full matrix can have hundreds of thousands of rows.
+    shown = matrix[matrix["Variant_Key"].isin(variant_keys)]
+    lookup = {(row["Sample_ID"], row["Variant_Key"]): row for row in shown.to_dict("records")}
     for row_index, sample_id in enumerate(sample_ids):
         for column_index, key in enumerate(variant_keys):
             cell = lookup.get((sample_id, key))

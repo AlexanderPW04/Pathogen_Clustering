@@ -24,7 +24,12 @@ MATRIX_COLUMNS = [
 
 
 def observation_matrix(variants, samples, depth_lookup, minimum_depth):
-    """Describe every included pooled sample at every included variant."""
+    """Describe every included pooled sample at every included variant.
+
+    The table has one row per variant and sample (295,000 rows for the
+    published 5,677-variant, 52-sample workbook), so it is built column by
+    column: one Python dictionary per row used most of a 512 MB server.
+    """
 
     included = variants[variants["Analysis_Included"]]
     if included.empty:
@@ -48,7 +53,7 @@ def observation_matrix(variants, samples, depth_lookup, minimum_depth):
         ["Collection_Date", "Sample_ID"]
     ).to_dict("records")
 
-    rows = []
+    columns = {name: [] for name in MATRIX_COLUMNS}
     for variant in unique_variants.to_dict("records"):
         for sample in sample_rows:
             if variant["Reference_ID"] not in str(sample["Reference_ID"]).split("; "):
@@ -65,16 +70,16 @@ def observation_matrix(variants, samples, depth_lookup, minimum_depth):
                     int(variant["Position"]), minimum_depth,
                 )
                 frequency = np.nan
-            rows.append({
-                **variant,
-                "Sample_ID": sample["Sample_ID"],
-                "Collection_Date": sample["Collection_Date"],
-                "Location_Name": sample["Location_Name"],
-                "Status": status,
-                "Alt_Frequency": frequency,
-                "Depth": depth,
-            })
-    matrix = pd.DataFrame(rows, columns=MATRIX_COLUMNS)
+            for name in ["Variant_Key", "Reference_ID", "Position", "Ref", "Alt"]:
+                columns[name].append(variant[name])
+            columns["Sample_ID"].append(sample["Sample_ID"])
+            columns["Collection_Date"].append(sample["Collection_Date"])
+            columns["Location_Name"].append(sample["Location_Name"])
+            columns["Status"].append(status)
+            columns["Alt_Frequency"].append(frequency)
+            columns["Depth"].append(depth)
+    matrix = pd.DataFrame({name: pd.Series(columns.pop(name), dtype=object).infer_objects()
+                           for name in MATRIX_COLUMNS})
     matrix["Alt_Frequency"] = pd.to_numeric(matrix["Alt_Frequency"], errors="coerce")
     return matrix
 

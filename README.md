@@ -320,16 +320,16 @@ On the main page:
 3. Click **Review files**. Check the detected file roles, the column mapping,
    and the *Metadata readiness* table; fix any listed required item (for
    example, enter the pathogen if the metadata does not state it).
-4. Click **Run analysis**. With Sprint 4 on, click **Continue to metadata
-   enrichment** instead:
-   1. **Find Relevant Literature** (free);
-   2. read the review outcome;
-   3. if usable evidence exists, run each Claude batch after its cost
-      estimate (paid);
-   4. approve or reject each proposal;
-   5. **Apply approved changes and run the analysis**.
+4. Click **Run analysis**. With Sprint 4 on, follow its three steps instead:
+   1. **Find and check publications** (one click; free, no AI).
+   2. **Review findings**: the conclusion and a short table come first
+      (location found? applies to your samples? improvement possible? Claude
+      reviewed?). Only if usable evidence exists, approve a cost estimate to
+      run Claude, then approve or reject each proposal.
+   3. **Apply approved changes and run the analysis**, or **Continue with the
+      original metadata**. The button stays at the bottom of the screen.
 
-   **Continue with the original metadata** skips enrichment at any point.
+   Evidence, record links, and limitations are under *Technical details*.
 5. Download the result files from the results page. Uploaded files are deleted
    after the analysis; downloads are kept in memory for about 10 minutes.
 
@@ -342,8 +342,8 @@ python -m unittest discover -s tests
 ```
 
 The suite takes about 2–3 minutes and needs no internet, accounts, or keys:
-MAFFT, GeoNames, NCBI, PubTator, and Claude are all mocked. On November 2,
-2026 it ran **372 tests**:
+MAFFT, GeoNames, NCBI, PubTator, and Claude are all mocked. On November 7,
+2026 it ran **409 tests**:
 
 - with MAFFT on `PATH`: all pass except **2 skipped**;
 - without MAFFT: **3 skipped**.
@@ -1090,8 +1090,8 @@ For the full suite in the development folder:
 python -m unittest discover -s tests -v
 ```
 
-The latest full run (November 2, 2026, Python 3.11.9, with real MAFFT v7 on
-`PATH`) ran **372 tests: all passed except 2 skipped** (the two optional
+The latest full run (November 7, 2026, Python 3.11.9, with real MAFFT v7 on
+`PATH`) ran **409 tests: all passed except 2 skipped** (the two optional
 real-data tests below; without MAFFT, 3 are skipped). NCBI E-utilities,
 PubTator3, GeoNames, and Claude are mocked, so no account, key, or internet
 connection is needed. The suite is self-contained:
@@ -1152,6 +1152,9 @@ segment 4 data through the guided workflow gave 10 sequences, 45 comparisons,
 | Sprint 4: "The Anthropic Python SDK … is not installed" | The server's Python lacks the `anthropic` package. Run `python -m pip install -r requirements.txt` with the Python that starts the server (usually `.venv`), then restart. |
 | Sprint 4: "AI analysis is disabled on this server" | Expected until `.env` sets `AI_ENRICHMENT_ENABLED=true` and `ANTHROPIC_API_KEY` (setup step 7); restart after editing `.env`. |
 | Sprint 4: paid analysis refused ("only on the server computer or with the access code") | Open the site as `http://127.0.0.1:5000` on the same computer, or enter the `AI_ACCESS_CODE` value set in `.env`. |
+| A spreadsheet is refused with "does not contain…" or "but not the processed SNV values" | The file lacks a required column; the message names it. Required: sample, reference, position, Ref, Alt, frequency (0 to 1), depth. Missing values cannot be estimated: add them from the source data, or use a table that has them. |
+| "Multiple worksheets were detected" | Choose the worksheet under *Worksheet to use* on the review page and press **Update review**. |
+| "exceeds the available memory for this server" | The dataset is larger than the hosted limit (see [Large workbooks and small servers](#large-workbooks-and-small-servers)). Run it locally. |
 | Sprint 4: NCBI HTTP 429 or "limit of … requests" | Wait a minute and search again (answers are cached for an hour), search fewer samples, or add `NCBI_API_KEY` to `.env`. An incomplete search is reported as incomplete, never as "no evidence". |
 | Sprint 4 finds a paper but proposes nothing | Expected when the paper predates the samples, is linked only through a shared study, or never names the samples; the page shows the reason for each publication. |
 
@@ -1193,10 +1196,41 @@ Paid Claude runs from the browser then need `AI_ACCESS_CODE`, because the
 container does not see the request as coming from `127.0.0.1`.
 
 The Dockerfile installs MAFFT through `apt-get`, installs `requirements.txt`,
-copies runtime modules/templates/examples, and starts one Gunicorn worker with
-a 180-second timeout. It listens on `0.0.0.0` using `PORT`, defaulting to
-`10000`. This README does not claim a new Docker build or hosted verification
-was performed during its documentation update.
+copies runtime modules/templates/examples, and starts one Gunicorn `gthread`
+worker with four threads. Threads keep the site and its health check answering
+during an analysis (the application itself allows one analysis at a time). It
+listens on `0.0.0.0` using `PORT`, defaulting to `10000`. The image also sets
+one numerical thread, fewer malloc arenas, and `MAX_OBSERVATION_CELLS`. This
+README does not claim a new Docker build or hosted verification was performed
+during its documentation update.
+
+## Large workbooks and small servers
+
+Render's Free instance has 512 MB of memory and 0.1 CPU. Memory use depends on
+the analysis size, variants x samples: about **205 MB + 0.32 MB per 1,000
+combinations** (measured locally on generated tables).
+
+| Dataset | Combinations | Peak memory | Time at full speed | Time at 0.1 CPU |
+|---|---|---|---|---|
+| Fontenele et al. (2021) Supplementary Table 2 (`mmc2.xlsx`) | 295,000 | about 285 MB | about 10 s | about 2 minutes |
+
+- `MAX_OBSERVATION_CELLS` (set to 700,000 in the Dockerfile; unset locally means
+  no limit) refuses larger analyses at the review step with a clear message.
+  Samples and variants are **never** removed to make a dataset fit.
+- `MAX_WORKSHEET_CELLS` (default 4,000,000) refuses oversized worksheets while
+  they are being read.
+- The published workbook's companion `mmc3.xlsx` (Supplementary Table 3) lists
+  novel SNVs without per-sample frequencies or depths, so it cannot be analyzed;
+  the review page says so. Use `mmc2.xlsx`.
+
+To verify on Render after deploying:
+
+1. Open the site and click **Check MAFFT & GeoNames (and PubTator)**.
+2. Choose **Pooled sequencing results**, upload `mmc2.xlsx`, and run it. Expect
+   52 samples after about two minutes, with the "Working…" message on screen.
+3. In the Render dashboard, open **Metrics** (memory should stay well below 512
+   MB) and **Events** (there should be no "Ran out of memory" entry or restart).
+4. Run it a second time; memory should not climb by more than a few MB.
 
 ## GitHub and Render hosting
 

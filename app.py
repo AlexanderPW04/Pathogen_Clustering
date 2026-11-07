@@ -12,6 +12,9 @@ literature_view.py) can propose metadata from linked publications; nothing
 from it changes an analysis until a person approves each proposal.
 """
 
+import ctypes
+import gc
+import zlib
 from base64 import b64encode
 from contextlib import redirect_stderr
 from io import BytesIO, StringIO
@@ -20,7 +23,7 @@ from pathlib import Path
 from secrets import token_urlsafe
 from shutil import copyfile, rmtree
 from tempfile import TemporaryDirectory, gettempdir, mkdtemp
-from threading import Lock
+from threading import BoundedSemaphore, Lock
 from time import monotonic, time
 
 import pandas as pd
@@ -47,7 +50,7 @@ from dashboard_guide import GLOSSARY
 from integrated_view import build_dashboard, download_files
 from literature.config import ai_status
 from literature.providers import ProviderError
-from literature.review import enrichment_summary
+from literature.review import enrichment_summary, review_summary
 from literature.pubtator import check_pubtator
 from literature.identifiers import parse_identifiers
 from literature.preanalysis import (
@@ -189,6 +192,10 @@ EXAMPLE_DOWNLOADS = {name: INTEGRATED_FOLDER / name for name in INTEGRATED_EXAMP
 EXAMPLE_DOWNLOADS.update({name: EXAMPLE_FOLDER / name
                           for name in ["synthetic_sequences.fasta", "synthetic_metadata.csv"]})
 RESULT_DOWNLOADS = {}  # Short-lived integrated-result files; no database.
+ANALYSIS_SLOT = BoundedSemaphore(1)
+OUT_OF_MEMORY = ("The uploaded dataset exceeds the available memory for this server, so the analysis "
+                 "stopped. No results were changed or removed to make it fit. Run it on a local computer "
+                 "(see the README), or upload a smaller study.")
 RESULT_LOCK = Lock()
 RESULT_DOWNLOAD_SECONDS = 600
 RESULT_DOWNLOAD_LIMIT = 4
@@ -224,18 +231,28 @@ def health():
     return "OK", 200
 
 
+def error_page(message, status):
+    """A small page that says what happened and how to go on, even if rendering is failing."""
+
+    return (f'<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Integrated Genomic '
+            f'Surveillance</title></head><body style="font-family:sans-serif;max-width:40rem;margin:3rem auto;'
+            f'padding:0 1rem"><h1>Analysis could not be completed</h1><p>{message}</p>'
+            '<p><a href="/">Back to the start page</a></p></body></html>', status)
+
+
 @app.errorhandler(413)
 def upload_too_large(error):
     """Show a clear size-limit message instead of a server error page."""
 
-    return "Upload too large. Files in one request must total less than 10 MB.", 413
+    return error_page("Upload too large. Files in one request must total less than 10 MB.", 413)
 
 
 @app.errorhandler(500)
 def internal_error(error):
     """Keep unexpected internal details out of the public response."""
 
-    return "The analysis could not be completed. Please check your files and try again.", 500
+    return error_page("The analysis could not be completed. Please check your files and try again. "
+                      "The server is still running; the details were written to its log.", 500)
 
 
 def get_system_status():
@@ -592,8 +609,14 @@ def read_date_window(values):
     return days, None
 
 
+def packed(files):
+    """Result files compressed for storage: tables shrink about tenfold on a small server."""
+
+    return {name: (zlib.compress(content, 6), mimetype) for name, (content, mimetype) in files.items()}
+
+
 def store_result_files(files):
-    """Keep a few recent result files in memory for ten minutes; no database."""
+    """Keep a few recent result files in memory (compressed) for ten minutes; no database."""
 
     with RESULT_LOCK:
         now = monotonic()
@@ -607,7 +630,7 @@ def store_result_files(files):
             oldest = min(RESULT_DOWNLOADS, key=lambda key: RESULT_DOWNLOADS[key][0])
             del RESULT_DOWNLOADS[oldest]
         download_id = token_urlsafe(16)
-        RESULT_DOWNLOADS[download_id] = (now, files)
+        RESULT_DOWNLOADS[download_id] = (now, packed(files))
     return download_id
 
 
@@ -621,7 +644,7 @@ def result_download(download_id, filename):
                 or filename not in item[1]):
             abort(404)
         content, mimetype = item[1][filename]
-    return send_file(BytesIO(content), mimetype=mimetype, as_attachment=True,
+    return send_file(BytesIO(zlib.decompress(content)), mimetype=mimetype, as_attachment=True,
                      download_name=filename)
 
 
@@ -776,6 +799,7 @@ def new_page():
         "analysis_plan": None, "declared_pathogen": "", "enrichment": None, "refresh_url": None,
         "is_literature_example": False, "intended_mode": "auto", "mode_check": None,
         "previous_files": [], "info": None, "enrichment_report": None, "enrichment_preview": None,
+        "enrichment_note": None, "server_busy": False,
         "enrich": False, "publication_ids": "",
     }
 
@@ -815,9 +839,36 @@ def run_analyses(paths, names, values, thresholds, date_window, temporary_folder
 
     outcome = {} if outcome is None else outcome
     outcome["pooled_overrides"] = pooled_overrides
-    run_genomic_analyses(paths, names, values, thresholds, date_window, temporary_folder, page, outcome)
-    attach_enrichment(page, paths, thresholds, outcome)
+    # One analysis at a time: two at once could exceed a small server's memory.
+    if not ANALYSIS_SLOT.acquire(blocking=False):
+        page["server_busy"] = True
+        page["error"] = ("Another analysis is running on this server. Your files are still here: "
+                         "wait a minute, then try again.")
+        return page
+    try:
+        run_genomic_analyses(paths, names, values, thresholds, date_window, temporary_folder, page, outcome)
+        attach_enrichment(page, paths, thresholds, outcome)
+    except MemoryError:
+        app.logger.exception("Analysis stopped: out of memory")
+        page["error"] = OUT_OF_MEMORY
+    except Exception as problem:
+        app.logger.exception("Analysis stopped at an unexpected error")
+        page["error"] = (f"The analysis stopped because of an unexpected server error "
+                         f"({type(problem).__name__}). The details were written to the server log.")
+    finally:
+        ANALYSIS_SLOT.release()
+        release_memory()
     return page
+
+
+def release_memory():
+    """Return freed memory to the system after a run (glibc keeps it otherwise)."""
+
+    gc.collect()
+    try:
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except (OSError, AttributeError):
+        pass  # not Linux/glibc
 
 
 def read_raw_table(path):
@@ -901,6 +952,9 @@ def run_genomic_analyses(paths, names, values, thresholds, date_window, temporar
         )
     except (ValueError, RuntimeError) as problem:
         page["integrated_error"] = str(problem).replace(str(temporary_folder), "[temporary upload]")
+    except MemoryError:
+        app.logger.exception("Integrated analysis stopped: out of memory")
+        page["integrated_error"] = OUT_OF_MEMORY
     except Exception:
         app.logger.exception("Integrated analysis failed")
         page["integrated_error"] = (
@@ -1201,6 +1255,25 @@ def stage_uploads(uploads, enrich=False, publication_ids="", synthetic=None):
     return token
 
 
+def apply_sheet_choices(item, form):
+    """Read a workbook again when the user selected another worksheet on the review page."""
+
+    changed = False
+    for index, info in enumerate(item["inspections"]):
+        chosen = form.get(f"sheet_{index}", "")
+        if chosen and chosen in info.get("sheets", []) and (chosen != info.get("sheet")
+                                                            or info.get("sheet_choice_needed")):
+            fresh = inspect_file(item["files"][index], info["name"], chosen)
+            fresh["declared_role"] = info.get("declared_role")
+            item["inspections"][index] = fresh
+            changed = True
+    if changed:
+        suggest_roles(item["inspections"])
+        for info in item["inspections"]:
+            if info.get("declared_role"):
+                apply_declared_role(info, info["declared_role"])
+
+
 def review_choices(form, inspections):
     """Read the role, column, and pathogen choices from the review form."""
 
@@ -1250,6 +1323,7 @@ def review_upload():
         if not uploads and "enrich_shown" in request.form:
             item["enrich"] = request.form.get("enrich") == "on"
             item["publication_ids"] = request.form.get("publication_ids", "")[:500]
+        apply_sheet_choices(item, request.form)
         roles, choices, options = review_choices(request.form, item["inspections"])
         page["review"] = review_dataset(item["files"], item["inspections"], roles, choices, options)
         page["mode_check"] = mode_check(page["review"], page["intended_mode"])
@@ -1299,8 +1373,16 @@ def enrichment_preview(item, review, options):
 
 
 def start_enrichment(item, token, form, values, options, review, example=None):
-    """Create the pre-analysis enrichment session and show its first step."""
+    """Find and check publications at once (free) and show the findings.
 
+    Coming back from the file review reopens the same findings and any Claude
+    proposals, unless the files' roles, columns, or identifiers changed.
+    """
+
+    signature = repr((sorted(form.items()), item["publication_ids"]))
+    previous = item.get("enrichment")
+    if previous and previous["signature"] == signature and get_session(previous["token"]) is not None:
+        return literature_page(previous["token"], get_session(previous["token"]))
     with TemporaryDirectory() as folder:
         paths, names = prepare_inputs(item["files"], review, folder, options)
         session = preview_session(paths, parse_identifiers(item["publication_ids"]),
@@ -1309,7 +1391,15 @@ def start_enrichment(item, token, form, values, options, review, example=None):
     session.update(staged_token=token, form=form, example=example)
     if item.get("synthetic") == "integrated":
         session.update(corpus=INTEGRATED_CORPUS, mock=INTEGRATED_MOCK)
-    return literature_page(store_session(session), session)
+    session_token = store_session(session)
+    item["enrichment"] = {"signature": signature, "token": session_token}
+    try:
+        find(session, None)
+    except Exception:
+        app.logger.exception("Literature search failed")
+        return literature_page(session_token, session, "The publication search could not be completed. "
+                                                       "You can try again, or continue with the original metadata.")
+    return literature_page(session_token, session)
 
 
 @app.route("/enrich/start", methods=["POST"])
@@ -1403,11 +1493,15 @@ def enrich_run():
                              pooled_overrides=overrides, outcome=outcome)
     if error is not None:
         page["error"] = error
+    if page.get("server_busy"):  # nothing ran: keep the files and the findings for another try
+        return literature_page(session_token, session, page["error"])
     with STAGED_LOCK:
         remove_staged(session["staged_token"])  # uploads are deleted after the analysis, as before
     session["stage"] = "analysis finished"
     if derived is not None and error is None:
         page["enrichment_report"] = enrichment_report(session, derived, log, outcome, thresholds, page)
+    elif error is None and session["publications"] is not None:
+        page["enrichment_note"] = review_summary(session)["headline"]
     page["analysis_plan"] = review["analyses"]
     return render_page(values, page)
 
@@ -1427,7 +1521,7 @@ def enrichment_report(session, derived, log, outcome, thresholds, page):
     download_id = page.get("download_id")
     with RESULT_LOCK:
         if download_id in RESULT_DOWNLOADS:
-            RESULT_DOWNLOADS[download_id][1].update(files)
+            RESULT_DOWNLOADS[download_id][1].update(packed(files))
             page["downloads"] = sorted(RESULT_DOWNLOADS[download_id][1])
     by_id = {fact["Fact_ID"]: fact for fact in session["facts"]}
     changes = [{"sample": item["Sample_ID"], "field": item["Field"].replace("_", " "),
@@ -1534,6 +1628,9 @@ def run_reviewed():
         else:
             page["input_notes"] = names.pop("_notes", [])
             run_analyses(paths, names, values, thresholds, date_window, temporary_folder, page)
+    if page.get("server_busy"):  # nothing ran, so the staged files are kept for another try
+        page.update(review=review, token=token, step=2, declared_pathogen=options["declared_pathogen"])
+        return render_page(values, page)
     # The analysis has read the files; the uploads are deleted now (only the
     # results stay, in memory, for the download links).
     with STAGED_LOCK:
@@ -1592,7 +1689,8 @@ def literature_find():
         find(session, request.form.getlist("sample") or None)
     except Exception:
         app.logger.exception("Literature search failed")
-        return literature_page(token, session, "The literature search could not be completed.")
+        return literature_page(token, session, "The publication search could not be completed. You can "
+                                               "try again, or continue with the original metadata.")
     session["download_id"] = None
     return literature_page(token, session)
 

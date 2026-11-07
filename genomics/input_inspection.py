@@ -17,6 +17,7 @@ Nothing here fills in a missing date, location, reference, frequency, or depth.
 """
 
 import re
+import os
 from pathlib import Path
 
 import pandas as pd
@@ -26,11 +27,13 @@ from genomic_regions import fasta_region
 from genomics.column_detection import (
     apply_mapping,
     detect_columns,
+    explain_snv_columns,
     resolve_choices,
     squash,
     unresolved,
     value_warnings,
 )
+from genomics.excel_tables import WorkbookTooLarge, best_sheet, data_sheets, describe_sheets
 from genomics.location_hierarchy import location_hierarchy
 from genomics.metadata_readiness import metadata_readiness
 from geocode_locations import is_state_only_location
@@ -114,6 +117,7 @@ def empty_info(name):
         "name": name, "kind": None, "format": None, "extension": extension,
         "compressed": compressed, "records": 0, "columns": [], "ids": [],
         "reference_ids": [], "lengths": [], "notes": [], "problems": [], "refused": False,
+        "sheets": [], "sheet": None, "sheet_choice_needed": False, "preview": [], "variant_keys": 0,
         "candidates": [], "suggested_role": None, "role_evidence": "", "role_status": "",
         "auto_choices": {}, "annotations": {}, "descriptions": {}, "id_columns": {},
         "header_hints": {},
@@ -177,14 +181,39 @@ def ivar_sample_column(columns):
     return None
 
 
-def inspect_table(path, info):
+def choose_sheet(path, info, sheet):
+    """Which worksheet to read; several data sheets are a question for the user, not a guess."""
+
+    sheets = describe_sheets(path)
+    info["sheets"] = [item["name"] for item in sheets]
+    if sheet in info["sheets"]:
+        return sheet
+    candidates = data_sheets(sheets)
+    if len(candidates) > 1:
+        info["sheet_choice_needed"] = True
+        info["problems"].append("Multiple worksheets were detected ("
+                                + ", ".join(f"'{item['name']}'" for item in candidates)
+                                + "). Select the worksheet containing the SNV observations or sample data.")
+        return candidates[0]["name"]
+    return best_sheet(sheets)
+
+
+def inspect_table(path, info, sheet=None):
     if info["kind"] == EXCEL_KIND:
-        table = read_snv_table(path)  # handles the paper's descriptive first row
+        info["sheet"] = choose_sheet(path, info, sheet)
+        table = read_snv_table(path, info["sheet"])  # handles the paper's descriptive first row
+        if len(info["sheets"]) > 1:
+            info["notes"].append(f"Worksheet '{info['sheet']}' was read (the workbook has "
+                                 f"{len(info['sheets'])} worksheets).")
+        if table.attrs.get("header_row"):
+            info["notes"].append(f"Column headers were found on row {table.attrs['header_row'] + 1} "
+                                 "of the worksheet.")
     else:
         table = read_table(path, info["name"])
     table.columns = [str(name).strip() for name in table.columns]
     info["records"] = len(table)
     info["columns"] = list(table.columns)
+    info["preview"] = table.head(3).iloc[:, :10].astype(str).to_dict("records")
     columns = set(table.columns)
 
     if (table.attrs.get("fontenele_2021_table2") and set(PAPER_COLUMNS).issubset(columns)
@@ -192,6 +221,7 @@ def inspect_table(path, info):
         info["format"] = PAPER_TABLE_FORMAT
         info["candidates"] = ["snv"]
         info["ids"] = column_values(table, "SAMPLE")
+        info["variant_keys"] = count_variants(table, ["POSITION", "REF", "ALT"])
         info["reference_ids"] = [PAPER_REFERENCE]
         info["notes"].append("Recognized the published supplementary SNV table; its reference is "
                              f"{PAPER_REFERENCE} as stated in the paper's methods.")
@@ -199,6 +229,7 @@ def inspect_table(path, info):
     if IVAR_REQUIRED.issubset(columns):
         info["format"] = IVAR_TABLE_FORMAT
         info["candidates"] = ["snv"]
+        info["variant_keys"] = count_variants(table, ["POS", "REF", "ALT"])
         info["reference_ids"] = column_values(table, "REGION")
         sample_column = ivar_sample_column(table.columns)
         if sample_column:
@@ -255,13 +286,35 @@ def inspect_table(path, info):
             sample = next((match for match in matches[role] if match["field"] == "Sample_ID"), None)
             if sample and sample["status"] == "matched" and role == "snv":
                 info["ids"] = column_values(table, sample["column"])
+                fields = {match["field"]: match["column"] for match in matches["snv"]
+                          if match["status"] == "matched"}
+                if {"Position", "Ref", "Alt"} <= set(fields):
+                    info["variant_keys"] = count_variants(
+                        table, [fields["Position"], fields["Ref"], fields["Alt"]])
     if not candidates:
-        info["problems"].append("The columns do not match any supported table (see the help "
-                                "list of accepted column names).")
+        reason = explain_snv_columns(table.columns) if looks_like_variants(table.columns) else None
+        if table.attrs.get("preamble") and "Supplementary Table" in table.attrs["preamble"] and reason:
+            reason += " If this is a paper's supplement, another table may hold the per-sample values."
+        info["problems"].append(reason or "The columns do not match any supported table. Required columns "
+                                          "depend on the file: see the file guides on the upload page.")
 
 
-def inspect_file(path, name):
-    """Describe one decompressed upload."""
+def count_variants(table, columns):
+    """Distinct position/Ref/Alt combinations (the size of the analysis)."""
+
+    return int(table[columns].astype(str).apply(lambda column: column.str.strip().str.upper())
+               .drop_duplicates().shape[0])
+
+
+def looks_like_variants(columns):
+    """True when headers suggest variant data, so a missing field can be named precisely."""
+
+    found = {match["field"] for match in detect_columns(columns, "snv") if match["status"] != "missing"}
+    return bool(found & {"Position", "Ref", "Alt", "Alt_Frequency"})
+
+
+def inspect_file(path, name, sheet=None):
+    """Describe one decompressed upload; `sheet` is the worksheet the user selected."""
 
     info = empty_info(name)
     info["kind"] = detect_kind(path, name)
@@ -272,7 +325,7 @@ def inspect_file(path, name):
         elif info["kind"] == VCF_KIND:
             inspect_vcf(path, info)
         elif info["kind"] in {TABLE_KIND, EXCEL_KIND}:
-            inspect_table(path, info)
+            inspect_table(path, info, sheet)
         elif info["kind"] in {FASTQ_KIND, ALIGNMENT_KIND}:
             info["refused"] = True
             info["problems"].append(RAW_READ_MESSAGE)
@@ -280,6 +333,12 @@ def inspect_file(path, name):
             info["refused"] = True
             info["problems"].append("This file type is not supported. Use FASTA, CSV/TSV/XLSX, "
                                     "or VCF (each optionally .gz).")
+    except WorkbookTooLarge as error:
+        info["refused"] = True
+        info["problems"].append(str(error))
+    except MemoryError:
+        info["refused"] = True
+        info["problems"].append("The uploaded dataset exceeds the available memory for this server.")
     except Exception as error:  # any unreadable file is refused on its own, not the whole upload
         info["refused"] = True
         info["problems"].append(f"Could not read this file: {error}")
@@ -426,7 +485,7 @@ def choose_metadata_role(info, fasta_ids, variant_ids):
 
 def table_for(path, info):
     if info["kind"] == EXCEL_KIND:
-        table = read_snv_table(path)
+        table = read_snv_table(path, info.get("sheet"))
     else:
         table = read_table(path, info["name"])
     table.columns = [str(name).strip() for name in table.columns]
@@ -674,6 +733,34 @@ def individual_review(review, options):
     })
 
 
+def max_observation_cells():
+    """Largest variant-by-sample analysis allowed (0 = no limit).
+
+    Peak memory measured on generated tables is about 205 MB plus 0.32 MB per
+    1,000 cells, so the Dockerfile sets 700,000 for a 512 MB server. Local runs
+    have no limit unless MAX_OBSERVATION_CELLS is set.
+    """
+
+    try:
+        return max(0, int(os.getenv("MAX_OBSERVATION_CELLS", "0")))
+    except ValueError:
+        return 0
+
+
+def check_analysis_size(review, entries):
+    """Refuse an analysis that could not finish here; data are never trimmed to fit."""
+
+    limit = max_observation_cells()
+    variants = sum(entry["info"].get("variant_keys", 0) for entry in entries)
+    cells = variants * len(review["pooled_ids"])
+    if limit and cells > limit:
+        review["problems"].append(
+            f"The uploaded dataset exceeds the available memory for this server: {variants:,} variants x "
+            f"{len(review['pooled_ids']):,} samples is {cells:,} combinations, and this server can process "
+            f"{limit:,}. No samples or variants are removed automatically. Run the analysis on a local "
+            "computer (see the README), or upload a smaller study.")
+
+
 def pooled_review(review):
     entries = review["by_role"].get("snv", [])
     if not entries:
@@ -686,6 +773,7 @@ def pooled_review(review):
     if any(entry["info"]["format"] == PAPER_TABLE_FORMAT for entry in entries) and len(entries) > 1:
         review["problems"].append("The published supplementary table must be analyzed on its own.")
     review["pooled_ids"] = sorted(set(ids))
+    check_analysis_size(review, entries)
     metadata = review["by_role"].get("pooled_metadata", [None])[0]
     vcf_only = all(entry["info"]["kind"] == VCF_KIND for entry in entries)
     paper = any(entry["info"]["format"] == PAPER_TABLE_FORMAT for entry in entries)

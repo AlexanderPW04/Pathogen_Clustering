@@ -4,6 +4,8 @@ from pathlib import Path
 
 import pandas as pd
 
+from genomics.column_detection import explain_snv_columns
+from genomics.excel_tables import read_sheet
 from genomics.file_formats import VCF_FORMAT, vcf_notes, vcf_to_snv_table
 
 
@@ -73,7 +75,7 @@ VCF_SNV_FORMAT = "VCF (single-nucleotide entries converted to the standardized t
 COMBINED_FORMAT = "Combined standardized table (some records converted from VCF)"
 
 
-def read_table(path):
+def read_table(path, sheet=None):
     """Read a CSV, TSV, Excel, or VCF file without losing numeric-looking sample IDs."""
 
     path = Path(path)
@@ -88,12 +90,10 @@ def read_table(path):
         return pd.read_csv(path, sep="\t", dtype=str, keep_default_na=False)
     if path.suffix.lower() == ".xlsx":
         # The paper's workbook has a descriptive first row, then its headers.
-        first_rows = pd.read_excel(path, header=None, nrows=2, dtype=str)
-        header_row = 1 if len(first_rows) > 1 and first_rows.shape[1] > 0 and str(first_rows.iloc[1, 0]).strip() == "SAMPLE" else 0
-        data = pd.read_excel(path, header=header_row, dtype=str, keep_default_na=False)
-        description = str(first_rows.iloc[0, 4]) if first_rows.shape[1] > 4 else ""
+        data = read_sheet(path, sheet)
+        description = data.attrs.get("preamble", "")
         data.attrs["fontenele_2021_table2"] = (
-            header_row == 1
+            data.attrs.get("header_row") == 1
             and "Supplementary Table 2" in description
             and "52 wastewater samples" in description
             and "SARS-CoV-2" in description
@@ -160,7 +160,8 @@ def load_processed_snvs(path, metadata_path=None):
             input_format = COMBINED_FORMAT
         missing = sorted(set(REQUIRED_COLUMNS) - set(data.columns))
         if missing:
-            raise ValueError("Missing processed SNV column(s): " + ", ".join(missing))
+            raise ValueError(explain_snv_columns(data.columns)
+                             or "Missing processed SNV column(s): " + ", ".join(missing))
         if "Collection_Date" not in data:
             data["Collection_Date"] = ""
         if "Location_Name" not in data:
@@ -177,6 +178,14 @@ def load_processed_snvs(path, metadata_path=None):
     data["Ref"] = data["Ref"].str.upper()
     data["Alt"] = data["Alt"].str.upper()
     errors = []
+    # Row numbers as the user sees them in the file (headers occupy the rows above).
+    first_row = data.attrs.get("header_row", 0) + 2
+
+    def where(mask, values):
+        """The first offending cell, so a large table can actually be corrected."""
+
+        position = int(mask.to_numpy().argmax())
+        return f" (first at row {position + first_row}: '{str(values.iloc[position])[:30]}')"
 
     if metadata_path:
         metadata = read_table(metadata_path)
@@ -223,7 +232,8 @@ def load_processed_snvs(path, metadata_path=None):
     for column in ["Ref", "Alt"]:
         invalid = ~data[column].isin(["A", "C", "G", "T"])
         if invalid.any():
-            errors.append(f"{invalid.sum()} record(s) have invalid {column}; expected one A, C, G, or T.")
+            errors.append(f"{invalid.sum()} record(s) have invalid {column}; expected one A, C, G, or T"
+                          + where(invalid, data[column]) + ".")
     same_base = data["Ref"].eq(data["Alt"])
     if same_base.any():
         errors.append(f"{same_base.sum()} record(s) have identical reference and alternative bases.")
@@ -231,16 +241,19 @@ def load_processed_snvs(path, metadata_path=None):
     positions = pd.to_numeric(data["Position"], errors="coerce")
     invalid_position = positions.isna() | positions.le(0) | positions.ne(positions.round()) | positions.isin([float("inf"), float("-inf")])
     if invalid_position.any():
-        errors.append(f"{invalid_position.sum()} position(s) are not positive integers.")
+        errors.append(f"{invalid_position.sum()} position(s) are not positive integers"
+                      + where(invalid_position, data["Position"]) + ".")
     frequencies = pd.to_numeric(data["Alt_Frequency"], errors="coerce")
     invalid_frequency = frequencies.isna() | ~frequencies.between(0, 1)
     if invalid_frequency.any():
-        errors.append(f"{invalid_frequency.sum()} alternative allele frequency value(s) are outside 0 to 1 or missing.")
+        errors.append(f"{invalid_frequency.sum()} alternative allele frequency value(s) are outside 0 to 1 "
+                      "or missing" + where(invalid_frequency, data["Alt_Frequency"]) + ".")
     raw_depths = data["Read_Depth"].fillna("").astype(str).str.strip()
     depths = pd.to_numeric(raw_depths.replace("", pd.NA), errors="coerce")
     invalid_depth_text = raw_depths.ne("") & depths.isna()
     if invalid_depth_text.any():
-        errors.append(f"{invalid_depth_text.sum()} read depth value(s) are not numeric.")
+        errors.append(f"{invalid_depth_text.sum()} read depth value(s) are not numeric"
+                      + where(invalid_depth_text, raw_depths) + ".")
     bad_depth = depths.notna() & (depths.lt(1) | depths.ne(depths.round()) | depths.isin([float("inf"), float("-inf")]))
     if bad_depth.any():
         errors.append(f"{bad_depth.sum()} read depth value(s) are not positive integers.")

@@ -15,9 +15,14 @@ completed result, and a failed retrieval is reported as an incomplete review,
 never as an absence of evidence.
 """
 
+import re
+
 import pandas as pd
 
 from literature.discovery import DIRECT, STUDY
+from literature.geography import STATE_ABBREVIATIONS
+from literature.identifiers import mentions
+from literature.passages import COORDINATES, EXCLUDED_SECTIONS
 
 PROPOSED = "Metadata improvements proposed"
 REVIEWED_NONE = "Article reviewed; no supported improvements"
@@ -33,9 +38,36 @@ NUMBER_WORDS = {1: "One", 2: "Two", 3: "Three", 4: "Four", 5: "Five", 6: "Six", 
                 9: "Nine", 10: "Ten"}
 
 
+COUNTRIES = ["United States", "USA", "Canada", "Mexico", "Brazil", "Argentina", "Chile", "Peru", "Colombia",
+             "United Kingdom", "England", "Scotland", "Ireland", "France", "Germany", "Spain", "Italy",
+             "Netherlands", "Belgium", "Poland", "Russia", "China", "Japan", "South Korea", "India", "Pakistan",
+             "Bangladesh", "Thailand", "Vietnam", "Indonesia", "Australia", "New Zealand", "South Africa",
+             "Nigeria", "Kenya", "Egypt", "Israel", "Iran", "Turkey"]
+STATE_NAMES = sorted({name.title() for name in STATE_ABBREVIATIONS.values()}, key=len, reverse=True)
+PLACE_NAMES = re.compile(r"\b(" + "|".join(STATE_NAMES + COUNTRIES) + r")\b|\b((?:[A-Z][a-z]+ ){1,2}County)\b")
+
+
 def counted(number, singular, plural=None):
     word = NUMBER_WORDS.get(number, str(number))
     return f"{word} {singular if number == 1 else (plural or singular + 's')}"
+
+
+def article_places(article):
+    """Geographic names found in an article's text (deterministic, not interpreted).
+
+    Finding a name only means a place is mentioned somewhere; it says nothing
+    about where any particular sample was collected. Affiliations, references,
+    and acknowledgements are not read, as they never describe collection.
+    """
+
+    places = []
+    for passage in (article or {}).get("Passages", []):
+        if passage["Section"] in EXCLUDED_SECTIONS or "affil" in passage.get("Type", "").casefold():
+            continue
+        places += [first or second for first, second in PLACE_NAMES.findall(passage["Text"])]
+        if COORDINATES.search(passage["Text"]):
+            places.append("coordinates")
+    return list(dict.fromkeys(places))
 
 
 def approvable_facts(session, article_id=None, sample_id=None):
@@ -69,6 +101,52 @@ def article_outcome(session, article_id, group):
     return REVIEWED_NONE
 
 
+def plain_explanation(outcome, usable, facts, article_count=1):
+    """One sentence a reader needs no background for."""
+
+    if outcome == PREDATES:
+        return ("This article was published before these samples were collected and does not identify "
+                "them. Its collection locations cannot be applied to your samples.")
+    if outcome == STUDY_ONLY:
+        return ("This article belongs to the same study, but it does not name your samples, so its "
+                "locations cannot be applied to them.")
+    if outcome == FAILED:
+        return "The article could not be retrieved, so its location information could not be checked."
+    if outcome == NOT_RETRIEVED:
+        return "This article was not retrieved (search limit), so it could not be checked."
+    if outcome == UNAVAILABLE:
+        return "The article's text is not available, or no passage describes sample collection."
+    if outcome == PENDING:
+        return (f"The article is linked to {len(usable)} of your samples and may say where they were "
+                "collected. Claude can check this after you approve the cost.")
+    if outcome == PROPOSED:
+        return f"Verified collection details were found ({facts} proposal(s) to review below)."
+    return "The article was checked; it gives no verifiable collection details for your samples."
+
+
+def article_answers(session, article, outcome, usable):
+    """The direct questions: is there location text, does it apply, can metadata improve?"""
+
+    facts = len(approvable_facts(session, article["Article_ID"])) if article else 0
+    if outcome in {FAILED, NOT_RETRIEVED}:
+        location, places = "Could not check", []
+    elif not (article or {}).get("Passages"):
+        location, places = "Could not check", []
+    else:
+        places = article_places(article)
+        location = "Yes" if places else "No"
+    if outcome == PROPOSED:
+        applies, improvement = "Yes", "Yes"
+    elif outcome == PENDING:
+        applies, improvement = "Uncertain", "Needs Claude review"
+    elif outcome in {FAILED, NOT_RETRIEVED}:
+        applies, improvement = "Uncertain", "Could not check"
+    else:
+        applies, improvement = "No", "No"
+    return {"location": location, "places": places[:6], "applies": applies, "improvement": improvement,
+            "plain": plain_explanation(outcome, usable, facts)}
+
+
 def article_cards(session):
     """One entry per unique publication: details, retrieval, outcome, and its linked samples."""
 
@@ -79,6 +157,9 @@ def article_cards(session):
     for article_id, group in table.groupby("Article_ID", sort=False):
         first = group.iloc[0]
         article = session["articles"].get(article_id) or {}
+        outcome = article_outcome(session, article_id, group)
+        usable = list(group.loc[group["Eligible_For_Enrichment"], "Sample_ID"])
+        year = re.search(r"\b(19|20)\d{2}\b", str(first["Publication_Date"]))
         reasons = list(dict.fromkeys(group["Eligibility_Reason"]))
         if len(group) > 1:  # one card speaks about all linked samples
             reasons = [reason.replace("this sample was collected", "these samples were collected")
@@ -88,11 +169,13 @@ def article_cards(session):
             "url": first["Source_URL"] if str(first["Source_URL"]).startswith("https://") else "",
             "published": first["Publication_Date"], "epub": first.get("Epub_Date", ""),
             "retrieval": article.get("Retrieval_Status", first.get("Retrieval_Status", "")),
-            "text": first["Text_Status"], "outcome": article_outcome(session, article_id, group),
+            "text": first["Text_Status"], "outcome": outcome, "year": year.group() if year else "Unknown",
+            "claude": "Yes" if article_id in session.get("analyzed", {}) else "No",
+            **article_answers(session, session["articles"].get(article_id), outcome, usable),
             "direct": int((group["Relationship_Type"] == DIRECT).sum()),
             "study": int((group["Relationship_Type"] == STUDY).sum()),
             "samples": list(group["Sample_ID"]),
-            "usable_samples": list(group.loc[group["Eligible_For_Enrichment"], "Sample_ID"]),
+            "usable_samples": usable,
             "chronology": list(dict.fromkeys(group["Chronology"])),
             "reasons": reasons, "evidence": list(dict.fromkeys(group["Association_Evidence"]))[:3],
         })
@@ -181,41 +264,125 @@ def review_summary(session):
         ("Changes applied", applied if applied is not None else 0),
     ]
     stats = [(label, "Not determinable" if value is None else value) for label, value in stats]
-    return {"headline": headline(inspected, cards, samples, search_failures), "stats": stats, "cards": cards,
-            "samples": samples, "failures": failures}
+    claude = claude_state(session, cards, bool(search_failures))
+    return {"headline": headline(inspected, cards, samples, search_failures, applied or 0),
+            "why": why_lines(session, inspected, cards, claude, applied or 0), "stats": stats, "cards": cards,
+            "samples": samples, "failures": failures, "claude": claude,
+            "stages": stage_statuses(cards, samples, claude, bool(search_failures)),
+            "same_status": len({row["Status"] for row in samples}) == 1}
 
 
-def headline(inspected, cards, samples, search_failures=()):
-    """One plain sentence about the review, true to what was actually retrieved and assessed."""
+def claude_state(session, cards, search_failed):
+    """(label, explanation, tone): exactly what happened with Claude, never implied."""
 
+    run = session.get("run") or {}
+    state = run.get("state")
+    pending = [card for card in cards if card["outcome"] == PENDING]
+    if state == "running":
+        return {"label": "Claude analysis running", "why": run.get("progress", ""), "tone": "running"}
+    if state == "completed":
+        if session.get("synthetic"):
+            return {"label": "Claude analysis completed",
+                    "why": "Offline demonstration: fixed answers, no AI model was called.", "tone": "done"}
+        return {"label": "Claude analysis completed", "why": "", "tone": "done"}
+    if state in {"failed", "stopped early", "cancelled"}:
+        return {"label": "Claude analysis failed" if state == "failed" else f"Claude analysis {state}",
+                "why": " ".join(run.get("messages", [])[:2]), "tone": "failed"}
+    if pending:
+        why = "Claude has not been run. It reads only the usable passages, after you approve the cost."
+    elif search_failed or any(card["outcome"] in {FAILED, NOT_RETRIEVED} for card in cards):
+        why = "Claude was not used because the evidence check could not be completed."
+    elif not cards:
+        why = "Claude was not used because no publication was found."
+    elif len(cards) == 1:
+        why = "Claude was not used because this publication cannot provide sample-specific collection information."
+    else:
+        why = "Claude was not used because these publications cannot provide sample-specific collection information."
+    return {"label": "Claude not run", "why": why, "tone": "skipped"}
+
+
+def stage_statuses(cards, samples, claude, search_failed):
+    """What actually ran, in order: (label, 'done' | 'failed' | 'skipped')."""
+
+    retrieved = [card for card in cards if card["outcome"] not in {FAILED, NOT_RETRIEVED}]
+    proposed = any(row["Status"].startswith("Improvements") for row in samples)
+    undecided = any(card["outcome"] == PENDING for card in cards)
+    incomplete = search_failed or len(retrieved) < len(cards)
+    stages = [("Literature search completed" if not search_failed else "Literature search failed",
+               "failed" if search_failed else "done")]
+    if cards:
+        stages.append(("Article retrieved" if len(retrieved) == len(cards) else "Article retrieval failed",
+                       "done" if len(retrieved) == len(cards) else "failed"))
+    else:
+        stages.append(("No article to retrieve", "skipped"))
+    stages.append(("Location evidence checked" if not incomplete and cards else "Location evidence not checked",
+                   "done" if not incomplete and cards else "skipped"))
+    stages.append((claude["label"], claude["tone"]))
+    if proposed:
+        stages.append(("Metadata changes proposed", "done"))
+    elif undecided or incomplete:
+        stages.append(("No changes proposed yet", "skipped"))
+    else:
+        stages.append(("No changes supported", "done"))
+    return stages
+
+
+def why_lines(session, inspected, cards, claude, applied):
+    """A short explanation under the conclusion; details stay in the expandable section."""
+
+    lines = []
+    isolates = distinct_isolates(session["samples"]) if inspected else None
+    if isolates:
+        lines.append(f"{counted(inspected, 'accession').rstrip('.')} {'represents' if inspected == 1 else 'represent'} "
+                     f"{counted(isolates, 'distinct isolate').lower()}.")
+    if cards:
+        retrieved = sum(card["outcome"] not in {FAILED, NOT_RETRIEVED} for card in cards)
+        lines.append(f"{counted(retrieved, 'associated publication')} {'was' if retrieved == 1 else 'were'} retrieved.")
+    if len(cards) == 1 and cards[0]["year"] != "Unknown":
+        dates = pd.to_datetime(session["samples"].get("Collection_Date"), errors="coerce").dropna()
+        collected = (f"; the samples were collected in {dates.min():%B %Y}"
+                     if len(dates) and dates.min().to_period("M") == dates.max().to_period("M") else "")
+        lines.append(f"The publication is from {cards[0]['year']}{collected}.")
+    if cards and not any(card["usable_samples"] for card in cards):
+        lines.append("No usable direct sample-specific evidence was established.")
+    for card in cards[:1] if len(cards) == 1 else []:
+        lines.append(card["plain"])
+    if claude["why"]:
+        lines.append(claude["why"])
+    elif claude["label"] == "Claude analysis completed":
+        lines.append("Claude read the usable passages; every proposal below was checked against the article.")
+    lines.append(f"{counted(applied, 'change')} applied." if applied else "No metadata was changed.")
+    return lines
+
+
+def headline(inspected, cards, samples, search_failures=(), applied=0):
+    """The concise conclusion, true to what was actually retrieved and assessed."""
+
+    searched = f"{inspected} accession record{'' if inspected == 1 else 's'} searched."
+    unchanged = f"{counted(applied, 'change')} applied." if applied else "No metadata was changed."
     if not cards and search_failures:
-        return (f"The publication search could not be completed ({search_failures[0]}). The evidence review is "
-                "incomplete; this does not mean that no publication exists. The original metadata remains "
-                "unchanged, and the genomic analysis can still run.")
+        return (f"The publication search could not be completed, so locations could not be checked "
+                f"({search_failures[0]}) This does not mean that no publication exists. {unchanged}")
     if not cards:
-        return (f"{counted(inspected, 'accession record')} {'was' if inspected == 1 else 'were'} searched; "
-                "no associated publication was found. The original metadata remains unchanged.")
-    kinds = "study " if all(card["direct"] == 0 for card in cards) else ""
-    linked = (f"{counted(inspected, 'accession record')} {'was' if inspected == 1 else 'were'} associated "
-              f"with {counted(len(cards), kinds + 'publication').lower()}.")
+        return f"{searched} No publication found. {unchanged}"
+    found = f"{counted(len(cards), 'publication')} found"
     incomplete = [card for card in cards if card["outcome"] in {FAILED, NOT_RETRIEVED}]
     if incomplete:
-        return (f"{linked} The evidence review is incomplete: {counted(len(incomplete), 'publication').lower()} "
-                f"could not be retrieved ({incomplete[0]['retrieval']}). This does not mean the literature has "
-                "no evidence. The original metadata remains unchanged.")
+        subject = ("it" if len(cards) == 1 else "all of them" if len(incomplete) == len(cards)
+                   else counted(len(incomplete), "publication").lower())
+        return (f"{searched} {found}, but {subject} could not be retrieved, so location information could not "
+                "be checked. The evidence review is incomplete. This does not mean the literature has no "
+                f"evidence. {unchanged}")
     proposed = sum(row["Status"].startswith("Improvements") for row in samples)
     pending = [card for card in cards if card["outcome"] == PENDING]
-    once = ("The publication was retrieved and reviewed once." if len(cards) == 1
-            else "Each publication was retrieved and reviewed once.")
     if proposed:
-        return (f"{linked} {once} Metadata improvements were proposed for {counted(proposed, 'sample').lower()}; "
-                "nothing changes until you approve them.")
+        return (f"{searched} {found}. Verified collection details were proposed for "
+                f"{counted(proposed, 'sample').lower()}. Nothing changes until you approve them."
+                + (f" {unchanged}" if applied else ""))
     if pending:
-        return (f"{linked} {once} {counted(len(pending), 'publication')} {'contains' if len(pending) == 1 else 'contain'} "
-                "sample-specific evidence that Claude can analyze after you approve the cost. "
-                "The original metadata is unchanged so far.")
-    return (f"{linked} {once} No verifiable collection-site improvements were found for these records. "
-            "The original metadata remains unchanged.")
+        return (f"{searched} {found}. {counted(len(pending), 'publication')} may hold collection details for "
+                f"your samples; a Claude review is needed to confirm. {unchanged}")
+    return f"{searched} {found}. No verified collection locations could be assigned to these samples. {unchanged}"
 
 
 def enrichment_summary(session, log=None):

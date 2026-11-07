@@ -148,7 +148,7 @@ class WastewaterFlaskTest(unittest.TestCase):
                 data={"snv_file": (io.BytesIO(b"Sample_ID,Position\nW1,241\n"), "bad.csv")},
                 content_type="multipart/form-data",
             )
-        self.assertIn("Missing processed SNV column", response.get_data(as_text=True))
+        self.assertIn("contains variant positions but not the processed SNV values", response.get_data(as_text=True))
 
 
 if __name__ == "__main__":

@@ -152,6 +152,29 @@ def detect_columns(columns, role):
     return results
 
 
+def explain_snv_columns(columns):
+    """Why a table cannot be read as processed SNV calls, in plain words; None if it can.
+
+    Each sentence is based on what was actually detected in the headers.
+    """
+
+    found = {match["field"] for match in detect_columns(columns, "snv") if match["status"] != "missing"}
+    labels = {"Sample_ID": "pooled sample ID", "Reference_Genome": "reference genome",
+              "Ref": "reference base", "Alt": "alternative base",
+              "Alt_Frequency": "allele frequency", "Read_Depth": "read depth"}
+    missing = [f"{label} ({name})" for name, label in labels.items() if name not in found]
+    if "Position" not in found:
+        return ("This spreadsheet does not contain the required variant-position column"
+                + (f" (also missing: {', '.join(missing)})." if missing else "."))
+    if not missing:
+        return None
+    if {"Alt_Frequency", "Read_Depth"} - found:
+        return ("This workbook contains variant positions but not the processed SNV values required "
+                f"for this analysis: no column was recognized for {', '.join(missing)}. These values "
+                "cannot be estimated, so they were not filled in.")
+    return f"This spreadsheet is missing required SNV columns: {', '.join(missing)}."
+
+
 def resolve_choices(matches, choices, chooser="the user"):
     """Apply choices ({field: column}) to ambiguous matches; `chooser` says who chose."""
 
@@ -229,4 +252,12 @@ def value_warnings(table, matches):
             problems.append(f"Column '{columns['Alt_Frequency']}' has values above 1, so it may be "
                             "a percentage; alternative-allele frequencies must be from 0 to 1. "
                             "Convert it before uploading; it is not rescaled automatically.")
+    for name, label in [("Position", "variant positions"), ("Alt_Frequency", "allele frequencies"),
+                        ("Read_Depth", "read depths")]:
+        if name in columns:
+            raw = table[columns[name]].astype(str).str.strip()
+            bad = raw.ne("") & pd.to_numeric(raw, errors="coerce").isna()
+            if bad.any():
+                problems.append(f"Column '{columns[name]}' should hold {label}, but {int(bad.sum())} "
+                                f"value(s) are not numbers (for example '{raw[bad].iloc[0][:30]}').")
     return problems

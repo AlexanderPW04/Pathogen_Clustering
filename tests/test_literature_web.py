@@ -83,11 +83,11 @@ class LiteratureWebTest(unittest.TestCase):
         page = self.client.post("/literature/analyze", data={"token": token}).get_data(as_text=True)
         self.assertIn("Before you start", page)
         self.assertIn("Run offline demonstration", page)
-        self.assertNotIn("Stage E · Verify and review proposed metadata", page)  # nothing ran without confirmation
+        self.assertNotIn('id="proposed-changes"', page)  # nothing ran without confirmation
         response = self.client.post("/literature/analyze", data={"token": token, "confirm": "1"})
         self.assertEqual(response.status_code, 302)
         page = self.client.get(response.headers["Location"]).get_data(as_text=True)
-        self.assertIn("Stage E · Verify and review proposed metadata", page)
+        self.assertIn('id="proposed-changes"', page)
         approvable = re.findall(r'name="review_(F\d+)" value="approve"', page)
         self.assertEqual(len(approvable), 7)
         self.assertNotIn('name="review_F15"', page)  # Tucson was lowered by the second check
@@ -187,7 +187,7 @@ class LiteratureWebTest(unittest.TestCase):
             page = self.client.get(response.headers["Location"]).get_data(as_text=True)
         self.assertEqual(fake_client.beta.messages.create.call_count, 3)
         self.assertEqual(len(list(Path(cache.name).glob("*.json"))), 3)  # results cached for reuse
-        self.assertIn("Requests sent:</strong> 3", page)
+        self.assertIn("Requests sent: 3", page)
         self.assertNotIn(SECRET, page)
         for call in fake_client.beta.messages.create.call_args_list:
             self.assertNotIn("Sequence", call.kwargs["messages"][0]["content"])

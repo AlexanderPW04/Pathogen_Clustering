@@ -37,9 +37,8 @@ ACCESSIONS = [f"QB228{number:03d}" for number in range(92, 102)]
 OLD_STUDY = "PMID:9000001"
 NO_EVIDENCE = ("One study-associated publication was found, but it does not provide verifiable collection "
                "information for these samples. No metadata changes are proposed")
-REVIEWED_NO_CHANGE = ("Ten accession records were associated with one study publication. The publication was "
-                      "retrieved and reviewed once. No verifiable collection-site improvements were found for "
-                      "these records. The original metadata remains unchanged.")
+REVIEWED_NO_CHANGE = ("10 accession records searched. One publication found. No verified collection locations could be "
+                      "assigned to these samples. No metadata was changed.")
 OFFLINE_AI = {"AI_ENRICHMENT_ENABLED": "true", "ANTHROPIC_API_KEY": "test-key-not-real",
               "ANTHROPIC_MODEL": "claude-opus-5-5", "AI_ACCESS_CODE": "", "GEONAMES_USERNAME": ""}
 

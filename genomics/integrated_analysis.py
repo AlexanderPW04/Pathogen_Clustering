@@ -14,6 +14,7 @@ call `run_integrated_analysis()`, which:
 Each analysis that lacks the information it needs is skipped with a message.
 """
 
+import gc
 import platform
 from importlib.metadata import PackageNotFoundError, version
 
@@ -94,13 +95,17 @@ def position_summary(pooled_variants, individual_variants, reference_id):
     if pooled_variants is not None:
         included = pooled_variants[pooled_variants["Analysis_Included"]
                                    & pooled_variants["Reference_ID"].eq(reference_id)]
-        for key, group in included.groupby("Variant_Key"):
-            first = group.iloc[0].to_dict()
+        by_variant = included.groupby("Variant_Key")
+        sample_counts = by_variant["Sample_ID"].nunique()
+        medians = by_variant["Alt_Frequency"].median()
+        firsts = included.drop_duplicates("Variant_Key").to_dict("records")
+        for first in sorted(firsts, key=lambda row: row["Variant_Key"]):
+            key = first["Variant_Key"]
             rows[key] = {
                 "Variant_Key": key, "Position": int(first["Position"]), "Ref": first["Ref"],
-                "Alt": first["Alt"], "Pooled_Samples": group["Sample_ID"].nunique(),
+                "Alt": first["Alt"], "Pooled_Samples": sample_counts[key],
                 "Individual_Carriers": 0,
-                "Median_Reported_Frequency": float(group["Alt_Frequency"].median()),
+                "Median_Reported_Frequency": float(medians[key]),
                 "Gene_Or_Annotation": first_text(first, ["Published_Annotation", "Source_Gene_Feature"]),
                 "Published_Novelty": first_text(first, ["Published_Novel_Global"]),
                 "Published_Amino_Acid_Change": (
@@ -144,8 +149,12 @@ def add_figure(result, name, title, caption, make):
 
     try:
         result["figures"][name] = {"png": make(), "title": title, "caption": caption}
+    except MemoryError:
+        result["notes"].setdefault("figures", []).append(
+            f"{title} could not be drawn because this server ran out of memory.")
     except Exception as error:  # noqa: BLE001 - shown to the user as a limitation
         result["notes"].setdefault("figures", []).append(f"{title} could not be drawn: {error}")
+    gc.collect()  # drawing leaves large cycles behind; free them before the next figure
 
 
 def run_integrated_analysis(individual_data=None, mafft_path=None, reference_path=None,

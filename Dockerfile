@@ -1,7 +1,14 @@
 FROM python:3.11-slim-bookworm
 
+# One numerical thread on a 0.1-CPU instance, fewer malloc arenas, and the largest
+# variant-by-sample analysis a 512 MB instance can finish (see genomics/input_inspection.py).
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    OPENBLAS_NUM_THREADS=1 \
+    OMP_NUM_THREADS=1 \
+    MALLOC_ARENA_MAX=2 \
+    MPLCONFIGDIR=/tmp/matplotlib \
+    MAX_OBSERVATION_CELLS=700000
 
 WORKDIR /app
 
@@ -29,5 +36,7 @@ USER appuser
 
 EXPOSE 10000
 
-# One worker limits memory use on a Free instance; allow small analyses time to finish.
-CMD ["sh", "-c", "exec gunicorn --bind 0.0.0.0:${PORT:-10000} --workers 1 --timeout 180 app:app"]
+# One worker limits memory use on a Free instance. Threads keep the site and its health
+# check answering while an analysis runs, and a slow analysis is not killed as a stuck worker;
+# the application itself allows one analysis at a time.
+CMD ["sh", "-c", "exec gunicorn --bind 0.0.0.0:${PORT:-10000} --workers 1 --worker-class gthread --threads 4 --timeout 180 app:app"]

@@ -45,7 +45,12 @@ def load_measurements(path, metric="auto"):
         raise ValueError("Two columns map to the same field. Keep one column per field.")
     missing = [name for name in REQUIRED_COLUMNS if name not in data]
     if missing:
-        raise ValueError("Missing column(s): " + ", ".join(missing))
+        hint = ""
+        if {"POSITION", "POS", "Position"} & set(data.columns) or "POSITION" in " ".join(
+                str(value) for value in data.iloc[:3].to_numpy().ravel()).upper():
+            hint = (" This file looks like variant calls, not measurements: upload it on the main "
+                    "page as a processed pooled SNV table.")
+        raise ValueError("Missing column(s): " + ", ".join(missing) + "." + hint)
     available_metrics = [name for name in ["Frequency", "Measurement_Value"] if name in data]
     if data.empty or len(data) > 10000:
         raise ValueError("Use a table containing 1 to 10,000 measurement rows.")

@@ -2,6 +2,8 @@
 
 Integration report for the BMI 461 genomic surveillance prototype, branch `sprint4-integration`, written November 2, 2026.
 
+> **Update (simplified page, November 7, 2026).** The page now has three steps, and the free search runs on the first click. It leads with a plain conclusion and a short table (location found? applies to your samples? improvement possible? Claude reviewed?), plus a strip of the stages that actually ran, including why Claude did not. Location mentions are detected deterministically and kept separate from sample association; failed retrieval is reported as "Could not check". Provenance moved to *Technical details*. See `PROJECT_HANDOFF.md`.
+
 > **Update (batched literature review, November 2, 2026).**
 > - **Batching:** NCBI lookups are batched and each unique publication is retrieved once (ten real accessions: 8 E-utilities + 1 PubTator3 requests, down from an exhausted budget of 80).
 > - **HTTP client:** a shared rate limiter, bounded retries honoring Retry-After, and a response cache.
