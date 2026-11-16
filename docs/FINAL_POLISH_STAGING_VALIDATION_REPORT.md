@@ -72,12 +72,24 @@ Render deployment identifiers: **Requested** (§15).
   - the progress banner;
   - the scroll-offset script;
   - the old "up to two minutes" text gone.
-- **Not inspected by Claude:** the build logs, startup lines (MAFFT install, gunicorn `gthread`) and
-  runtime logs of the three new deploys, because Render could not be signed in. **Requested** (§15).
-- **Indirect evidence for MAFFT:** the hosted status page reports MAFFT v7.505, and Sprint 2
-  alignments ran (§7).
-- **Indirect evidence against restarts:** no request failed, and no error page appeared across about
-  45 minutes of hosted tests.
+- **Runtime log excerpt supplied by the user** (09:22–10:04 UTC):
+  - **09:22:30–09:22:48:** the Sprint 2 part of the final run. "Aligning each pathogen/gene group with
+    MAFFT", "Pathogen/gene groups (8): Influenza A virus / Segment 1 (2 samples) … Segment 8 (1
+    sample)", "Pairwise comparisons: 2", "Related pairs passing thresholds: 0". The integrated
+    example's Sprint 2 part gave 2 related pairs and 1 cluster.
+  - **09:25:14:** "Detected service running on port 10000" (Render's port check).
+  - **09:51:09–09:51:11:** "Handling signal: term", "Worker exiting (pid: 25)", "Shutting down: Master".
+    This is a **graceful stop about 15 minutes after the last test request** (09:36:18), matching the
+    Free plan's idle sleep. No staging traffic was sent between 09:36 and 10:04. It is not a crash.
+  - **10:04:09–10:04:33:** the deploy of `8690561` (pushed 10:03:58). "Deploying…",
+    `WEB_CONCURRENCY=1`, "Starting gunicorn 23.0.0", "Listening at: http://0.0.0.0:10000",
+    "Using worker: gthread", "Booting worker with pid: 25", "Your service is live".
+  - **No traceback, `WORKER TIMEOUT`, `Out of memory` or unexpected worker restart** appears in the
+    excerpt.
+- **Not seen:** the build sections (commit checkout, MAFFT and pip install) and deploy identifiers of
+  the four new deploys, and the startup lines of the first three (08:47, 09:14, 09:20).
+- **MAFFT on the new image:** shown indirectly by the hosted status page (MAFFT v7.505) and by the
+  09:22 MAFFT alignments above.
 
 ## 6. Full local test results
 
@@ -253,8 +265,10 @@ Summarised in §14 (Sprint 4 paragraph).
   Render Free, as instructed.
 - **Cold start:** a cold start was observed once: the first request after idling took **23.3 s**
   (08:46 UTC, before the push).
-- **Not tested:** a deliberate restart. Results are in memory by design, so they are lost on restart,
-  and the 404 page says so.
+- **Idle shutdown (runtime log):** a graceful idle shutdown at 09:51, followed by a clean restart at the
+  10:04 deploy, after which the caption check ran normally.
+- **Not tested:** a deliberate restart under load. Results are in memory by design, so they are lost
+  on restart, and the 404 page says so.
 
 ## 14. Local-versus-hosted scientific output comparisons
 
@@ -312,12 +326,17 @@ Hosted run times (scripted client; "previous" = the 2026-11-15 run on `5a20fb0`)
 no hosted memory value is claimed. Locally, under the 512 MB / 10% CPU imitation, the same commit's
 Fontenele run peaked at 300 MB.
 
-**Requested from the Render dashboard** (staging service):
+**Received** (user-supplied runtime log, 09:22–10:04 UTC; §5): clean startup of `8690561`, a graceful
+idle shutdown, and no errors or timeouts.
+
+**Still requested from the Render dashboard** (staging service):
 1. **Events:** the four deploys (commits `8287576`, `84d4f64`, `0119813`, `8690561`) with their
    identifiers.
-2. **Logs:** the build lines for MAFFT and pip, `Listening at`, and `Booting worker` (one per deploy),
-   plus any traceback or `WORKER TIMEOUT` between 08:47 and 09:45 UTC.
-3. **Metrics → Memory:** the peak during the Fontenele runs.
+2. **Build sections:** commit checkout, MAFFT and pip; and the startup lines of the 08:47, 09:14 and
+   09:20 deploys.
+3. **Logs, 08:47–09:22 UTC:** they cover the first two Fontenele runs (about 08:50–09:00) and the
+   busy-server test.
+4. **Metrics → Memory:** the peak during the Fontenele runs (about 08:50–09:00 and 09:26–09:36 UTC).
 
 ## 16. Remaining limitations
 
@@ -409,7 +428,9 @@ fast-forward, and re-verified on staging. Neither touches analysis code.
 - No paid Claude requests were made, and production and `main` are unchanged.
 
 **Limitations:**
-- The Render build and runtime logs and the memory graph for the new deploys were not seen (§15).
+- The memory graph, the deploy identifiers, and the build sections of the new deploys were not seen
+  (§15). The runtime log from 09:22 to 10:04 was received, and shows a clean start of `8690561` and no
+  errors.
 - Production's branch link is user-stated.
 - The progress clock was not watched over a full hosted run, because the browser pane was hidden.
 - No deliberate restart and no human usability test were done.
