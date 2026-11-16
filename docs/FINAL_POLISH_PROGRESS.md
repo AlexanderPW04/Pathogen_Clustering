@@ -221,8 +221,10 @@ modules all pass (77 tests).
 **4B: result cache** (`app.make_room_for_results`, `store_result_files`, `result_download`).
 - **Bounds:** a memory budget of 48 MB compressed by default (`RESULT_CACHE_MB`), plus at most 12
   result sets (was 4, count only).
-- **Eviction order:** expired sets first, then idle sets, then sets created recently but not yet
-  downloaded, and sets being downloaded last. Within each group the least recently used goes first.
+- **Eviction order:** expired sets first, then the least recently used. Creating a set and
+  downloading from it both count as use.
+- A first design (three priority groups) was replaced after the full suite found that it could evict
+  the newest, not-yet-downloaded result first (test `test_upload_enrichment`).
 - **Use tracking:** each download refreshes a set's last use. A cached XLSX/PDF is kept only while the
   budget allows it.
 - **Unchanged:** the 10-minute lifetime, the 128-bit random IDs (results stay separate), memory-only
@@ -241,3 +243,23 @@ modules all pass (77 tests).
 structure is refused; a web upload of a bad profile shows the reason; an active visitor keeps results
 while another runs many; the memory budget is never exceeded; expiry and separation hold; 30
 concurrent stores stay bounded.
+
+## Milestone 5: regression testing — Done (2026-11-16)
+
+- **Full suite:**
+  - First run after Milestones 1–4: 712 tests, **1 error**. The first cache design evicted the newest,
+    not-yet-downloaded result (`test_upload_enrichment`). Fixed with least-recently-used eviction plus
+    a regression test.
+  - Final: **`Ran 713 tests in 634.5 s — OK (skipped=4)`** (685 baseline + 28 new).
+- **Published datasets:** 33 PASS, 0 FAILED (Schumann VEP 1,830/1,830; files unchanged).
+- **Output equivalence** with the validated version, browser-like test, same inputs: **129 of 130 CSVs
+  identical**. The only difference is the new `Translation_Table_Source` column. Main findings,
+  readiness, Sprint 4, the formula check, unsupported input, and the busy message are identical.
+- **Real H5N1:** gene "NA" kept in 10/10 workbook cells (blank before), with code 1 confirmed.
+- **Free-plan imitation** (512 MB / 10% CPU), `mmc2`: run 127.1 s (123.5 s before; suite running in
+  parallel), peak 300 MB (302), XLSX 41.0 s, PDF 5.9 s. No regression found.
+
+## Milestone 6: final report — Done (2026-11-16)
+
+`docs/FINAL_POLISH_IMPLEMENTATION_REPORT.md`: **FINAL POLISH COMPLETE — READY FOR STAGING
+REVALIDATION**. Nothing has been pushed or deployed.

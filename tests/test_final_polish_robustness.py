@@ -125,16 +125,33 @@ class ResultCacheTest(unittest.TestCase):
     def test_an_active_visitor_keeps_results_while_another_runs_many_analyses(self):
         with patch.object(app_module, "RESULT_DOWNLOAD_LIMIT", 3):
             mine = self.store("mine")
-            self.clock.now += 400                      # older than the protection window ...
-            self.assertEqual(self.client.get(f"/results/{mine}/table.csv").status_code, 200)  # ... but in use
             others = []
-            for number in range(5):                    # another visitor's analyses
-                self.clock.now += 20
+            for number in range(5):                    # another visitor's analyses, about one a minute and a half
+                self.clock.now += 100
+                self.assertEqual(self.client.get(f"/results/{mine}/table.csv").status_code, 200)  # I keep using mine
+                self.clock.now += 1
                 others.append(self.store(f"other{number}"))
-            self.assertIn(mine, RESULT_DOWNLOADS)      # still downloadable
+            self.assertIn(mine, RESULT_DOWNLOADS)      # still downloadable while it is used (within 10 minutes)
             self.assertEqual(self.client.get(f"/results/{mine}/table.csv").data, b"mine" * 10)
             self.assertEqual(len(RESULT_DOWNLOADS), 3)  # the count limit holds
-            self.assertNotIn(others[0], RESULT_DOWNLOADS)  # their own oldest unused set went first
+            self.assertNotIn(others[0], RESULT_DOWNLOADS)  # their own oldest, unused set went first
+            self.assertIn(others[-1], RESULT_DOWNLOADS)    # their newest set (just created) is kept
+
+    def test_a_just_finished_analysis_is_never_the_one_evicted(self):
+        with patch.object(app_module, "RESULT_DOWNLOAD_LIMIT", 3):
+            first = self.store("first")
+            self.clock.now += 10
+            self.client.get(f"/results/{first}/table.csv")   # downloaded a moment ago
+            self.clock.now += 1
+            second = self.store("second")
+            self.clock.now += 1
+            third = self.store("third")
+            self.clock.now += 1
+            newest = self.store("newest")
+            self.assertIn(newest, RESULT_DOWNLOADS)
+            self.assertIn(third, RESULT_DOWNLOADS)
+            self.assertNotIn(first, RESULT_DOWNLOADS)       # least recently used of the three older sets
+            self.assertIn(second, RESULT_DOWNLOADS)
 
     def test_memory_budget_is_never_exceeded(self):
         import os as operating_system

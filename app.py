@@ -229,12 +229,10 @@ OUT_OF_MEMORY = ("The uploaded dataset exceeds the available memory for this ser
 RESULT_LOCK = Lock()
 RESULT_DOWNLOAD_SECONDS = 600
 # Final polish 4B: the result cache is bounded by memory (compressed bytes) and by a count, and it
-# evicts the least recently *used* result set first. A set created or downloaded in the last few
-# minutes is evicted only when the memory budget or the count requires it, so one visitor's new
-# analyses do not push out another visitor's results while they are being downloaded.
+# evicts the least recently *used* result set first (creating and downloading are both use), so one
+# visitor's new analyses push out idle results before results someone is still working with.
 RESULT_DOWNLOAD_LIMIT = 12
 RESULT_CACHE_BYTES = int(getenv("RESULT_CACHE_MB", "48")) * 1024 * 1024
-RESULT_PROTECT_SECONDS = 180
 RESULT_LAST_USED = {}
 
 # Guided uploads wait on disk (not in Git, not permanent) between the review
@@ -675,12 +673,11 @@ def last_used(download_id):
 
 
 def make_room_for_results(incoming_bytes, now):
-    """Drop expired result sets, then others in a fixed order until a new set fits.
+    """Drop expired result sets, then the least recently used ones, until a new set fits.
 
-    Call with RESULT_LOCK held. The order is: idle sets (not used for RESULT_PROTECT_SECONDS), then
-    recently created sets nobody has downloaded yet, then sets being downloaded right now; within each
-    group the least recently used goes first. Sets are dropped only while the memory budget or the
-    count still requires it.
+    Call with RESULT_LOCK held. Creating a set and downloading from it both count as use, so a visitor
+    who just ran an analysis or is downloading keeps their results, and an idle set goes first. Sets are
+    dropped only while the memory budget or the count still requires it.
     """
 
     for key in [key for key, item in RESULT_DOWNLOADS.items() if now - item[0] > RESULT_DOWNLOAD_SECONDS]:
@@ -690,12 +687,7 @@ def make_room_for_results(incoming_bytes, now):
         total = sum(stored_bytes(item[1]) for item in RESULT_DOWNLOADS.values())
         return len(RESULT_DOWNLOADS) >= RESULT_DOWNLOAD_LIMIT or total + incoming_bytes > RESULT_CACHE_BYTES
 
-    def eviction_rank(key):
-        recent = now - last_used(key) <= RESULT_PROTECT_SECONDS
-        downloading = recent and last_used(key) > RESULT_DOWNLOADS[key][0]
-        return (2 if downloading else 1 if recent else 0, last_used(key))
-
-    for key in sorted(RESULT_DOWNLOADS, key=eviction_rank):
+    for key in sorted(RESULT_DOWNLOADS, key=last_used):
         if not over():
             break
         forget_result(key)
