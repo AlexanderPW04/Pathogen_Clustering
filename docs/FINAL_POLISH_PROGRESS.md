@@ -52,3 +52,58 @@ Nothing is restored automatically. Choose the case that applies.
 ## Milestones 1-6
 
 Not started.
+
+## Milestone 1: scientific labelling and biological correctness — Done (2026-11-16)
+
+**1A: UTR genome band.**
+- `genomics/integrated_analysis.py`:
+  - `annotation_file_bands` draws the gene track from the uploaded GenBank/GFF3 CDS coordinates.
+    Overlapping CDS of one gene (ORF1a/ORF1ab) are merged into one band.
+  - `annotation_ranges` is used without an annotation file. It now draws a source label only when its
+    records form one uninterrupted run, so a recurring label such as Fontenele's intergenic "UTR" is
+    left unannotated.
+  - `gene_track` chooses between the two and writes the figure caption, which states the track's
+    source.
+  - The annotation is now read once, before the figure, and reused by `run_mutation_annotation`.
+- Verified on NC_045512.2:
+  - bands equal the NCBI CDS: S 21563–25384, ORF3a 25393–26220, N 28274–29533, ORF1ab 266–21555;
+  - 25385–25392 stays unannotated;
+  - without the file, the Fontenele source labels give 13 bands and no "UTR".
+
+**1B: influenza "NA".**
+- `genomics/report_exports.StoredTables.get` reads with `keep_default_na=False, na_values=[""]`. The
+  XLSX and PDF are rebuilt from the CSVs, so "NA" stays text in both; only empty cells are missing.
+- Sprint 2 readers also kept "NA" as text after this change:
+  - `compare_genetic_distances.read_pair_table`;
+  - `app.run_relationship_analysis`, using the new `TEXT_LABEL_COLUMNS`: Sample IDs, Pathogen,
+    Gene_Segment.
+
+**1C: genetic code.**
+- `genomics/genome_annotation.py` records `Translation_Table_Source` for every CDS: stated / verified
+  (table 1 reproduces the GenBank `/translation`) / confirmed by the user.
+- Otherwise the CDS is unsupported with `TABLE_UNVERIFIED_DETAIL`, so no amino-acid consequence is
+  predicted for it.
+- A new optional setting, "Genetic code for coding regions that state none":
+  - website: Advanced settings `genetic_code` (validated by `parse_genetic_code`);
+  - CLI: `--genetic-code`.
+  - The review page warns when an annotation needs it.
+- A stated table is never overridden.
+- The new `Translation_Table_Source` column appears in `sprint5_annotation_sources.csv`.
+
+**Intentional test changes (documented in each test).** GFF3-based tests now confirm the standard
+code explicitly (`genetic_code=1`), because GFF3 states no code and the silent default was the defect:
+- `tests/test_genome_annotation.py`: 9 calls;
+- `tests/test_snv_consequences.py`: 2 calls;
+- `tests/test_sprint5_phase4_web.py`: 4 uploads.
+
+**New tests.** `tests/test_final_polish_annotation.py` (12): code 1 versus code 4 (TGG>TGA is W2* versus
+W2W), stated / verified / confirmed / unverified codes, NCBI bands, recurring labels, NA / HA / M1; M2 /
+NS versus a blank, and Sprint 2 "NA" segments.
+
+**Results.**
+- Annotation, website and integrated modules: 64 tests OK.
+- Import, web, analyses, app and Sprint 2 modules: 90 tests OK.
+- The full suite runs at Milestone 5.
+
+**Remaining (documented, not changed):** a start-codon change to another start codon (for example
+ATG>CTG, or GTG>ATG under table 11) is still reported as "Start lost".

@@ -28,7 +28,13 @@ import pandas as pd
 from Bio import SeqIO
 
 from genomic_regions import fasta_region
-from genomics.genome_annotation import GENBANK_FORMAT, detect_annotation_format, load_genbank, load_gff3
+from genomics.genome_annotation import (
+    GENBANK_FORMAT,
+    TABLE_NOT_STATED,
+    detect_annotation_format,
+    load_genbank,
+    load_gff3,
+)
 from genomics.collection_dates import date_warnings, parse_collection_dates
 from genomics.column_detection import (
     ROLE_FIELDS,
@@ -219,6 +225,12 @@ def inspect_annotation(path, info):
     info["reference_ids"] = list(records)
     info["lengths"] = [record["Length"] for record in records.values()]
     info["candidates"] = ["annotation"]
+    info["unstated_code_cds"] = sum(cds["Translation_Table_Source"] == TABLE_NOT_STATED
+                                    and not cds["Record_Translation"] for cds in annotation["cds"])
+    if info["unstated_code_cds"]:
+        info["notes"].append(f"{info['unstated_code_cds']} coding region(s) state no genetic code (transl_table) and "
+                             "have no protein sequence to check one against; their amino-acid consequences are "
+                             "predicted only if you confirm the genetic code under Advanced settings.")
     for reference_id, record in records.items():
         coding = sum(cds["Reference_ID"] == reference_id for cds in annotation["cds"])
         info["notes"].append(f"Describes {reference_id} ({record['Organism']}"
@@ -735,6 +747,13 @@ def review_dataset(staged, inspections, roles, choices=None, options=None):
             if not entry["info"]["refused"] and entry["role"] not in {None, "ignore"}:
                 review["problems"].append(f"{entry['info']['name']}: {problem}")
 
+    for entry in review["by_role"].get("annotation", []):
+        if entry["info"].get("unstated_code_cds") and not options.get("genetic_code"):
+            review["warnings"].append(
+                f"{entry['info']['name']}: {entry['info']['unstated_code_cds']} coding region(s) state no genetic "
+                "code. Their amino-acid consequences will be reported as not predicted unless you choose the "
+                "organism's genetic code under Advanced settings ('Genetic code for coding regions that state "
+                "none'). The standard code is never assumed.")
     individual_review(review, options)
     pooled_review(review, options.get("date_order", "auto"))
     compatibility_review(review)

@@ -157,14 +157,16 @@ class Phase4WebTest(unittest.TestCase):
                          "Skipped")
 
     def test_gff3_uses_only_a_matching_reference_fasta(self):
+        # GFF3 states no genetic code, so the standard code is confirmed as a user would (final-polish 1C).
         _, page, download_id = self.upload([("snvs.csv", sars2_table()), self.file(ANNOTATION, "NC_045512.2.gff3"),
-                                            self.file(ANNOTATION, "NC_045512.2.fasta")])
+                                            self.file(ANNOTATION, "NC_045512.2.fasta")], genetic_code="1")
         mutations = self.download(download_id, "sprint5_annotated_mutations.csv").set_index("Variant_Key")
         self.assertEqual(mutations.loc["NC_045512.2:14408:C>T", "Amino_Acid_Changes"], "ORF1ab:P4715L")
         self.assertTrue(mutations["Annotation_Status"].eq("Annotated").all())
         self.assertIn("matching reference FASTA is used", html_text(page))
         # Without any sequence, codons cannot be checked: nothing is annotated, the run still completes.
-        _, page, download_id = self.upload([("snvs.csv", sars2_table()), self.file(ANNOTATION, "NC_045512.2.gff3")])
+        _, page, download_id = self.upload([("snvs.csv", sars2_table()), self.file(ANNOTATION, "NC_045512.2.gff3")],
+                                           genetic_code="1")
         mutations = self.download(download_id, "sprint5_annotated_mutations.csv")
         self.assertTrue(mutations["Annotation_Status"].eq("Not annotated").all())
         self.assertTrue(mutations["Reference_Check"].eq("Not checked (no reference sequence)").all())
@@ -221,7 +223,7 @@ class Phase4WebTest(unittest.TestCase):
             [self.file(EXAMPLES, "synthetic_individual_sequences.fasta"),
              self.file(EXAMPLES, "synthetic_individual_metadata.csv"), self.file(EXAMPLES, "synthetic_reference.fasta"),
              self.file(EXAMPLES, "synthetic_pooled_snvs.csv"), self.file(EXAMPLES, "synthetic_pooled_base_counts.csv"),
-             ("synthetic_test_annotation.gff3", gff.encode())], mode="combined")
+             ("synthetic_test_annotation.gff3", gff.encode())], mode="combined", genetic_code="1")
         self.assertIn("Individual sequence relationships", page)
         self.download(download_id, "cross_source_comparison.csv")
         mutations = self.download(download_id, "sprint5_annotated_mutations.csv").set_index("Variant_Key")
@@ -239,7 +241,7 @@ class Phase4WebTest(unittest.TestCase):
         _, page, download_id = self.upload(
             [self.file(EXAMPLES, "synthetic_individual_sequences.fasta"),
              self.file(EXAMPLES, "synthetic_individual_metadata.csv"), self.file(EXAMPLES, "synthetic_reference.fasta"),
-             ("synthetic_test_annotation.gff3", gff.encode())], mode="individual")
+             ("synthetic_test_annotation.gff3", gff.encode())], mode="individual", genetic_code="1")
         text = html_text(page)
         self.assertIn(SECTION_TITLE, text)
         self.assertIn("Predicted from the reference annotation", text)

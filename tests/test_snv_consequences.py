@@ -100,7 +100,7 @@ class SyntheticConsequenceTest(unittest.TestCase):
     def setUpClass(cls):
         cls.folder = tempfile.TemporaryDirectory()
         path = Path(cls.folder.name)
-        cls.annotations = {"GFF3": load_annotation(write_gff3(path)), "GenBank": load_annotation(write_genbank(path))}
+        cls.annotations = {"GFF3": load_annotation(write_gff3(path), genetic_code=1), "GenBank": load_annotation(write_genbank(path))}
 
     @classmethod
     def tearDownClass(cls):
@@ -215,7 +215,7 @@ class RealSarsCov2ConsequenceTest(unittest.TestCase):
         reference = load_reference_fasta(ANNOTATION / "NC_045512.2.fasta")
         cls.sequence = reference["Sequence"]
         cls.annotation = load_annotation(ANNOTATION / "NC_045512.2.gb", reference)
-        cls.gff = load_annotation(ANNOTATION / "NC_045512.2.gff3", reference)
+        cls.gff = load_annotation(ANNOTATION / "NC_045512.2.gff3", reference, genetic_code=1)
 
     def codon(self, cds_start, number):
         start = cds_start + 3 * (number - 1)  # 1-based first base of the codon

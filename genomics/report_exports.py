@@ -145,7 +145,10 @@ class StoredTables:
         content = self.read(name)
         if content is None:
             return None
-        return pd.read_csv(BytesIO(content), float_precision="round_trip", low_memory=False)
+        # Only an empty cell is missing: text such as the influenza gene "NA" (neuraminidase) or a
+        # sample called "None" stays text, exactly as in the CSV download (final-polish 1B).
+        return pd.read_csv(BytesIO(content), float_precision="round_trip", low_memory=False,
+                           keep_default_na=False, na_values=[""])
 
 
 def stored_figures(read, summary):

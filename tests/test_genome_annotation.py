@@ -52,7 +52,7 @@ class SyntheticAnnotationTest(unittest.TestCase):
             load_annotation(fasta)
 
     def test_gff3_and_genbank_give_the_same_model(self):
-        gff = by_id(load_annotation(write_gff3(self.path)))
+        gff = by_id(load_annotation(write_gff3(self.path), genetic_code=1))
         genbank = by_id(load_annotation(write_genbank(self.path)))
         for protein in ["P1", "P2", "P3", "P4", "P7"]:
             self.assertEqual(gff[protein]["Parts"], genbank[protein]["Parts"], protein)
@@ -77,7 +77,7 @@ class SyntheticAnnotationTest(unittest.TestCase):
         self.assertEqual(annotation["records"]["SEGA.1"]["Segment"], "A")
         self.assertEqual(annotation["records"]["SEGB.1"]["Segment"], "B")
         self.assertEqual(annotation["records"]["SEGB.1"]["Organism"], "Synthetic test virus")
-        gff = load_annotation(write_gff3(self.path))
+        gff = load_annotation(write_gff3(self.path), genetic_code=1)
         self.assertEqual(gff["records"]["SEGB.1"]["Segment"], "B")
         self.assertEqual(gff["records"]["SEGA.1"]["Length"], 85)
 
@@ -91,13 +91,13 @@ class SyntheticAnnotationTest(unittest.TestCase):
         p2 = by_id(load_annotation(write_genbank(self.path)))["P2"]
         self.assertEqual(coding_offsets(p2, 51), [0])  # minus strand: offset counts from the high end
         self.assertEqual(coding_offsets(p2, 34), [17])
-        p4 = by_id(load_annotation(write_gff3(self.path)))["P4"]
+        p4 = by_id(load_annotation(write_gff3(self.path), genetic_code=1))["P4"]
         self.assertEqual(coding_offsets(p4, 11), [4])
         self.assertEqual(coding_offsets(p4, 18), [5])  # first base after the intron continues codon 2
         self.assertEqual(coding_offsets(p4, 14), [])  # intron
 
     def test_unsupported_structures_are_marked_with_reasons(self):
-        annotation = by_id(load_annotation(write_gff3(self.path)))
+        annotation = by_id(load_annotation(write_gff3(self.path), genetic_code=1))
         self.assertEqual(annotation["P5"]["Status"], UNSUPPORTED)
         self.assertIn("Internal stop codon", annotation["P5"]["Status_Detail"])
         self.assertEqual(annotation["P6"]["Status"], UNSUPPORTED)
@@ -105,10 +105,10 @@ class SyntheticAnnotationTest(unittest.TestCase):
         self.assertIsNone(annotation["P5"]["Coding_Sequence"])
 
     def test_inconsistent_gff3_phase_is_unsupported(self):
-        bad = by_id(load_annotation(write_gff3(self.path, p4_phase=0)))["P4"]
+        bad = by_id(load_annotation(write_gff3(self.path, p4_phase=0), genetic_code=1))["P4"]
         self.assertEqual(bad["Status"], UNSUPPORTED)
         self.assertIn("phase", bad["Status_Detail"])
-        good = by_id(load_annotation(write_gff3(self.path, p4_phase=1)))["P4"]
+        good = by_id(load_annotation(write_gff3(self.path, p4_phase=1), genetic_code=1))["P4"]
         self.assertEqual(good["Status"], SUPPORTED)
 
     def test_translation_disagreeing_with_record_is_unsupported(self):
@@ -123,7 +123,7 @@ class SyntheticAnnotationTest(unittest.TestCase):
                  "SEGA.1\ttest\tCDS\t19\t27\t.\t+\t0\tID=cds-OVER;protein_id=OVER\n")
         path = self.path / "extra.gff3"
         path.write_text(text + extra + f"##FASTA\n>SEGA.1\n{SEGA}\n", encoding="utf-8")
-        annotation = by_id(load_annotation(path))
+        annotation = by_id(load_annotation(path, genetic_code=1))
         self.assertIn("Partial", annotation["PART"]["Status_Detail"])
         self.assertIn("overlap without a documented ribosomal slippage", annotation["OVER"]["Status_Detail"])
         from Bio.SeqFeature import CompoundLocation, FeatureLocation, SeqFeature
@@ -139,15 +139,15 @@ class SyntheticAnnotationTest(unittest.TestCase):
 
     def test_gff3_without_sequence_uses_only_a_matching_reference(self):
         path = write_gff3(self.path, with_fasta=False)
-        alone = load_annotation(path)
+        alone = load_annotation(path, genetic_code=1)
         self.assertIsNone(alone["records"]["SEGA.1"]["Sequence"])
         self.assertIn("No reference sequence", by_id(alone)["P1"]["Status_Detail"])
         matching = load_reference_fasta(write_fasta(self.path, "a.fasta", "SEGA.1", SEGA))
-        used = load_annotation(path, matching)
+        used = load_annotation(path, matching, genetic_code=1)
         self.assertEqual(by_id(used)["P1"]["Status"], SUPPORTED)
         self.assertIn("matching reference FASTA is used", used["records"]["SEGA.1"]["Sequence_Check"])
         shorter = load_reference_fasta(write_fasta(self.path, "b.fasta", "SEGA.1", SEGA[:80]))
-        refused = load_annotation(path, shorter)
+        refused = load_annotation(path, shorter, genetic_code=1)
         self.assertFalse(refused["records"]["SEGA.1"]["Compatible"])
         self.assertEqual(by_id(refused)["P1"]["Status"], UNSUPPORTED)
 
@@ -162,7 +162,7 @@ class SyntheticAnnotationTest(unittest.TestCase):
         self.assertTrue(any("not described by the annotation" in text for text in unrelated["notes"]))
 
     def test_source_table_documents_every_cds(self):
-        table = source_table(load_annotation(write_gff3(self.path)))
+        table = source_table(load_annotation(write_gff3(self.path), genetic_code=1))
         self.assertEqual(len(table), 7)
         self.assertEqual(table.set_index("CDS_ID").loc["P7", "Parts_1_Based"], "76..81,61..69")
         self.assertEqual(table.set_index("CDS_ID").loc["P4", "Phases"], "0,1")
@@ -177,7 +177,7 @@ class RealAnnotationTest(unittest.TestCase):
     def setUpClass(cls):
         cls.reference = load_reference_fasta(SARS2_FASTA)
         cls.genbank = load_annotation(SARS2_GB, cls.reference)
-        cls.gff = load_annotation(SARS2_GFF, cls.reference)
+        cls.gff = load_annotation(SARS2_GFF, cls.reference, genetic_code=1)
 
     def test_reference_identity(self):
         record = self.genbank["records"]["NC_045512.2"]

@@ -26,6 +26,7 @@ from genomics import figures
 from genomics.depth_aware_analysis import run_depth_aware_analysis
 from genomics.mutation_group_analysis import add_individual_overlap
 from genomics.canonical_model import add_canonical_tables
+from genomics.genome_annotation import load_annotation
 from genomics.mutation_annotation import run_mutation_annotation
 from genomics.overdispersion import CALIBRATION_MIN_DEPTH, CALIBRATION_VAF_HIGH, CALIBRATION_VAF_LOW, MINIMUM_SITES
 from genomics.overdispersion_analysis import DEFAULT_SENSITIVITY_RHOS
@@ -76,6 +77,7 @@ DEFAULT_SETTINGS = {
     "overdispersion_rhos": list(DEFAULT_SENSITIVITY_RHOS),
     "grouping_mode": "profiles",
     "grouping_minimum_shared": mutation_grouping.DEFAULT_MINIMUM_SHARED,
+    "genetic_code": None,  # user-confirmed NCBI table for CDS whose annotation states none
     **PAPER_SETTINGS,
 }
 
@@ -151,13 +153,69 @@ def position_summary(pooled_variants, individual_variants, reference_id):
 
 
 def annotation_ranges(summary):
-    """Approximate annotated regions from the positions of annotated records."""
+    """Gene-track bands from the source table's own annotation labels (used without an annotation file).
 
-    ranges = []
-    annotated = summary[summary["Gene_Or_Annotation"].ne("")]
-    for name, group in annotated.groupby("Gene_Or_Annotation"):
-        ranges.append((name, int(group["Position"].min()), int(group["Position"].max()) + 1))
-    return sorted(ranges, key=lambda item: item[1])
+    Only a label whose annotated records form one uninterrupted run along the genome is drawn, from its
+    first to its last annotated record. A label that recurs in separate places (Fontenele et al. 2021
+    label every intergenic position 'UTR') does not describe one region, so those positions stay
+    unannotated instead of one 'UTR' band being drawn across the genes between them (audit P2-1).
+    """
+
+    annotated = summary[summary["Gene_Or_Annotation"].ne("")].sort_values(["Position", "Gene_Or_Annotation"])
+    runs = []
+    for label, position in zip(annotated["Gene_Or_Annotation"], annotated["Position"]):
+        if runs and runs[-1][0] == label:
+            runs[-1][2] = int(position)
+        else:
+            runs.append([label, int(position), int(position)])
+    counts = {}
+    for label, _, _ in runs:
+        counts[label] = counts.get(label, 0) + 1
+    return [(label, start, end + 1) for label, start, end in runs if counts[label] == 1]
+
+
+def annotation_file_bands(annotation, reference_id):
+    """Gene-track bands from an uploaded GenBank/GFF3 file: CDS coordinates on this reference.
+
+    Every CDS of a record compatible with the reference is drawn from its first to its last base (a
+    joined CDS such as ORF1ab is one band); the label is the gene name, else the product. Regions
+    without a CDS stay unannotated. Returns [] when the file describes no compatible CDS here.
+    """
+
+    if not annotation:
+        return []
+    bands = {}
+    for cds in annotation["cds"]:
+        record = annotation["records"].get(cds["Reference_ID"])
+        if cds["Reference_ID"] != reference_id or not record or not record.get("Compatible"):
+            continue
+        label = cds["Gene"] or cds["Product"] or cds["CDS_ID"] or "CDS"
+        start = min(part[0] for part in cds["Parts"])
+        end = max(part[1] for part in cds["Parts"]) + 1
+        bands[(label, start, end)] = None
+    merged = []  # overlapping CDS of one gene (ORF1a and ORF1ab) become one band
+    for label, start, end in sorted(bands, key=lambda band: (band[0], band[1], band[2])):
+        if merged and merged[-1][0] == label and start <= merged[-1][2]:
+            merged[-1][2] = max(merged[-1][2], end)
+        else:
+            merged.append([label, start, end])
+    return sorted((tuple(band) for band in merged), key=lambda band: (band[1], band[2], band[0]))
+
+
+def gene_track(summary, annotation, reference_id):
+    """(bands, caption) for the genome-position figure: the annotation file first, else source labels."""
+
+    bands = annotation_file_bands(annotation, reference_id)
+    if bands:
+        source = annotation.get("source_file") or "file"
+        return bands, (f"Gene track: coding regions (CDS) from the uploaded annotation ({source}); "
+                       "positions outside them are unannotated.")
+    bands = annotation_ranges(summary)
+    if bands:
+        return bands, ("Gene track: the source table's own annotation labels, drawn only where a label forms "
+                       "one uninterrupted run of annotated records (approximate extents, not verified gene "
+                       "boundaries; labels that recur in separate places, such as UTR, are left unannotated).")
+    return [], "No gene annotation is available, so no gene track is drawn."
 
 
 def add_figure(result, name, title, caption, make):
@@ -210,6 +268,15 @@ def run_integrated_analysis(individual_data=None, mafft_path=None, reference_pat
         reference = load_reference_fasta(reference_path)
         registry = build_reference_registry([reference])
         result["reference"] = reference
+
+    # The annotation file is read once, here, so the genome figure's gene track uses its verified CDS
+    # coordinates (final-polish 1A). A file that cannot be read is reported later by the annotation step.
+    annotation_model = None
+    if annotation_path:
+        try:
+            annotation_model = load_annotation(annotation_path, reference, settings.get("genetic_code"))
+        except Exception:  # noqa: BLE001 - run_mutation_annotation reads it again and reports the problem
+            annotation_model = None
 
     # 2. Individual sequences -> reference-coordinate profiles.
     individual = None
@@ -318,10 +385,10 @@ def run_integrated_analysis(individual_data=None, mafft_path=None, reference_pat
                                        reference_id)
             result["tables"]["variant_positions.csv"] = summary
             if not summary.empty:
+                bands, track = gene_track(summary, annotation_model, reference_id)
                 add_figure(result, "genome_positions", "Variants along the reference genome",
-                           "Analogue of the paper's Fig 3. Annotation bands span the annotated "
-                           "records only; they are not complete gene boundaries.",
-                           lambda: figures.genome_position_figure(summary, annotation_ranges(summary)))
+                           "Analogue of the paper's Fig 3. " + track,
+                           lambda: figures.genome_position_figure(summary, bands))
 
         matrix = observation_matrix(variants, samples, pooled["depth_lookup"],
                                     settings["min_variant_depth"], pooled["position_table"])
@@ -467,15 +534,16 @@ def run_integrated_analysis(individual_data=None, mafft_path=None, reference_pat
     # Sprint 5 Phase 4: predicted coding consequences of the observed SNVs (optional annotation file).
     if pooled is not None or individual is not None:
         run_mutation_annotation(result, annotation_path, reference, pooled, individual, add_figure, note,
-                                labels.get("annotation"))
+                                labels.get("annotation"), annotation_model, settings.get("genetic_code"))
 
     if individual is not None and pooled is None and not individual["variants"].empty:
         summary = position_summary(None, individual["variants"], reference["Reference_ID"])
         result["tables"]["variant_positions.csv"] = summary
+        bands, track = gene_track(summary, annotation_model, reference["Reference_ID"])
         add_figure(result, "genome_positions", "Variants along the reference genome",
                    "Variants carried by individual sequences at their reference positions. No "
-                   "pooled samples were supplied, so pooled occurrence is not shown.",
-                   lambda: figures.genome_position_figure(summary, annotation_ranges(summary)))
+                   "pooled samples were supplied, so pooled occurrence is not shown. " + track,
+                   lambda: figures.genome_position_figure(summary, bands))
 
     if individual is not None and individual["calls"] is not None:
         add_figure(result, "callable_positions", "Callable and uncallable reference positions",

@@ -273,6 +273,15 @@
               <input type="number" name="grouping_minimum_shared" value="{{ values.grouping_minimum_shared }}" min="2" max="20" step="1">
               <span class="help">Two mutations are compared only over samples where both have a known frequency, and only if at least this many are shared (2 to 20; 2 was chosen by the simulation study). Larger values compare fewer mutations.</span></label>
           </fieldset>
+          <fieldset>
+            <legend>Genetic code for coding regions that state none (Sprint 5 annotation)</legend>
+            <label>Genetic code
+              <select name="genetic_code">
+                <option value="" {% if not values.genetic_code %}selected{% endif %}>Not confirmed (default): no amino-acid consequence for such coding regions</option>
+                {% for table_id, table_name in genetic_codes %}<option value="{{ table_id }}" {% if values.genetic_code == table_id|string %}selected{% endif %}>{{ table_id }} · {{ table_name }}</option>{% endfor %}
+              </select>
+              <span class="help">Used only for coding regions whose annotation states no translation table and has no protein sequence to check one against (typical for GFF3 files). A table stated in the annotation is always used as stated, and a GenBank protein sequence is checked against the standard code. The standard code is never assumed silently; choose it here only if you know it applies (for example 1 for SARS-CoV-2 and influenza, 4 for Mycoplasma, 11 for most bacteria).</span></label>
+          </fieldset>
         </div>
       </details>
     {% endmacro %}

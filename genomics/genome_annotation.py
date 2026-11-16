@@ -24,6 +24,18 @@ selenocysteine), parts out of genomic order (origin-spanning or
 trans-spliced), overlapping parts without a documented ribosomal slippage,
 inconsistent GFF3 phases, incomplete codons, internal stop codons, or a
 translation that disagrees with the record's own protein sequence.
+
+Genetic code (final-polish 1C)
+------------------------------
+The translation table of each CDS is never assumed silently. Its source is
+recorded in ``Translation_Table_Source``:
+
+- stated in the annotation (GenBank ``/transl_table``, GFF3 ``transl_table``);
+- not stated, but the standard code (table 1) reproduces the record's own
+  ``/translation`` exactly, which verifies it for that CDS;
+- confirmed by the user (``genetic_code`` setting) for CDS that state none;
+- otherwise not verified: the CDS is marked unsupported and no amino-acid
+  consequence is predicted for it.
 """
 
 import hashlib
@@ -42,6 +54,14 @@ from genomics.references import split_reference_version
 GENBANK_FORMAT = "GenBank flat file"
 GFF3_FORMAT = "GFF3"
 SUPPORTED = "Supported"
+TABLE_STATED = "Stated in the annotation"
+TABLE_NOT_STATED = "Not stated in the annotation"
+TABLE_VERIFIED = "Not stated; the standard code (table 1) reproduces the record's own protein sequence"
+TABLE_CONFIRMED = "Confirmed by the user (Advanced settings: genetic code)"
+TABLE_UNVERIFIED_DETAIL = (
+    "The annotation states no genetic code (transl_table) and has no protein sequence to check one against, "
+    "so amino-acid consequences are not predicted for this coding region. If the organism's genetic code is "
+    "known, choose it under Advanced settings ('Genetic code for coding regions that state none').")
 UNSUPPORTED = "Unsupported"
 NUCLEOTIDES = set("ACGT")
 COMPLEMENT = str.maketrans("ACGTRYKMSWBDHVN", "TGCAYRMKSWVHDBN")
@@ -54,7 +74,7 @@ PEPTIDE_TYPES = {"mat_peptide", "mature_protein_region_of_CDS", "sig_peptide", "
 SOURCE_COLUMNS = ["Reference_ID", "Accession", "Version", "Organism", "Segment", "Reference_Length",
                   "Sequence_Source", "Sequence_Check", "Gene", "Gene_ID", "Locus_Tag", "CDS_ID", "Product",
                   "Strand", "Parts_1_Based", "Phases", "Coding_Length", "Codons", "Translation_Table",
-                  "Structure", "Mature_Peptides", "Status", "Status_Detail", "Verification",
+                  "Translation_Table_Source", "Structure", "Mature_Peptides", "Status", "Status_Detail", "Verification",
                   "Annotation_Format", "Annotation_File"]
 
 
@@ -93,12 +113,41 @@ def new_record(reference_id, organism="", segment="", length=None, sequence=None
 def new_cds(reference_id, strand, parts, **values):
     cds = {"Reference_ID": reference_id, "Strand": strand, "Parts": parts, "Phases": [],
            "Gene": "", "Gene_ID": "", "Locus_Tag": "", "CDS_ID": "", "Product": "",
-           "Translation_Table": 1, "Codon_Start": 1, "Exceptions": [], "Slippage": False,
+           "Translation_Table": 1, "Translation_Table_Source": TABLE_NOT_STATED, "Codon_Start": 1, "Exceptions": [], "Slippage": False,
            "Record_Translation": None, "Partial": False, "Pseudo": False, "Transl_Except": False,
            "Status": SUPPORTED, "Status_Detail": "", "Verification": "", "Coding_Sequence": None,
            "Start_Codon_Verified": False, "Mature_Peptides": []}
     cds.update(values)
     return cds
+
+
+def genetic_code_choices():
+    """(table id, NCBI name) for every translation table Biopython knows, for the settings menu."""
+
+    return [(table_id, table.names[0]) for table_id, table in sorted(unambiguous_dna_by_id.items())]
+
+
+def parse_genetic_code(text):
+    """The user's confirmed genetic code: None when not confirmed, else a known NCBI table id."""
+
+    text = str(text or "").strip()
+    if not text:
+        return None
+    if not text.isdigit() or int(text) not in unambiguous_dna_by_id:
+        raise ValueError("Choose a genetic code from the list (an NCBI translation table), or leave it as "
+                         "'Not confirmed'.")
+    return int(text)
+
+
+def translation_table(stated):
+    """Translation_Table and its source from the annotation's own value ('' when absent)."""
+
+    text = str(stated or "").strip()
+    if text.isdigit():
+        return {"Translation_Table": int(text), "Translation_Table_Source": f"{TABLE_STATED} (transl_table={text})"}
+    if text:  # present but unreadable: keep it visible; structure_problem refuses unknown tables
+        return {"Translation_Table": -1, "Translation_Table_Source": f"{TABLE_STATED} (unreadable value '{text[:20]}')"}
+    return {"Translation_Table": 1, "Translation_Table_Source": TABLE_NOT_STATED}
 
 
 def gene_id_from(xrefs):
@@ -163,7 +212,7 @@ def load_genbank(path):
                     reference_id, strand, parts, Gene=qualifier(feature, "gene"),
                     Gene_ID=gene_id_from(xrefs), Locus_Tag=qualifier(feature, "locus_tag"),
                     CDS_ID=qualifier(feature, "protein_id"), Product=qualifier(feature, "product"),
-                    Translation_Table=int(qualifier(feature, "transl_table", "1") or 1),
+                    **translation_table(qualifier(feature, "transl_table")),
                     Codon_Start=int(qualifier(feature, "codon_start", "1") or 1),
                     Exceptions=[value for value in exceptions if value.casefold() != SLIPPAGE],
                     Slippage=slippage, Record_Translation=qualifier(feature, "translation") or None,
@@ -296,7 +345,7 @@ def load_gff3(path):
                       Locus_Tag=attrs.get("locus_tag") or parent.get("locus_tag", ""),
                       CDS_ID=attrs.get("protein_id") or attrs.get("ID", "").removeprefix("cds-"),
                       Product=attrs.get("product", ""),
-                      Translation_Table=int(attrs.get("transl_table", "1") or 1),
+                      **translation_table(attrs.get("transl_table", "")),
                       Codon_Start=(phases[0] + 1) if phases and phases[0] is not None else 1,
                       Exceptions=[value for value in exceptions if value.casefold() != SLIPPAGE],
                       Slippage=any(value.casefold() == SLIPPAGE for value in exceptions),
@@ -438,6 +487,9 @@ def verify_cds(cds, record):
     if problem:
         mark(cds, problem)
         return
+    if cds["Translation_Table_Source"] == TABLE_NOT_STATED and not cds["Record_Translation"]:
+        mark(cds, TABLE_UNVERIFIED_DETAIL)
+        return
     coding = build_coding_sequence(cds, record["Sequence"])
     table = cds["Translation_Table"]
     codon_table = unambiguous_dna_by_id[table]
@@ -468,6 +520,8 @@ def verify_cds(cds, record):
             return
         cds["Verification"] = ("Translation of the reference coding sequence matches the record's /translation "
                                f"({len(expected)} amino acids)")
+        if cds["Translation_Table_Source"] == TABLE_NOT_STATED:
+            cds["Translation_Table_Source"] = TABLE_VERIFIED
     else:
         cds["Verification"] = ("Internal checks only (GFF3 has no protein sequence): whole codons, one terminal "
                                "stop, no internal stop" + (", start codon present" if cds["Start_Codon_Verified"]
@@ -522,12 +576,32 @@ def peptide_span(cds, parts):
     return first // 3 + 1, (last + 1) // 3
 
 
-def finalize_annotation(annotation, reference=None):
-    """Match the uploaded reference, verify every CDS, and map mature peptides."""
+def finalize_annotation(annotation, reference=None, genetic_code=None):
+    """Match the uploaded reference, verify every CDS, and map mature peptides.
+
+    `genetic_code` is the user's confirmed NCBI translation table for CDS whose annotation states none
+    (None: not confirmed). A table stated in the annotation is never overridden.
+    """
 
     attach_reference(annotation, reference)
+    if genetic_code is not None:
+        for cds in annotation["cds"]:
+            if cds["Translation_Table_Source"] == TABLE_NOT_STATED:
+                cds["Translation_Table"] = int(genetic_code)
+                cds["Translation_Table_Source"] = f"{TABLE_CONFIRMED} (table {int(genetic_code)})"
     for cds in annotation["cds"]:
         verify_cds(cds, annotation["records"].get(cds["Reference_ID"]))
+    unverified = sum(cds["Status_Detail"] == TABLE_UNVERIFIED_DETAIL for cds in annotation["cds"])
+    if unverified:
+        annotation["notes"].append(
+            f"{unverified} coding region(s) state no genetic code and carry no protein sequence to verify one, so "
+            "their amino-acid consequences are not predicted (the standard code is never assumed). Choose the "
+            "organism's genetic code under Advanced settings if it is known.")
+    confirmed = sorted({cds["Translation_Table"] for cds in annotation["cds"]
+                        if cds["Translation_Table_Source"].startswith(TABLE_CONFIRMED)})
+    if confirmed:
+        annotation["notes"].append("Genetic code confirmed by you for coding regions that state none: table "
+                                   + ", ".join(str(value) for value in confirmed) + ".")
     map_peptides(annotation)
     if not annotation["cds"]:
         annotation["notes"].append("The annotation file contains no coding (CDS) features, so every SNV is "
@@ -535,8 +609,8 @@ def finalize_annotation(annotation, reference=None):
     return annotation
 
 
-def load_annotation(path, reference=None):
-    """Load, match, and verify a GenBank or GFF3 annotation file."""
+def load_annotation(path, reference=None, genetic_code=None):
+    """Load, match, and verify a GenBank or GFF3 annotation file (see finalize_annotation)."""
 
     kind = detect_annotation_format(path)
     if kind == GENBANK_FORMAT:
@@ -546,7 +620,7 @@ def load_annotation(path, reference=None):
     else:
         raise ValueError("The annotation file must be a GenBank flat file (starting with LOCUS) or GFF3 "
                          "(starting with ##gff-version 3).")
-    return finalize_annotation(annotation, reference)
+    return finalize_annotation(annotation, reference, genetic_code)
 
 
 def source_table(annotation):
@@ -566,7 +640,8 @@ def source_table(annotation):
             "Phases": ",".join(str(value) for value in cds["Phases"]) if cds["Phases"] else
             f"codon_start={cds['Codon_Start']}", "Coding_Length": coding_length,
             "Codons": coding_length // 3 if coding_length % 3 == 0 else None,
-            "Translation_Table": cds["Translation_Table"], "Structure": structure_label(cds),
+            "Translation_Table": cds["Translation_Table"],
+            "Translation_Table_Source": cds["Translation_Table_Source"], "Structure": structure_label(cds),
             "Mature_Peptides": "; ".join(f"{item['Product']} ({item['First_Codon']}-{item['Last_Codon']})"
                                          for item in cds["Mature_Peptides"]),
             "Status": cds["Status"], "Status_Detail": cds["Status_Detail"], "Verification": cds["Verification"],

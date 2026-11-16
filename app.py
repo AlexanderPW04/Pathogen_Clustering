@@ -30,7 +30,7 @@ import pandas as pd
 from flask import Flask, abort, redirect, render_template, request, send_file, url_for
 from werkzeug.datastructures import FileStorage
 
-from compare_genetic_distances import read_pair_table
+from compare_genetic_distances import TEXT_LABEL_COLUMNS, read_pair_table
 from detect_potential_clusters import enough_overlap
 from geocode_locations import check_geonames
 from run_pipeline import output_paths, region_assignment_path, run_pipeline
@@ -51,6 +51,7 @@ from genomics.input_inspection import (
 )
 from genomics.integrated_analysis import run_integrated_analysis
 from genomics.import_options import DEPTH_DEFINITIONS, FREQUENCY_SCALES, POSITION_BASES, read_file_options
+from genomics.genome_annotation import genetic_code_choices, parse_genetic_code
 from genomics.mapping_profiles import apply_profile, profile_json, read_profile
 from genomics.report_exports import MIMETYPES as REPORT_MIMETYPES, SUMMARY_NAME, build_from_stored
 from genomics.metadata_matching import RESOLUTIONS
@@ -215,6 +216,7 @@ EXAMPLE_DOWNLOADS.update({name: EXAMPLE_FOLDER / name
 EXAMPLE_DOWNLOADS["NC_045512.2.gb"] = EXAMPLE_FOLDER / "annotation" / "NC_045512.2.gb"
 RESULT_DOWNLOADS = {}  # Short-lived integrated-result files; no database.
 ANALYSIS_SLOT = BoundedSemaphore(1)
+GENETIC_CODES = genetic_code_choices()  # NCBI translation tables for the settings menu
 OUT_OF_MEMORY = ("The uploaded dataset exceeds the available memory for this server, so the analysis "
                  "stopped. No results were changed or removed to make it fit. Run it on a local computer "
                  "(see the README), or upload a smaller study.")
@@ -251,6 +253,7 @@ def default_values(form):
         "overdispersion_rho_values": form.get("overdispersion_rho_values", DEFAULT_RHO_TEXT),
         "grouping_mode": form.get("grouping_mode", PROFILES_MODE),
         "grouping_minimum_shared": form.get("grouping_minimum_shared", DEFAULT_MINIMUM_SHARED_TEXT),
+        "genetic_code": str(form.get("genetic_code", "")).strip()[:3],
     }
 
 
@@ -764,10 +767,10 @@ def run_relationship_analysis(fasta_path, metadata_path, thresholds, complete_ge
     try:
         related_pairs = read_pair_table(related_path)
         enriched_pairs = read_pair_table(enriched_path)
-        membership = pd.read_csv(membership_path, converters={"Sample_ID": str})
+        membership = pd.read_csv(membership_path, converters={name: str for name in TEXT_LABEL_COLUMNS})
         assignments = pd.read_csv(
             region_assignment_path(metadata_path),
-            converters={"Sample_ID": str},
+            converters={name: str for name in TEXT_LABEL_COLUMNS},
         )
     except Exception:
         app.logger.exception("Could not read pipeline results")
@@ -897,6 +900,7 @@ def check_settings(values):
         parse_rho_values(values["overdispersion_rho_values"])
         parse_grouping_mode(values["grouping_mode"])
         parse_minimum_shared(values["grouping_minimum_shared"])
+        parse_genetic_code(values["genetic_code"])
     except ValueError as problem:
         return None, None, str(problem)
     return thresholds, date_window, None
@@ -1038,7 +1042,8 @@ def run_genomic_analyses(paths, names, values, thresholds, date_window, temporar
                       "date_order": values["pooled_date_order"],
                       "overdispersion_rhos": parse_rho_values(values["overdispersion_rho_values"]),
                       "grouping_mode": parse_grouping_mode(values["grouping_mode"]),
-                      "grouping_minimum_shared": parse_minimum_shared(values["grouping_minimum_shared"])},
+                      "grouping_minimum_shared": parse_minimum_shared(values["grouping_minimum_shared"]),
+                      "genetic_code": parse_genetic_code(values["genetic_code"])},
             input_labels=names,
             relationship=relationship_tables(relationship, thresholds) if completed else None,
             input_notes=page.get("input_notes"),
@@ -1095,7 +1100,8 @@ def shared_page_values():
             # Phase 4A review controls.
             "wide_layout": WIDE_LAYOUT, "base_count_layout": BASE_COUNT_LAYOUT,
             "frequency_scales": FREQUENCY_SCALES, "position_bases": POSITION_BASES,
-            "depth_definitions": DEPTH_DEFINITIONS, "resolutions": RESOLUTIONS}
+            "depth_definitions": DEPTH_DEFINITIONS, "resolutions": RESOLUTIONS,
+            "genetic_codes": GENETIC_CODES}
 
 
 def integrated_example_facts():
@@ -1406,7 +1412,8 @@ def review_choices(form, inspections):
                "conflict_resolution": (form.get("conflict_resolution")
                                        if form.get("conflict_resolution") in RESOLUTIONS else ""),
                "allow_unmatched_metadata": form.get("allow_unmatched_metadata") == "on",
-               "grouping_mode": form.get("grouping_mode", "profiles")}
+               "grouping_mode": form.get("grouping_mode", "profiles"),
+               "genetic_code": str(form.get("genetic_code", "")).strip()[:3]}
     return roles, choices, options
 
 

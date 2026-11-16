@@ -253,7 +253,7 @@ def annotated_mutation_table(variants, summary, evidence, series, individual, gr
 
 
 def run_mutation_annotation(result, annotation_path, reference, pooled, individual, add_figure, note,
-                            label=None):
+                            label=None, annotation=None, genetic_code=None):
     """Add the Phase 4 tables, one figure, and a view summary to `result`; returns the summary.
 
     `label` is the uploaded file name shown to the user (the server copy has a generic name).
@@ -264,7 +264,8 @@ def run_mutation_annotation(result, annotation_path, reference, pooled, individu
                 "message": MISSING_ANNOTATION, "limitations": LIMITATIONS}
         result["annotation"] = info
         return info
-    annotation = load_annotation(annotation_path, reference)
+    if annotation is None:  # the caller may already have loaded it (for the gene track)
+        annotation = load_annotation(annotation_path, reference, genetic_code)
     if label:
         annotation["source_file"] = label
     for text in annotation["notes"]:

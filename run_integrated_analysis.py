@@ -63,6 +63,9 @@ def parse_arguments(arguments=None):
                         help="Confirm all individual sequences are complete genomes of one pathogen")
     parser.add_argument("--qc-mode", choices=["paper", "exploratory"], default="paper")
     parser.add_argument("--date-window-days", type=float, default=14)
+    parser.add_argument("--genetic-code", type=int, default=None,
+                        help="NCBI translation table for annotation CDS that state none (default: not "
+                             "confirmed, so no amino-acid consequence is predicted for them)")
     parser.add_argument("--output-folder", type=Path, required=True)
     parser.add_argument("--reports", action="store_true",
                         help="Also write the consolidated XLSX workbook and the PDF report (Phase 4A)")
@@ -147,7 +150,8 @@ def main(arguments=None):
             pooled_metadata_path=inputs["pooled_metadata"], position_path=inputs["positions"],
             masked_sites_path=inputs["masked_sites"], signature_path=inputs["signatures"],
             annotation_path=inputs["annotation"],
-            settings={"qc_mode": options.qc_mode, "date_window_days": options.date_window_days},
+            settings={"qc_mode": options.qc_mode, "date_window_days": options.date_window_days,
+                      "genetic_code": options.genetic_code},
             input_labels={key: Path(path).name for key, path in supplied.items()},
             relationship=relationship,
         )

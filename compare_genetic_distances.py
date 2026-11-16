@@ -26,14 +26,16 @@ RESULT_COLUMNS = [
 ]
 
 
+# Text columns kept exactly as written. Plain read_csv would turn IDs such as "001"
+# into 1 and the text "NA" (for example the influenza neuraminidase segment or gene)
+# into a missing value.
+TEXT_LABEL_COLUMNS = ["Sample_ID", "Sample_ID_1", "Sample_ID_2", "Pathogen", "Gene_Segment"]
+
+
 def read_pair_table(path):
-    """Read a pairwise CSV without changing sample IDs.
+    """Read a pairwise CSV without changing sample IDs, pathogen names, or segment/gene labels."""
 
-    Plain read_csv would turn IDs such as "001" into 1 and "NA" into a missing
-    value, so the IDs would no longer match the metadata.
-    """
-
-    return pd.read_csv(path, converters={"Sample_ID_1": str, "Sample_ID_2": str})
+    return pd.read_csv(path, converters={name: str for name in TEXT_LABEL_COLUMNS})
 
 
 def compare_sequences(sequence_1, sequence_2):
