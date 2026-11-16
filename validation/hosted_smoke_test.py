@@ -20,6 +20,7 @@ request at a time, except the deliberate two-request busy-server check.
 
 import argparse
 import hashlib
+import html
 import io
 import json
 import re
@@ -96,8 +97,8 @@ def form_fields(page, action="/review"):
 
 
 def words(page):
-    return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", re.sub(r"<(script|style)[^>]*>.*?</\1>", " ", page,
-                                                              flags=re.S)))
+    text = re.sub(r"<[^>]+>", " ", re.sub(r"<(script|style)[^>]*>.*?</\1>", " ", page, flags=re.S))
+    return re.sub(r"\s+", " ", html.unescape(text))
 
 
 class Site:
