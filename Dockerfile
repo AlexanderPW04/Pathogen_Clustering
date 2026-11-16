@@ -1,14 +1,17 @@
 FROM python:3.11-slim-bookworm
 
-# One numerical thread on a 0.1-CPU instance, fewer malloc arenas, and the largest
-# variant-by-sample analysis a 512 MB instance can finish (see genomics/input_inspection.py).
+# One numerical thread on a 0.1-CPU instance, fewer malloc arenas, the largest
+# variant-by-sample analysis a 512 MB instance can finish (see genomics/input_inspection.py),
+# and the largest uploaded table it reads safely: 1.5 million cells peaked at about 250 MB
+# in the comprehensive audit, 4 million at 440-530 MB (genomics/excel_tables.py, file_formats.py).
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     OPENBLAS_NUM_THREADS=1 \
     OMP_NUM_THREADS=1 \
     MALLOC_ARENA_MAX=2 \
     MPLCONFIGDIR=/tmp/matplotlib \
-    MAX_OBSERVATION_CELLS=700000
+    MAX_OBSERVATION_CELLS=700000 \
+    MAX_WORKSHEET_CELLS=1500000
 
 WORKDIR /app
 

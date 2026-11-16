@@ -12,6 +12,7 @@ import matplotlib
 matplotlib.use("Agg")
 
 from matplotlib.cm import ScalarMappable  # noqa: E402
+from matplotlib.collections import PatchCollection  # noqa: E402
 from matplotlib.colors import LinearSegmentedColormap  # noqa: E402
 from matplotlib.dates import AutoDateLocator, ConciseDateFormatter, date2num, num2date  # noqa: E402
 from matplotlib.figure import Figure  # noqa: E402
@@ -225,18 +226,25 @@ def trajectory_figure(matrix, variant_keys):
     style_axis(axis)
     locations = sorted(matrix["Location_Name"].astype(str).unique())
     styles = ["-", "--", ":", "-."]
+    matrix = matrix[matrix["Collection_Date"].notna()]  # undated samples cannot be placed in time
+    known = (matrix["Callable_Frequency"] if "Callable_Frequency" in matrix
+             else matrix["Alt_Frequency"].where(matrix["Status"].eq(VARIANT_OBSERVED)))
     for index, key in enumerate(variant_keys):
         color = CATEGORICAL[index % len(CATEGORICAL)]
         rows = matrix[matrix["Variant_Key"].eq(key)]
         for location_index, location in enumerate(locations):
             site = rows[rows["Location_Name"].astype(str).eq(location)].sort_values("Collection_Date")
-            reported = site[site["Status"].eq(VARIANT_OBSERVED)]
-            if not reported.empty:
-                axis.plot(reported["Collection_Date"], reported["Alt_Frequency"], color=color,
+            values = known[site.index]
+            measured = site[values.notna()]
+            if not measured.empty:
+                axis.plot(measured["Collection_Date"], values[measured.index], color=color,
                           linestyle=styles[location_index % len(styles)], linewidth=2,
                           marker=MARKERS[location_index % len(MARKERS)], markersize=8,
                           markeredgecolor=SURFACE)
-            not_reported = site[site["Status"].astype(str).str.startswith("Adequate")]
+            counted = measured[~measured["Status"].eq(VARIANT_OBSERVED)]
+            axis.scatter(counted["Collection_Date"], values[counted.index], s=60, facecolor=SURFACE,
+                         edgecolor=color, linewidth=1.6, zorder=3)
+            not_reported = site[site["Status"].astype(str).str.startswith("Adequate") & values.isna()]
             axis.scatter(not_reported["Collection_Date"], [-0.08] * len(not_reported), s=40,
                          facecolor="none", edgecolor=color, linewidth=1.5)
             uncertain = site[~site["Status"].eq(VARIANT_OBSERVED)
@@ -247,13 +255,13 @@ def trajectory_figure(matrix, variant_keys):
     axis.axhline(0, color=MUTED_TEXT, linewidth=0.8)
     axis.set_ylim(-0.22, 1.02)
     axis.set_yticks([0, 0.25, 0.5, 0.75, 1.0])
-    axis.text(1.0, -0.08, " not reported, adequate depth", transform=axis.get_yaxis_transform(),
+    axis.text(1.0, -0.08, " not reported, adequate depth, no base counts", transform=axis.get_yaxis_transform(),
               va="center", fontsize=7, color=MUTED_TEXT)
     axis.text(1.0, -0.17, " low/zero/unknown coverage or QC-excluded", transform=axis.get_yaxis_transform(),
               va="center", fontsize=7, color=MUTED_TEXT)
     date_axis(axis)
-    axis.set_ylabel("Reported alternative-allele frequency")
-    axis.set_title("Reported variant frequencies over time (gray strip: no frequency measured)",
+    axis.set_ylabel("Alternative-allele frequency")
+    axis.set_title("Known variant frequencies over time (gray strip: frequency not known)",
                    fontsize=10)
     handles = [Line2D([], [], color=CATEGORICAL[index % len(CATEGORICAL)], linewidth=2, label=key)
                for index, key in enumerate(variant_keys)]
@@ -427,8 +435,10 @@ def shared_timeline_figure(comparison, individual_variants, pooled_variants):
     axis = figure.subplots()
     style_axis(axis)
     for row, key in enumerate(keys):
-        people = individual_variants[individual_variants["Variant_Key"].eq(key)]
-        pools = pooled_variants[pooled_variants["Variant_Key"].eq(key)]
+        # Undated observations cannot be placed on a time axis (audit S3-04).
+        people = individual_variants[individual_variants["Variant_Key"].eq(key)
+                                     & individual_variants["Collection_Date"].notna()]
+        pools = pooled_variants[pooled_variants["Variant_Key"].eq(key) & pooled_variants["Collection_Date"].notna()]
         axis.scatter(people["Collection_Date"], [row + 0.15] * len(people), marker="^", s=70,
                      color=CATEGORICAL[2], edgecolor=SURFACE, linewidth=1.2, zorder=3)
         if not pools.empty:
@@ -721,33 +731,38 @@ def sampling_timeline_figure(samples):
 
 
 def frequency_change_figure(trends, limit=15):
-    """First versus last reported frequency for variants reported twice or more at one site."""
+    """First versus last callable frequency for variants with two or more at one site.
 
-    data = trends[trends["Change_In_Reported_Frequency"].notna()].copy()
-    data["Size"] = data["Change_In_Reported_Frequency"].abs()
+    Callable values are reported frequencies plus base-count values at
+    adequately covered unreported positions (0 when no alternative reads).
+    """
+
+    data = trends[trends["Change_In_Callable_Frequency"].notna()].copy()
+    data["Size"] = data["Change_In_Callable_Frequency"].abs()
     data = data.sort_values(["Size", "Variant_Key"], ascending=[False, True]).head(limit)
-    data = data.sort_values("Change_In_Reported_Frequency").reset_index(drop=True)
+    data = data.sort_values("Change_In_Callable_Frequency").reset_index(drop=True)
     figure = new_figure(9.0, max(2.6, 0.36 * len(data) + 1.4))
     axis = figure.subplots()
     style_axis(axis)
     for index, row in data.iterrows():
-        rising = row["Change_In_Reported_Frequency"] > 0
+        rising = row["Change_In_Callable_Frequency"] > 0
         color = CATEGORICAL[1] if rising else CATEGORICAL[0]
-        axis.plot([row["First_Reported_Frequency"], row["Last_Reported_Frequency"]], [index, index],
+        axis.plot([row["First_Callable_Frequency"], row["Last_Callable_Frequency"]], [index, index],
                   color=color, linewidth=2)
-        axis.scatter(row["First_Reported_Frequency"], index, s=50, facecolor=SURFACE, edgecolor=color,
+        axis.scatter(row["First_Callable_Frequency"], index, s=50, facecolor=SURFACE, edgecolor=color,
                      linewidth=1.6, zorder=3)
-        axis.scatter(row["Last_Reported_Frequency"], index, s=50, color=color, edgecolor=SURFACE, zorder=3)
+        axis.scatter(row["Last_Callable_Frequency"], index, s=50, color=color, edgecolor=SURFACE, zorder=3)
     labels = []
     for row in data.to_dict("records"):
-        days = (row["Last_Reported_Date"] - row["First_Reported_Date"]).days
+        days = (row["Last_Callable_Date"] - row["First_Callable_Date"]).days
+        missing = "" if row["Complete_Series"] else ", some samples unknown"
         labels.append(f"{row['Variant_Key'].split(':', 1)[1]} at {row['Location_Name'] or 'no site'}"
-                      f" ({row['Reported']} reports over {days} days)")
+                      f" ({row['Callable_Dated']} known values over {days} days{missing})")
     axis.set_yticks(range(len(data)))
     axis.set_yticklabels(labels, fontsize=7)
     axis.set_xlim(-0.02, 1.02)
-    axis.set_xlabel("Reported alternative-allele frequency (open = first report, filled = last report)")
-    axis.set_title("Change between the first and last reported frequency at the same site", fontsize=9)
+    axis.set_xlabel("Alternative-allele frequency (open = first known value, filled = last known value)")
+    axis.set_title("Change between the first and last known frequency at the same site", fontsize=9)
     axis.legend(handles=[Patch(color=CATEGORICAL[1], label="Higher at the last report"),
                          Patch(color=CATEGORICAL[0], label="Lower at the last report")],
                 fontsize=7, frameon=False, loc="upper left", bbox_to_anchor=(1.0, 1.0))
@@ -1018,4 +1033,428 @@ def relationship_network_figure(sample_ids, strict_pairs, candidate_pairs):
                            Line2D([], [], color="#9a9994", linestyle="--", linewidth=1.4,
                                   label=f"Genetic + date only; geography unresolved ({len(candidate_pairs)})")],
                   fontsize=7, frameon=False, loc="outside lower center")
+    return to_png(figure)
+
+
+# --- Sprint 5: depth-aware variant analysis --------------------------------------------
+
+def vaf_time_series_figure(points, unknown, chosen):
+    """Small multiples: one mutation at one site per panel, VAF over time with 95% intervals.
+
+    Filled markers are detections, open markers on 0 are supported non-detections
+    (0 alternative reads in base counts); gray crosses below the axis are samples
+    whose value is unknown. Dashed bars come from reconstructed counts.
+    """
+
+    columns = 2 if len(chosen) > 1 else 1
+    rows = int(np.ceil(len(chosen) / columns))
+    figure = new_figure(9.0, 2.5 * rows + 0.6)
+    axes = np.atleast_1d(figure.subplots(rows, columns, squeeze=False)).ravel()
+    for axis, (variant, location), color in zip(axes, chosen, CATEGORICAL):
+        style_axis(axis)
+        data = points[points["Variant_Key"].eq(variant) & points["Location_Name"].eq(location)
+                      & points["Collection_Date"].notna()]
+        upper_values = [data["Wilson_Upper"].to_numpy(dtype=float), data["VAF"].to_numpy(dtype=float), [0.05]]
+        if "BetaBinomial_Upper" in data:
+            upper_values.append(data["BetaBinomial_Upper"].to_numpy(dtype=float))
+        top = float(np.nanmax(np.concatenate(upper_values)))
+        top = min(1.0, top * 1.15)
+        axis.plot(data["Collection_Date"], data["VAF"], color=color, linewidth=1.5, zorder=2)
+        for row in data.to_dict("records"):
+            detected = row["State"] == "Detected"
+            if pd.notna(row.get("BetaBinomial_Lower", np.nan)):
+                axis.vlines(row["Collection_Date"], row["BetaBinomial_Lower"], row["BetaBinomial_Upper"],
+                            color=color, linewidth=6, alpha=0.25, zorder=1)
+            if pd.notna(row["Wilson_Lower"]):
+                approximate = str(row["Interval_Status"]).startswith("Approximate")
+                axis.vlines(row["Collection_Date"], row["Wilson_Lower"], row["Wilson_Upper"], color=color,
+                            linewidth=1.6, linestyle="--" if approximate else "-", zorder=2)
+            axis.scatter([row["Collection_Date"]], [row["VAF"]], s=46, zorder=3, linewidth=1.5,
+                         color=color if detected else SURFACE, edgecolor=color)
+        gaps = unknown[unknown["Variant_Key"].eq(variant) & unknown["Location_Name"].eq(location)]
+        axis.scatter(gaps["Collection_Date"], [-0.08 * top] * len(gaps), marker="x", s=30,
+                     color=OTHER_GRAY, linewidth=1.2, zorder=3)
+        axis.axhline(0, color=MUTED_TEXT, linewidth=0.8)
+        axis.set_ylim(-0.14 * top, top)
+        date_axis(axis)
+        axis.set_title(f"{variant.split(':', 1)[1]} at {location or 'no site'}", fontsize=8)
+        axis.set_ylabel("VAF", fontsize=8)
+    for axis in axes[len(chosen):]:
+        axis.set_visible(False)
+    figure.legend(handles=[
+        Line2D([], [], marker="o", linestyle="", color=MUTED_TEXT, label="Detected"),
+        Line2D([], [], marker="o", linestyle="", markerfacecolor=SURFACE, color=MUTED_TEXT,
+               label="Supported non-detection or uncalled reads (base counts)"),
+        Line2D([], [], color=MUTED_TEXT, label="95% Wilson interval (read sampling only)"),
+        Line2D([], [], color=MUTED_TEXT, linestyle="--", label="Interval from reconstructed counts"),
+        Line2D([], [], marker="x", linestyle="", color=OTHER_GRAY, label="Unknown: no value (not 0)"),
+    ] + ([Line2D([], [], color=MUTED_TEXT, linewidth=6, alpha=0.25,
+                 label="Calibrated beta-binomial 95% interval (technical replicates)")]
+         if "BetaBinomial_Lower" in points and points["BetaBinomial_Lower"].notna().any() else []),
+        fontsize=7, frameon=False, loc="outside lower center", ncol=3)
+    return to_png(figure)
+
+
+def vaf_depth_figure(evidence, minimum_depth):
+    """Why depth matters: interval width falls with depth, for the same VAF.
+
+    Left: each observation's 95% interval width against its depth, with the
+    theoretical width for three VAFs. Right: VAF against depth, shaded by width.
+    """
+
+    data = evidence[evidence["Wilson_Lower"].notna() & evidence["Counted_Once"]].copy()
+    data["Depth"] = data["Total_Depth"].astype(float)
+    figure = new_figure(10.0, 3.8)
+    left, right = figure.subplots(1, 2)
+    for axis in (left, right):
+        style_axis(axis)
+        axis.set_xscale("log")
+        axis.axvline(minimum_depth, color=MUTED_TEXT, linewidth=0.8, linestyle=":")
+    left.scatter(data["Depth"], data["Interval_Width"], s=8, color=OTHER_GRAY, alpha=0.5, linewidth=0,
+                 label="Observations")
+    grid = np.geomspace(max(1.0, data["Depth"].min() if len(data) else 10),
+                        max(20.0, data["Depth"].max() if len(data) else 1000), 120)
+    for vaf, color in zip([0.02, 0.2, 0.5], CATEGORICAL):
+        left.plot(grid, expected_width(vaf, grid), color=color, linewidth=1.8, label=f"Expected width, VAF = {vaf}")
+    left.set_xlabel("Total depth (reads, log scale)")
+    left.set_ylabel("95% interval width")
+    left.set_title("Interval width shrinks as depth grows", fontsize=9)
+    left.legend(fontsize=7, frameon=False)
+    widths = data["Interval_Width"]
+    bins = pd.cut(widths, [-np.inf, 0.02, 0.1, np.inf], labels=["width <= 0.02", "0.02-0.1", "> 0.1"])
+    for label, color in zip(bins.cat.categories, ["#0d366b", "#3987e5", "#cde2fb"]):
+        chosen = data[bins.eq(label)]
+        right.scatter(chosen["Depth"], chosen["VAF"], s=10, color=color, edgecolor=MUTED_TEXT,
+                      linewidth=0.2, label=str(label))
+    right.set_yscale("symlog", linthresh=0.01)
+    right.set_ylim(0, 1.05)
+    right.set_xlabel("Total depth (reads, log scale)")
+    right.set_ylabel("Observed VAF")
+    right.set_title(f"Observed VAF by depth (dotted line: {minimum_depth}x QC minimum)", fontsize=9)
+    right.legend(fontsize=7, frameon=False, loc="upper left", bbox_to_anchor=(1.0, 1.0),
+                 title="95% interval", title_fontsize=7)
+    return to_png(figure)
+
+
+def expected_width(vaf, depth):
+    from genomics.frequency_uncertainty import expected_interval_width  # local import keeps figures light
+    return expected_interval_width(vaf, depth)
+
+
+def depth_dependence_figure(table):
+    """The same VAF (0.20) at different depths: deeper sequencing, narrower interval."""
+
+    figure = new_figure(7.5, 0.5 * len(table) + 1.4)
+    axis = figure.subplots()
+    style_axis(axis)
+    for index, row in enumerate(table.to_dict("records")):
+        axis.hlines(index, row["Wilson_Lower"], row["Wilson_Upper"], color=CATEGORICAL[0], linewidth=3)
+        axis.scatter(row["VAF"], index, s=50, color=TEXT, zorder=3)
+        axis.text(row["Wilson_Upper"] + 0.01, index, f"{row['Wilson_Lower']:.3f} to {row['Wilson_Upper']:.3f}",
+                  va="center", fontsize=7, color=MUTED_TEXT)
+    axis.set_yticks(range(len(table)))
+    axis.set_yticklabels([f"{row['Alt_Reads']} of {row['Depth']} reads" for row in table.to_dict("records")],
+                         fontsize=8)
+    axis.set_xlim(0, 0.55)
+    axis.set_xlabel("Variant allele frequency (dot) and 95% Wilson interval (bar)")
+    axis.set_title("Same VAF, different depth: the interval narrows with more reads", fontsize=9)
+    return to_png(figure)
+
+
+def uncertainty_models_figure(evidence, scenarios, calibrated_rhos, reference_rho=None):
+    """Binomial versus beta-binomial interval width (Sprint 5 Phase 2).
+
+    Left: theoretical width at a frequency of 0.20 against depth for the
+    binomial (Wilson) interval and each beta-binomial rho shown. Right: the
+    uploaded observations, Wilson width against the overdispersion-aware
+    width (calibrated where available, otherwise the reference hypothetical
+    rho). Points above the diagonal are wider than read sampling alone implies.
+    """
+
+    from genomics.beta_binomial import expected_score_width, score_interval
+    from genomics.frequency_uncertainty import expected_interval_width
+
+    figure = new_figure(10.0, 3.9)
+    left, right = figure.subplots(1, 2)
+    for axis in (left, right):
+        style_axis(axis)
+    depths = np.unique(np.round(np.logspace(1, 4, 120)).astype(int))
+    left.plot(depths, expected_interval_width(0.2, depths), color=TEXT, linewidth=2,
+              label="Binomial (Wilson): read sampling only")
+    lines = [(rho, f"Calibrated rho {rho:.3g} (upper 95% bound)", "-") for rho in calibrated_rhos[:3]]
+    lines += [(rho, f"Hypothetical rho {rho:g}" if "Hypothetical" in source else f"Borrowed rho {rho:.3g}", "--")
+              for rho, source in scenarios[:4]
+              if not any(abs(rho - shown) < 1e-12 for shown in calibrated_rhos)]  # the same curve once
+    for (rho, label, style), color in zip(lines, CATEGORICAL):
+        left.plot(depths, expected_score_width(0.2, depths, rho), color=color, linewidth=1.8, linestyle=style,
+                  label=label)
+    left.set_xscale("log")
+    left.set_xlabel("Sequencing depth (reads, log scale)")
+    left.set_ylabel("Width of the 95% interval at VAF 0.20")
+    left.set_title("More reads narrow the binomial interval;\nlibrary variation sets a floor", fontsize=9)
+    left.legend(fontsize=7, frameon=False)
+
+    data = evidence[evidence["Counted_Once"] & evidence["Wilson_Lower"].notna()]
+    wilson_width = (data["Wilson_Upper"] - data["Wilson_Lower"]).to_numpy(dtype=float)
+    calibrated = data["BetaBinomial_Width"].notna().to_numpy() if "BetaBinomial_Width" in data else np.zeros(len(data), bool)
+    depth = data["Total_Depth"].astype(float).to_numpy()
+    if reference_rho is not None and (~calibrated).any():
+        lower, upper = score_interval(data["Alt_Read_Count"].astype(float).to_numpy()[~calibrated], depth[~calibrated],
+                                      reference_rho)
+        right.scatter(wilson_width[~calibrated], upper - lower, s=8, color=OTHER_GRAY, alpha=0.5, linewidth=0,
+                      rasterized=True, label=f"Not calibrated: hypothetical rho {reference_rho:g}")
+    if calibrated.any():
+        right.scatter(wilson_width[calibrated], data["BetaBinomial_Width"].to_numpy(dtype=float)[calibrated], s=16,
+                      color=CATEGORICAL[0], linewidth=0, label="Calibrated from technical replicates")
+    top = max(0.05, float(np.nanmax(np.r_[wilson_width, 0.05])))
+    right.plot([0, top], [0, top], color=MUTED_TEXT, linewidth=0.8, linestyle=":", label="Equal width")
+    right.set_xlabel("Binomial (Wilson) interval width")
+    right.set_ylabel("Overdispersion-aware interval width")
+    right.set_title("Uploaded observations", fontsize=9)
+    right.legend(fontsize=7, frameon=False, loc="upper left")
+    return to_png(figure)
+
+
+def replicate_concordance_figure(sites, calibration):
+    """Frequencies of the same allele in two technical replicates of one specimen."""
+
+    used = sites[sites["Used"]]
+    figure = new_figure(5.6, 4.6)
+    axis = figure.subplots()
+    style_axis(axis)
+    axis.plot([0, 1], [0, 1], color=MUTED_TEXT, linewidth=0.8, linestyle=":")
+    results = calibration.set_index("Specimen_ID")
+    for (specimen, group), color, marker in zip(used.groupby("Specimen_ID", sort=True), CATEGORICAL, MARKERS):
+        row = results.loc[specimen]
+        if pd.notna(row["Rho_Estimate"]):
+            label = (f"{specimen}: rho {row['Rho_Estimate']:.3g} (range {row['Rho_Lower_95']:.3g} to "
+                     f"{row['Rho_Upper_95']:.3g}), {len(group)} sites")
+        else:
+            label = f"{specimen}: not estimated ({len(group)} sites)"
+        axis.scatter(group["VAF_1"].astype(float), group["VAF_2"].astype(float), s=22, color=color, marker=marker,
+                     linewidth=0, alpha=0.85, label=label)
+    top = float(np.nanmax(np.r_[used["VAF_1"].astype(float), used["VAF_2"].astype(float), 0.1])) * 1.08
+    axis.set_xlim(0, min(1, top))
+    axis.set_ylim(0, min(1, top))
+    axis.set_xlabel("VAF in replicate 1")
+    axis.set_ylabel("VAF in replicate 2")
+    axis.set_title("Technical replicates of the same specimen\n(dotted line: perfect agreement)", fontsize=9)
+    axis.legend(fontsize=6.5, frameon=False, loc="upper left")
+    return to_png(figure)
+
+
+# ----------------------------------------------------------------------------
+# Sprint 5 Phase 3: exploratory mutation-frequency groups
+# ----------------------------------------------------------------------------
+
+def mutation_group_heatmap_figure(F, row_labels, row_groups, unit_labels):
+    """Known frequencies (blue) by mutation (rows, ordered by group) and unit (columns, by date).
+
+    Unknown cells are light gray with a hatch: they are not zeros.
+    """
+
+    rows, columns = F.shape
+    figure = new_figure(min(11.5, 3.2 + 0.32 * columns), min(13, 1.6 + 0.2 * rows))
+    axis = figure.subplots()
+    axis.set_facecolor(UNKNOWN_FILL)
+    # pcolormesh, not imshow: imshow resamples into full-canvas float buffers (~65 MB for 60 x 52 on mmc2).
+    image = axis.pcolormesh(np.arange(columns + 1) - 0.5, np.arange(rows + 1) - 0.5, np.ma.masked_invalid(F),
+                            cmap=BLUE_RAMP, vmin=0, vmax=1)
+    axis.set_xlim(-0.5, columns - 0.5)
+    axis.set_ylim(rows - 0.5, -0.5)  # first row at the top, as in a table
+    # One collection for every unknown cell (thousands of separate patches cost ~20 MB on mmc2).
+    unknown = [Rectangle((j - 0.5, i - 0.5), 1, 1) for i, j in zip(*np.nonzero(~np.isfinite(F)))]
+    if unknown:
+        axis.add_collection(PatchCollection(unknown, facecolor=UNKNOWN_FILL, edgecolor=GRID, hatch="///",
+                                            linewidth=0))
+    boundaries = [i for i in range(1, rows) if row_groups[i] != row_groups[i - 1]]
+    for boundary in boundaries:
+        axis.axhline(boundary - 0.5, color=TEXT, linewidth=1.2)
+    axis.set_yticks(range(rows))
+    axis.set_yticklabels([f"{group}  {label}" if group else f"—  {label}"
+                          for group, label in zip(row_groups, row_labels)], fontsize=6.5)
+    axis.set_xticks(range(columns))
+    axis.set_xticklabels(unit_labels, rotation=60, ha="right", fontsize=6.5)
+    axis.tick_params(colors=MUTED_TEXT, length=0)
+    for side in axis.spines.values():
+        side.set_visible(False)
+    bar = figure.colorbar(image, ax=axis, shrink=0.6, pad=0.01)
+    bar.set_label("Observed frequency (VAF)", fontsize=8)
+    bar.ax.tick_params(labelsize=7)
+    axis.set_title("Mutation frequencies by exploratory group (hatched gray = unknown, not 0)", fontsize=9,
+                   color=TEXT)
+    return to_png(figure)
+
+
+def group_trajectory_figure(trajectories, group_ids):
+    """Mean member frequency of each group over time, with the member range as a bar; one line style per site."""
+
+    figure = new_figure(7.6, 4.4)
+    axis = figure.subplots()
+    style_axis(axis)
+    sites = sorted(trajectories["Location_Name"].astype(str).unique())
+    styles = ["-", "--", ":", "-."]
+    dated = trajectories[trajectories["Collection_Date"].notna()].copy()
+    dated["Collection_Date"] = pd.to_datetime(dated["Collection_Date"])
+    for number, group_id in enumerate(group_ids):
+        color = CATEGORICAL[number % len(CATEGORICAL)]
+        rows = dated[dated["Group_ID"].eq(group_id)]
+        for site_number, site in enumerate(sites):
+            part = rows[rows["Location_Name"].astype(str).eq(site)].sort_values("Collection_Date")
+            if part.empty:
+                continue
+            axis.errorbar(part["Collection_Date"], part["Mean_Member_VAF"],
+                          yerr=[part["Mean_Member_VAF"] - part["Min_Member_VAF"],
+                                part["Max_Member_VAF"] - part["Mean_Member_VAF"]],
+                          color=color, linestyle=styles[site_number % len(styles)], marker=MARKERS[number],
+                          markersize=4, linewidth=1.3, capsize=2, elinewidth=0.8)
+    handles = [Line2D([], [], color=CATEGORICAL[n % len(CATEGORICAL)], marker=MARKERS[n], linewidth=1.3,
+                      label=f"Group {group_id}") for n, group_id in enumerate(group_ids)]
+    if len(sites) > 1:
+        handles += [Line2D([], [], color=MUTED_TEXT, linestyle=styles[n % len(styles)], label=site)
+                    for n, site in enumerate(sites[:len(styles)])]
+    axis.legend(handles=handles, fontsize=7, frameon=False, loc="upper left", bbox_to_anchor=(1.0, 1.0))
+    locator = AutoDateLocator()
+    axis.xaxis.set_major_locator(locator)
+    axis.xaxis.set_major_formatter(ConciseDateFormatter(locator))
+    axis.set_ylim(0, 1)
+    axis.set_ylabel("Mean frequency of the group's mutations")
+    axis.set_title("Exploratory groups over time (bars: lowest to highest member frequency)", fontsize=9)
+    return to_png(figure)
+
+
+def grouping_comparison_figure(depth_labels, ordinary_labels):
+    """How many mutations each pair of (depth-aware group, ordinary group) shares; '—' = ungrouped."""
+
+    rows = sorted(set(depth_labels), key=lambda v: (v == "—", len(v), v))
+    columns = sorted(set(ordinary_labels), key=lambda v: (v == "—", len(v), v))
+    table = np.zeros((len(rows), len(columns)), dtype=int)
+    for a, b in zip(depth_labels, ordinary_labels):
+        table[rows.index(a), columns.index(b)] += 1
+    figure = new_figure(min(10, max(6.0, 2.6 + 0.45 * len(columns))), min(9, max(3.0, 1.8 + 0.35 * len(rows))))
+    axis = figure.subplots()
+    image = axis.imshow(np.where(table > 0, table, np.nan), cmap=BLUE_RAMP, aspect="auto")
+    for i in range(len(rows)):
+        for j in range(len(columns)):
+            if table[i, j]:
+                axis.text(j, i, str(table[i, j]), ha="center", va="center", fontsize=7,
+                          color="white" if table[i, j] > table.max() / 2 else TEXT)
+    axis.set_xticks(range(len(columns)))
+    axis.set_xticklabels(columns, fontsize=7, rotation=45, ha="right")
+    axis.set_yticks(range(len(rows)))
+    axis.set_yticklabels(rows, fontsize=7)
+    axis.set_xlabel("Ordinary clustering group (depth ignored)")
+    axis.set_ylabel("Depth-aware group")
+    for side in axis.spines.values():
+        side.set_visible(False)
+    axis.tick_params(length=0, colors=MUTED_TEXT)
+    del image
+    axis.set_title("Mutations shared between the two methods' groups\n('—' = not grouped by that method)",
+                   fontsize=9)
+    return to_png(figure)
+
+
+ANNOTATION_COLORS = {
+    "Synonymous": CATEGORICAL[0], "Missense": CATEGORICAL[1], "Stop gained": CATEGORICAL[2],
+    "Stop lost": CATEGORICAL[3], "Stop retained": CATEGORICAL[4], "Start lost": CATEGORICAL[5],
+    "Differs between overlapping coding regions": CATEGORICAL[6], "Noncoding": OTHER_GRAY,
+    "Unsupported or ambiguous": LOW_COVERAGE_FILL, "Not annotated": UNKNOWN_FILL,
+}
+
+
+def cds_lanes(cds_rows):
+    """Lane number per CDS so that overlapping coding regions are drawn on separate lines."""
+
+    lanes, ends = [], []
+    for cds in sorted(cds_rows, key=lambda item: min(start for start, _ in item["Parts"])):
+        start = min(part[0] for part in cds["Parts"])
+        end = max(part[1] for part in cds["Parts"])
+        lane = next((index for index, last in enumerate(ends) if last < start), None)
+        if lane is None:
+            lane = len(ends)
+            ends.append(end)
+        else:
+            ends[lane] = end
+        lanes.append((cds, lane))
+    return lanes
+
+
+def mutation_annotation_figure(consequences, summary, cds_rows, reference_length):
+    """Top: SNV positions by predicted category over the CDS map. Bottom: SNVs per CDS by consequence."""
+
+    present = [name for name in ANNOTATION_COLORS if name in set(summary["Consequence_Category"])]
+    per_cds = consequences[consequences["CDS_ID"].ne("")]
+    labels = []
+    genes = [cds["Gene"] or cds["CDS_ID"] for cds in cds_rows]
+    for cds in cds_rows:
+        name = cds["Gene"] or cds["CDS_ID"]
+        labels.append(f"{name} ({cds['Product'][:28]})" if genes.count(name) > 1 and cds["Product"] else name)
+    bar_rows = len(cds_rows) + 1
+    figure = new_figure(10.5, 3.0 + 0.24 * len(present) + 0.26 * bar_rows)
+    grid = figure.add_gridspec(2, 1, height_ratios=[1.0 + 0.12 * len(present), 0.35 + 0.16 * bar_rows])
+    top, bottom = figure.add_subplot(grid[0]), figure.add_subplot(grid[1])
+    style_axis(top)
+    style_axis(bottom)
+
+    lanes = cds_lanes(cds_rows)
+    lane_count = max([lane for _, lane in lanes], default=-1) + 1
+    for cds, lane in lanes:
+        y = -1.0 - lane * 0.8
+        for start, end in cds["Parts"]:
+            top.add_patch(Rectangle((start, y - 0.28), end - start + 1, 0.56, facecolor="#dfe9f7",
+                                    edgecolor="#1c5cab", linewidth=0.6,
+                                    hatch="//" if cds["Status"] != "Supported" else None))
+        first = min(part[0] for part in cds["Parts"])
+        last = max(part[1] for part in cds["Parts"])
+        if (last - first) > 0.025 * reference_length:
+            name = cds["Gene"] or cds["CDS_ID"]
+            if genes.count(name) > 1 and cds["Product"]:
+                name = cds["Product"]
+            top.text((first + last) / 2, y, name + (" (- strand)" if cds["Strand"] == "-" else ""),
+                     ha="center", va="center", fontsize=7, color=TEXT)
+    for row, name in enumerate(present):
+        positions = summary.loc[summary["Consequence_Category"].eq(name), "Position"].astype(float)
+        top.scatter(positions, np.full(len(positions), row), marker="|", s=60, linewidths=1.0,
+                    color=ANNOTATION_COLORS[name] if name not in {"Unsupported or ambiguous", "Not annotated"}
+                    else MUTED_TEXT)
+    top.set_yticks(list(range(len(present))) + [-1.0 - lane * 0.8 for lane in range(lane_count)])
+    top.set_yticklabels([f"{name} ({int(summary['Consequence_Category'].eq(name).sum())})" for name in present]
+                        + ["Coding regions" if lane == 0 else "" for lane in range(lane_count)], fontsize=7.5)
+    top.set_ylim(-1.0 - (lane_count - 1) * 0.8 - 0.6, len(present) - 0.4)
+    top.set_xlim(0, reference_length)
+    top.set_xlabel("Reference position (1-based)")
+    top.set_title("Distinct SNVs along the reference by predicted consequence", fontsize=10, loc="left")
+    top.grid(False, axis="y")
+
+    categories = [name for name in ANNOTATION_COLORS if name not in {"Noncoding", "Differs between overlapping "
+                                                                     "coding regions", "Not annotated"}]
+    rows = []
+    for cds in cds_rows:
+        values = per_cds[per_cds["CDS_ID"].eq(cds["CDS_ID"]) & per_cds["Reference_ID"].eq(cds["Reference_ID"])]
+        counts = values["Consequence"].value_counts()
+        rows.append([int(counts.get(name, 0)) for name in categories])
+    noncoding = int(summary["Consequence_Category"].eq("Noncoding").sum())
+    labels.append("Outside coding regions")
+    rows.append([0] * len(categories))
+    y = np.arange(len(labels))[::-1]
+    left = np.zeros(len(labels))
+    for index, name in enumerate(categories):
+        values = np.array([row[index] for row in rows], dtype=float)
+        if values.any():
+            bottom.barh(y, values, left=left, color=ANNOTATION_COLORS[name], edgecolor=SURFACE, linewidth=1.0,
+                        height=0.7, label=name, hatch="//" if name == "Unsupported or ambiguous" else None)
+            left += values
+    if noncoding:
+        bottom.barh(y[-1], noncoding, color=ANNOTATION_COLORS["Noncoding"], edgecolor=SURFACE, height=0.7,
+                    label="Noncoding")
+        left[-1] = noncoding
+    for value, position in zip(left, y):
+        bottom.text(value, position, f" {int(value)}", va="center", fontsize=7, color=MUTED_TEXT)
+    bottom.set_yticks(y)
+    bottom.set_yticklabels(labels, fontsize=7.5)
+    bottom.set_xlim(0, max(left.max(), 1) * 1.12)
+    bottom.set_xlabel("Distinct SNVs (a base in two overlapping coding regions is counted in each)")
+    bottom.set_title("Predicted consequences per coding region", fontsize=10, loc="left")
+    bottom.legend(fontsize=7, frameon=False, loc="lower right", ncol=2)
+    bottom.grid(False, axis="y")
     return to_png(figure)

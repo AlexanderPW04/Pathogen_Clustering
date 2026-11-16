@@ -4,9 +4,17 @@ from pathlib import Path
 
 import pandas as pd
 
+from genomics.collection_dates import (
+    AUTOMATIC,
+    INVALID,
+    NOT_SUPPLIED,
+    date_warnings,
+    parse_collection_dates,
+)
 from genomics.column_detection import explain_snv_columns
 from genomics.excel_tables import read_sheet
 from genomics.file_formats import VCF_FORMAT, vcf_notes, vcf_to_snv_table
+from genomics.unified_schema import FREQUENCY_TOLERANCE
 
 
 # Supplementary Table 2 in Fontenele et al. (2021) uses these exact headers.
@@ -54,6 +62,7 @@ IVAR_COLUMNS = {
     "ALT_FREQ": "Alt_Frequency",
     "TOTAL_DP": "Read_Depth",
     "ALT_DP": "Alt_Depth",
+    "REF_DP": "Ref_Depth",
     "PVAL": "Source_Fisher_P",
     "PASS": "Source_Caller_Pass",
     "ALT_QUAL": "Source_Alt_Mean_Quality",
@@ -102,8 +111,25 @@ def read_table(path, sheet=None):
     raise ValueError("Use a processed SNV .xlsx, .csv, .tsv, or SNV .vcf file.")
 
 
-def load_processed_snvs(path, metadata_path=None):
-    """Return standardized SNV rows and visible data-quality warnings."""
+def significant_digits(text):
+    """Significant digits written in a number such as '0.0485437' (6) or '1' (1); None if not a number."""
+
+    text = str(text).strip().lower().lstrip("+-")
+    mantissa = text.split("e")[0]
+    if not mantissa or not all(c.isdigit() or c == "." for c in mantissa) or mantissa.count(".") > 1:
+        return None
+    digits = mantissa.replace(".", "").lstrip("0")
+    return len(digits) if digits else 1
+
+
+def load_processed_snvs(path, metadata_path=None, date_order=AUTOMATIC):
+    """Return standardized SNV rows and visible data-quality warnings.
+
+    Collection dates are read by `genomics.collection_dates`: ambiguous
+    day/month values are kept as text and not used unless `date_order` is
+    "day_first" or "month_first". The original text and a status are kept in
+    Collection_Date_Original and Collection_Date_Status.
+    """
 
     data = read_table(path)
     conversion_notes = list(data.attrs.get("vcf_notes", []))
@@ -134,7 +160,7 @@ def load_processed_snvs(path, metadata_path=None):
         data = data.rename(columns=PUBLISHED_ANNOTATIONS)
         data["Reference_Genome"] = "NC_045512.2"
         data["Location_Name"] = data["STATE"].astype(str).str.strip() + ": " + data["LOCATION"].astype(str).str.strip()
-        dates = pd.to_datetime(data["Collection_Date"], format="%d_%b_%Y", errors="coerce")
+        date_info = parse_collection_dates(data["Collection_Date"], fixed_format="%d_%b_%Y")
     elif is_ivar:
         input_format = IVAR_FORMAT
         data = data.rename(columns=IVAR_COLUMNS)
@@ -150,7 +176,7 @@ def load_processed_snvs(path, metadata_path=None):
         for column in ["Collection_Date", "Location_Name"]:
             if column not in data:
                 data[column] = ""
-        dates = pd.to_datetime(data["Collection_Date"].replace("", pd.NA), errors="coerce")
+        date_info = parse_collection_dates(data["Collection_Date"], date_order)
     else:
         input_format = STANDARD_FORMAT
         formats = set(data.get("Source_Input_Format", pd.Series(dtype=str)).fillna("").astype(str))
@@ -166,8 +192,8 @@ def load_processed_snvs(path, metadata_path=None):
             data["Collection_Date"] = ""
         if "Location_Name" not in data:
             data["Location_Name"] = ""
-        dates = pd.to_datetime(data["Collection_Date"].replace("", pd.NA), errors="coerce")
-    invalid_source_dates = data["Collection_Date"].fillna("").astype(str).str.strip().ne("") & dates.isna()
+        date_info = parse_collection_dates(data["Collection_Date"], date_order)
+    invalid_source_dates = date_info["Status"].eq(INVALID)
 
     if data.empty:
         raise ValueError("The processed SNV table has no records.")
@@ -207,22 +233,50 @@ def load_processed_snvs(path, metadata_path=None):
                 continue
             matched = data["Sample_ID"].map(metadata[column]).fillna("").astype(str).str.strip()
             if column == "Collection_Date":
-                matched_dates = pd.to_datetime(matched.replace("", pd.NA), errors="coerce")
-                bad = matched.ne("") & matched_dates.isna()
+                matched_info = parse_collection_dates(matched, date_order)
+                bad = matched_info["Status"].eq(INVALID)
                 if bad.any():
-                    errors.append(f"{bad.sum()} metadata collection date(s) are invalid.")
-                conflict = dates.notna() & matched_dates.notna() & dates.ne(matched_dates)
+                    example = matched[bad.to_numpy()].iloc[0]
+                    errors.append(f"{bad.sum()} record(s) get a metadata collection date that cannot be read "
+                                  f"as a date (for example '{example[:30]}'; a full date such as 2020-05-19 "
+                                  "is needed, and a missing year is never guessed).")
+                dates = date_info["Date"]
+                conflict = dates.notna() & matched_info["Date"].notna() & dates.ne(matched_info["Date"])
                 if conflict.any():
                     errors.append(f"{conflict.sum()} SNV date(s) conflict with metadata.")
-                dates = dates.fillna(matched_dates)
+                # The SNV table's own value wins; metadata fills only blank SNV dates.
+                use_metadata = date_info["Status"].eq(NOT_SUPPLIED) & matched_info["Status"].ne(NOT_SUPPLIED)
+                date_info.loc[use_metadata] = matched_info.loc[use_metadata]
             else:
                 conflict = data[column].ne("") & matched.ne("") & data[column].str.casefold().ne(matched.str.casefold())
                 if conflict.any():
                     errors.append(f"{conflict.sum()} SNV location(s) conflict with metadata.")
                 data[column] = data[column].where(data[column].ne(""), matched)
 
+    # Optional Specimen_ID (Sprint 5 Phase 2) and Library_ID (Phase 3): samples that
+    # share a Specimen_ID and have distinct Library_IDs are documented technical
+    # replicates (separately prepared libraries of one specimen). Metadata fills
+    # blank values; each sample must have one value of each.
+    for name in ["Specimen_ID", "Library_ID"]:
+        if metadata_path and name in metadata:
+            from_metadata = data["Sample_ID"].map(metadata[name]).fillna("").astype(str).str.strip()
+            if name in data:
+                own = data[name].fillna("").astype(str).str.strip()
+                if (own.ne("") & from_metadata.ne("") & own.ne(from_metadata)).any():
+                    errors.append(f"Some SNV {name} values conflict with metadata.")
+                data[name] = own.where(own.ne(""), from_metadata)
+            else:
+                data[name] = from_metadata
+        if name in data:
+            data[name] = data[name].fillna("").astype(str).str.strip()
+            several = data.groupby("Sample_ID")[name].nunique().gt(1)
+            if several.any():
+                errors.append(f"Each sample needs one {name}; these have several: "
+                              + ", ".join(several[several].index[:10]) + ".")
+
     if invalid_source_dates.any():
-        errors.append(f"{invalid_source_dates.sum()} collection date(s) are invalid.")
+        errors.append(f"{invalid_source_dates.sum()} collection date(s) are invalid"
+                      + where(invalid_source_dates, data["Collection_Date"].fillna("").astype(str)) + ".")
 
     for column in ["Sample_ID", "Reference_Genome", "Ref", "Alt"]:
         count = int(data[column].eq("").sum())
@@ -289,22 +343,30 @@ def load_processed_snvs(path, metadata_path=None):
         warnings.append(f"{int(zero.sum())} record(s) report a 0% frequency or 0 alternate reads; "
                         "they were set aside because they are not variant calls.")
         data, frequencies, depths = data.loc[~zero].copy(), frequencies[~zero], depths[~zero]
-        positions, dates = positions[~zero], dates[~zero]
+        positions, date_info = positions[~zero], date_info.loc[~zero]
         if alt_depths is not None:
             alt_depths = alt_depths[~zero]
 
-    # IMP-9: reported frequencies should agree with the read counts given.
+    # IMP-9 / audit S3-06: reported frequencies should agree with the read counts
+    # given. Both values are kept; each record's difference is in the variant
+    # table (Frequency_Check), and no value is overwritten.
     if alt_depths is not None:
         implied = alt_depths / depths
-        disagree = implied.notna() & (implied - frequencies).abs().gt(0.05)
+        disagree = implied.notna() & (implied - frequencies).abs().gt(FREQUENCY_TOLERANCE)
         if disagree.any():
             warnings.append(f"{int(disagree.sum())} record(s) report a frequency that differs by more "
-                            "than 0.05 from alternate reads / depth; the reported frequency is used.")
+                            f"than {FREQUENCY_TOLERANCE} from alternate reads / depth. Both values are kept; "
+                            "Sprint 3 analyses use the reported frequency, and the depth-aware analysis "
+                            "does not calculate an uncertainty interval for these records.")
 
     data["Position"] = positions.astype(int)
     data["Alt_Frequency"] = frequencies.astype(float)
     data["Read_Depth"] = depths.astype("Int64")
-    data["Collection_Date"] = dates
+    data["Collection_Date"] = date_info["Date"]
+    data["Collection_Date_Original"] = date_info["Original"]
+    data["Collection_Date_Status"] = date_info["Status"]
+    data["Frequency_Significant_Digits"] = pd.array(
+        [significant_digits(text) for text in data["Alt_Frequency"].astype(str)], dtype="Int64")
     for column in ["Collection_Date", "Location_Name"]:
         values = data[column].replace("", pd.NA) if column == "Location_Name" else data[column]
         conflicting_samples = values.groupby(data["Sample_ID"]).nunique(dropna=True).gt(1)
@@ -317,10 +379,13 @@ def load_processed_snvs(path, metadata_path=None):
     duplicate_count = int(data.duplicated(keys).sum())
     if duplicate_count:
         conflicting = int((data.groupby(keys)["Alt_Frequency"].nunique() > 1).sum())
-        warnings.append(f"{duplicate_count} repeated sample/reference/position/allele record(s) found; "
-                        "rows were retained and analyses use the first one"
-                        + (f" ({conflicting} of them report different frequencies)." if conflicting else "."))
-    missing_dates = int(data["Collection_Date"].isna().sum())
+        warnings.append(f"{duplicate_count} repeated sample/reference/position/allele record(s) found. "
+                        "A pooled sample has one frequency per allele and position, so each is counted "
+                        "once (the first row); all rows stay in the downloads with a Duplicate_Status"
+                        + (f" ({conflicting} report a different frequency and are flagged as conflicting)."
+                           if conflicting else "."))
+    warnings += date_warnings(date_info, data["Sample_ID"])
+    missing_dates = int(data["Collection_Date_Status"].eq(NOT_SUPPLIED).sum())
     missing_locations = int(data["Location_Name"].eq("").sum())
     if missing_dates:
         warnings.append(f"{missing_dates} record(s) lack a collection date.")
@@ -329,10 +394,23 @@ def load_processed_snvs(path, metadata_path=None):
 
     # Keep source-provided extras: alternate read counts and any column whose
     # name starts with Published_ (paper annotations) or Source_ (caller output).
-    extra_columns = []
+    extra_columns = ["Collection_Date_Original", "Collection_Date_Status", "Frequency_Significant_Digits"]
     if alt_depths is not None:
         data["Alt_Depth"] = alt_depths.astype("Int64")
         extra_columns.append("Alt_Depth")
+    if "Ref_Depth" in data:
+        raw_ref = data["Ref_Depth"].fillna("").astype(str).str.strip()
+        ref_depths = pd.to_numeric(raw_ref.replace("", pd.NA), errors="coerce")
+        bad_ref = (raw_ref.ne("") & ref_depths.isna()) | (
+            ref_depths.notna() & (ref_depths.lt(0) | ref_depths.ne(ref_depths.round())))
+        if bad_ref.any() or (ref_depths.notna() & depths.notna() & ref_depths.gt(depths)).any():
+            raise ValueError("Processed SNV validation failed: reference read counts (Ref_Depth) must be "
+                             "whole numbers no larger than the total read depth.")
+        data["Ref_Depth"] = ref_depths.astype("Int64")
+        extra_columns.append("Ref_Depth")
+    for name in ["Specimen_ID", "Library_ID"]:
+        if name in data:
+            extra_columns.append(name)
     for name in data.columns:
         if name.startswith(("Published_", "Source_")) and name not in extra_columns:
             extra_columns.append(name)

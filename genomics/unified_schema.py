@@ -28,6 +28,11 @@ FREQUENCY_CALL = "Allele frequency"
 
 NUCLEOTIDES = ["A", "C", "G", "T"]
 
+# Largest absolute difference between a reported pooled frequency and
+# alternate reads / depth that is treated as rounding or a slightly different
+# denominator (audit S3-06). Larger differences are flagged per record.
+FREQUENCY_TOLERANCE = 0.01
+
 SAMPLE_COLUMNS = [
     "Sample_ID",
     "Sample_Type",

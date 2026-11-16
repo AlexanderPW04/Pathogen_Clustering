@@ -27,7 +27,7 @@ def field(name, aliases, required=False, purpose=""):
 
 SAMPLE_ALIASES = ["sample", "sample_id", "sampleid", "sample name", "samplename", "sample code",
                   "sample_accession"]
-DATE_ALIASES = ["collection_date", "date", "sample_date", "sampling_date", "collection date",
+DATE_ALIASES = ["collection_date", "date", "dates", "sample_date", "sampling_date", "collection date",
                 "date_collected", "collected"]
 LOCATION_ALIASES = ["location_name", "location", "geo_location", "geographic_location",
                     "geo_loc_name", "site", "sampling_site", "site_name", "sampling_location"]
@@ -36,10 +36,34 @@ LOCATION_ALIASES = ["location_name", "location", "geo_location", "geographic_loc
 # column named "USA" with the US state ("SD"), which describe one hierarchy.
 COUNTRY_ALIASES = ["country", "country_name", "nation"]
 STATE_ALIASES = ["state", "province", "state_province", "admin1", "division", "usa"]
-LATITUDE_ALIASES = ["latitude", "lat"]
-LONGITUDE_ALIASES = ["longitude", "lon", "long", "lng"]
-REFERENCE_ALIASES = ["reference_genome", "reference", "reference_id", "ref_genome", "chrom",
-                     "contig", "region"]
+# Technical replicates (separate libraries of one specimen) share a Specimen_ID.
+SPECIMEN_ALIASES = ["specimen_id", "specimen", "specimenid", "biological_sample", "replicate_of",
+                    "replicate_group"]
+# Phase 3: a documented library (or technical-replicate) identifier per sample.
+# Without distinct Library_IDs, a shared Specimen_ID is an unverified replicate claim.
+LIBRARY_ALIASES = ["library_id", "library", "library_name", "libraryid", "library_prep_id",
+                   "replicate_id", "technical_replicate", "technical_replicate_id"]
+LATITUDE_ALIASES = ["latitude", "lat", "coordinates_lat", "coordinate_lat", "decimal_latitude"]
+LONGITUDE_ALIASES = ["longitude", "lon", "long", "lng", "coordinates_long", "coordinates_lon",
+                     "coordinate_long", "decimal_longitude"]
+# Phase 4A: the instrument or platform. A column named only "sequencing" is not
+# an alias: in Crits-Christoph et al. (2021) Table S1 it means enriched/unenriched.
+PLATFORM_ALIASES = ["sequencing_platform", "platform", "instrument", "instrument_platform",
+                    "instrument_model", "sequencer", "seq_platform"]
+# Audit P1-4: segment and chromosome columns name the sequence each record is on. They
+# are reference columns, so records on different segments are never put on one sequence.
+REFERENCE_ALIASES = ["reference_genome", "reference", "reference_id", "ref_genome", "chrom", "scaffold",
+                     "contig", "region", "chromosome", "chr", "seqid", "seq_id", "seqname", "segment"]
+SEQUENCE_COLUMN_NAMES = {"".join(c for c in alias if c.isalnum()) for alias in REFERENCE_ALIASES
+                         if alias not in {"reference", "reference_id", "reference_genome", "ref_genome"}}
+SEQUENCE_COLUMN_NAMES |= {"molecule", "replicon", "genomesegment", "segmentname", "segmentid"}
+# Phase 4A. "Site" is deliberately not a position alias: it usually names a sampling site.
+POSITION_ALIASES = ["position", "pos", "reference_position", "genome_position", "genomic_position",
+                    "nucleotide_position"]
+# "Coverage" is accepted as depth only for per-record values; genome-coverage
+# percentages have their own field and names.
+DEPTH_ALIASES = ["read_depth", "depth", "dp", "total_dp", "total_depth", "coverage", "position_coverage",
+                 "read_coverage", "base_coverage", "basecoverage"]
 
 # Field lists per file role. Individual metadata keeps the Sprint 2 names
 # (Accession is the identifier that must match the FASTA record IDs).
@@ -64,6 +88,10 @@ ROLE_FIELDS = {
     ],
     "pooled_metadata": [
         field("Sample_ID", SAMPLE_ALIASES, required=True, purpose="Joins metadata to variant records"),
+        field("Specimen_ID", SPECIMEN_ALIASES,
+              purpose="Technical replicates of one specimen (overdispersion calibration)"),
+        field("Library_ID", LIBRARY_ALIASES,
+              purpose="Separately prepared library of the specimen (documents technical replicates)"),
         field("Collection_Date", DATE_ALIASES, purpose="Temporal patterns"),
         field("Location_Name", LOCATION_ALIASES, purpose="Site grouping"),
         field("Latitude", LATITUDE_ALIASES, purpose="Geographic context"),
@@ -74,34 +102,50 @@ ROLE_FIELDS = {
               purpose="Paper coverage filter (>90% at 10x)"),
         field("Mean_Depth", ["mean_depth", "average_depth", "avg_depth", "mean_read_depth",
                              "mean_coverage_depth"], purpose="Depth-versus-SNV regression"),
+        field("Sequencing_Platform", PLATFORM_ALIASES, purpose="Context only (kept in the canonical sample table)"),
     ],
     "snv": [
         field("Sample_ID", SAMPLE_ALIASES, required=True, purpose="Which pooled sample"),
-        field("Reference_Genome", REFERENCE_ALIASES, required=True,
-              purpose="Reference coordinate system"),
-        field("Position", ["position", "pos", "reference_position"], required=True,
+        # Phase 4A: a table without a reference column can still be used once the user
+        # states the reference (checked later against the reference FASTA).
+        field("Reference_Genome", REFERENCE_ALIASES,
+              purpose="Reference coordinate system (or state it on the review page)"),
+        field("Position", POSITION_ALIASES, required=True,
               purpose="1-based reference position"),
         field("Ref", ["ref", "ref_base", "reference_base", "ref_allele", "reference_allele"],
               required=True, purpose="Reference base"),
         field("Alt", ["alt", "alt_base", "alternative", "alt_allele", "alternative_allele",
                       "variant_base"], required=True, purpose="Alternative base"),
         field("Alt_Frequency", ["alt_frequency", "af", "frequency", "freq", "alt_freq",
-                                "allele_frequency", "variant_frequency", "vaf"], required=True,
-              purpose="Variant-frequency analysis"),
-        field("Read_Depth", ["read_depth", "depth", "dp", "total_dp", "total_depth"],
-              required=True, purpose="Depth quality filter (column may have blanks)"),
-        field("Alt_Depth", ["alt_depth", "alt_dp", "alt_count", "alt_reads"],
+                                "allele_frequency", "variant_frequency", "vaf", "alt_allele_frequency"],
+              required=True, purpose="Variant-frequency analysis"),
+        # Phase 4A: depth is optional (frequency-only tables); blank is unknown, never 0.
+        field("Read_Depth", DEPTH_ALIASES,
+              purpose="Depth QC, count-based frequencies, and uncertainty (column may have blanks)"),
+        field("Alt_Depth", ["alt_depth", "alt_dp", "alt_count", "alt_reads", "alternative_reads",
+                            "alternate_reads", "alt_read_count", "alternative_read_count"],
               purpose="Alternate read counts"),
+        field("Ref_Depth", ["ref_depth", "ref_dp", "ref_count", "ref_reads", "reference_reads",
+                            "ref_read_count", "reference_read_count"],
+              purpose="Reference read counts"),
         field("Collection_Date", DATE_ALIASES, purpose="Temporal patterns"),
         field("Location_Name", LOCATION_ALIASES, purpose="Site grouping"),
+        field("Specimen_ID", SPECIMEN_ALIASES,
+              purpose="Technical replicates of one specimen (overdispersion calibration)"),
+        field("Library_ID", LIBRARY_ALIASES,
+              purpose="Separately prepared library of the specimen (documents technical replicates)"),
+        field("Latitude", LATITUDE_ALIASES, purpose="Site coordinates (moved to the sample metadata)"),
+        field("Longitude", LONGITUDE_ALIASES, purpose="Site coordinates (moved to the sample metadata)"),
     ],
     "positions": [
         field("Sample_ID", SAMPLE_ALIASES, required=True, purpose="Which pooled sample"),
-        field("Reference_ID", REFERENCE_ALIASES, required=True, purpose="Reference coordinate system"),
-        field("Position", ["position", "pos", "reference_position"], required=True,
+        field("Reference_ID", REFERENCE_ALIASES,
+              purpose="Reference coordinate system (or state it on the review page)"),
+        field("Position", POSITION_ALIASES, required=True,
               purpose="1-based reference position"),
-        field("Depth", ["depth", "read_depth", "dp", "total_dp", "total_depth"],
-              purpose="Coverage at unreported positions"),
+        field("Ref", ["ref", "ref_base", "reference_base", "ref_allele", "reference_allele"],
+              purpose="Reference base (checked against the reference FASTA)"),
+        field("Depth", DEPTH_ALIASES, purpose="Coverage at unreported positions"),
         field("A_Count", ["a", "a_count", "count_a", "a_reads"], purpose="Paper PCoA"),
         field("C_Count", ["c", "c_count", "count_c", "c_reads"], purpose="Paper PCoA"),
         field("G_Count", ["g", "g_count", "count_g", "g_reads"], purpose="Paper PCoA"),
@@ -229,8 +273,12 @@ def apply_mapping(table, matches):
     return table.rename(columns=renames)
 
 
-def value_warnings(table, matches):
-    """Check units and ranges that headers alone cannot settle."""
+def value_warnings(table, matches, frequency_scale=None):
+    """Check units and ranges that headers alone cannot settle.
+
+    With `frequency_scale` "percent" (the user's Phase 4A choice) the 0-1
+    frequency check is replaced by the 0-100 check in genomics.import_options.
+    """
 
     problems = []
     columns = {match["field"]: match["column"] for match in matches if match["status"] == "matched"}
@@ -246,12 +294,13 @@ def value_warnings(table, matches):
                             "(all values are 1 or less), but genome coverage must be a percentage "
                             "from 0 to 100. Convert it before uploading; it is not rescaled "
                             "automatically.")
-    if "Alt_Frequency" in columns:
+    if "Alt_Frequency" in columns and frequency_scale != "percent":
         values = numbers("Alt_Frequency")
         if len(values) and values.max() > 1:
-            problems.append(f"Column '{columns['Alt_Frequency']}' has values above 1, so it may be "
-                            "a percentage; alternative-allele frequencies must be from 0 to 1. "
-                            "Convert it before uploading; it is not rescaled automatically.")
+            problems.append(f"Column '{columns['Alt_Frequency']}' has values above 1 (largest {values.max():g}), "
+                            "so it may be a percentage; alternative-allele frequencies are read as 0 to 1. If the "
+                            "source documents percentages (0-100), choose 'Percentages' under 'How to read this "
+                            "file'; values are never rescaled without that choice.")
     for name, label in [("Position", "variant positions"), ("Alt_Frequency", "allele frequencies"),
                         ("Read_Depth", "read depths")]:
         if name in columns:

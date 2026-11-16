@@ -82,6 +82,8 @@
     th { background: var(--surface-alt); }
     .notes li { color: var(--ink-muted); }
     .unavailable { background: var(--surface-alt); border-left: 4px solid var(--ink-muted); padding: 0.5rem 0.75rem; }
+    .uncertainty-panel { border: 1px solid var(--surface-alt); border-left: 4px solid var(--ink-muted); padding: 0.5rem 0.9rem; margin: 0.75rem 0; }
+    .uncertainty-panel h3 { margin-top: 0.25rem; }
     .downloads { columns: 2 260px; }
     .section-downloads { font-size: 0.9rem; }
     .steps3 { display: flex; flex-wrap: wrap; gap: 0.4rem; list-style: none; margin: 0.6rem 0 1rem; padding: 0; }
@@ -110,6 +112,16 @@
     .badge.level { background: transparent; border: 1px solid currentColor; color: var(--ink-muted); font-weight: normal; }
     .badge.level.required { color: var(--error-ink); }
     .badge.needs { background: var(--error-bg); color: var(--error-ink); }
+    .badge.available { background: var(--good-bg); color: var(--good-ink); }
+    .downloads-bar { border-left: 6px solid var(--accent); }
+    .downloads-bar p { margin: 0.2rem 0; }
+    .badge.partially-available { background: var(--warn-bg); color: #6b4a00; }
+    .badge.experimental { background: var(--accent-soft); color: var(--accent); border: 1px dashed currentColor; }
+    details.read-file { border: 1px solid var(--border); border-radius: 8px; margin: 0.5rem 0; padding: 0.4rem 0.8rem; }
+    details.read-file fieldset { border: 0; padding: 0.4rem 0 0.2rem; }
+    .option-row { display: flex; flex-wrap: wrap; gap: 0.3rem 1rem; align-items: baseline; }
+    .option-label { font-weight: bold; min-width: 10rem; }
+    label.inline { display: inline-flex; gap: 0.3rem; align-items: baseline; font-weight: normal; }
     .swatch { border-radius: 3px; display: inline-block; height: 0.8rem; margin-right: 0.3rem; vertical-align: -0.05rem; width: 0.8rem; }
     .problems li { color: var(--error-ink); }
     .warnings li { color: #6b4a00; }
@@ -193,9 +205,10 @@
       <p class="lead">One analysis for two kinds of genomic evidence — <span class="swatch" style="background:var(--individual)"></span>individual sequences (Sprint 2) and <span class="swatch" style="background:var(--pooled)"></span>pooled sequencing results such as wastewater (Sprint 3) — connected on one reference genome, with optional AI metadata enrichment (Sprint 4). Results are screening signals; they do not confirm transmission, an outbreak, or the lineage of a mixed sample.</p>
       <ol class="steps" aria-label="Workflow steps">
         <li {% if step == 1 %}aria-current="step"{% endif %}>1 · Upload files</li>
-        <li {% if step == 2 %}aria-current="step"{% endif %}>2 · Review dataset</li>
-        <li {% if step == 4 %}aria-current="step"{% endif %}>3 · Metadata enrichment (Sprint 4, optional)</li>
-        <li {% if step == 3 %}aria-current="step"{% endif %}>4 · Results</li>
+        <li {% if step == 2 %}aria-current="step"{% endif %}>2 · Review detected data</li>
+        <li>3 · Review available analyses</li>
+        <li {% if step == 4 %}aria-current="step"{% endif %}>4 · Run · Metadata enrichment (Sprint 4, optional)</li>
+        <li {% if step == 3 %}aria-current="step"{% endif %}>5 · View and download results</li>
       </ol>
     </header>
 
@@ -235,6 +248,31 @@
             <label><span><input type="radio" name="qc_mode" value="exploratory" {% if values.qc_mode == 'exploratory' %}checked{% endif %}> Exploratory</span>
               <span class="help">The same checks are flagged but nothing is excluded.</span></label>
           </fieldset>
+          <fieldset>
+            <legend>Pooled-sample collection dates</legend>
+            <label><span><input type="radio" name="pooled_date_order" value="auto" {% if values.pooled_date_order not in ['day_first', 'month_first'] %}checked{% endif %}> Do not guess (default)</span>
+              <span class="help">YYYY-MM-DD, month names, and dates such as 13/04/2021 are read as written. A date such as 03/04/2021 is kept as text, flagged, and not used for time-based analyses.</span></label>
+            <label><span><input type="radio" name="pooled_date_order" value="day_first" {% if values.pooled_date_order == 'day_first' %}checked{% endif %}> Day first (DD/MM/YYYY)</span></label>
+            <label><span><input type="radio" name="pooled_date_order" value="month_first" {% if values.pooled_date_order == 'month_first' %}checked{% endif %}> Month first (MM/DD/YYYY)</span>
+              <span class="help">Choose an order only if you know how the file was written; a date that contradicts it is reported as invalid.</span></label>
+          </fieldset>
+          <fieldset>
+            <legend>Sequencing uncertainty (Sprint 5)</legend>
+            <label>Hypothetical overdispersion values (rho)
+              <input type="text" name="overdispersion_rho_values" value="{{ values.overdispersion_rho_values }}" maxlength="80" inputmode="decimal">
+              <span class="help">Up to 5 values from 0 to below 1, separated by commas; leave empty for none. These are sensitivity scenarios ("what if the libraries varied this much?"), never estimates. Overdispersion is estimated only from documented technical replicates: two samples with the same Specimen_ID, date, and location, each with its own distinct Library_ID.</span></label>
+          </fieldset>
+          <fieldset>
+            <legend>Exploratory mutation-frequency groups (Sprint 5 Phase 3)</legend>
+            <label><span><input type="radio" name="grouping_mode" value="profiles" {% if values.grouping_mode not in ['experimental', 'off'] %}checked{% endif %}> Profiles only (default)</span>
+              <span class="help">Builds each mutation's frequency profile across samples (unknown coverage stays unknown) and shows which mutations have enough data to compare. No groups are drawn, because the grouping method did not meet its validation criteria.</span></label>
+            <label><span><input type="radio" name="grouping_mode" value="experimental" {% if values.grouping_mode == 'experimental' %}checked{% endif %}> Also show experimental groups (not validated)</span>
+              <span class="help">Groups mutations whose frequencies agree within read-sampling uncertainty and vary together across samples. In simulation it still grouped some unrelated mutations; groups are never lineages.</span></label>
+            <label><span><input type="radio" name="grouping_mode" value="off" {% if values.grouping_mode == 'off' %}checked{% endif %}> Off</span></label>
+            <label>Minimum shared samples for comparing two mutations
+              <input type="number" name="grouping_minimum_shared" value="{{ values.grouping_minimum_shared }}" min="2" max="20" step="1">
+              <span class="help">Two mutations are compared only over samples where both have a known frequency, and only if at least this many are shared (2 to 20; 2 was chosen by the simulation study). Larger values compare fewer mutations.</span></label>
+          </fieldset>
         </div>
       </details>
     {% endmacro %}
@@ -261,8 +299,8 @@
             {% if mode_check.missing %}<p>For that choice these files were not found: {{ mode_check.missing|join(', ') }}. The analyses below will run with the files that were found; add the missing files with <em>Back to upload</em> if you need them.</p>{% endif %}
           </div>
         {% endif %}
-        <p class="note">Check what each file was recognized as. Change a role or choose a column wherever the evidence was not decisive; nothing is guessed silently. Press <em>Update review</em> after changes, then <em>Run analysis</em>.</p>
-        <form method="post" action="{{ url_for('review_upload') }}">
+        <p class="note">Check what each file was recognized as. Change a role or choose a column wherever the evidence was not decisive; nothing is guessed silently. Press <em>Update review</em> after changes, check <a href="#analysis-readiness">Step 3</a>, then <em>Run analysis</em>.</p>
+        <form method="post" action="{{ url_for('review_upload') }}" enctype="multipart/form-data">
           <input type="hidden" name="token" value="{{ token }}">
           <input type="hidden" name="intended_mode" value="{{ intended_mode }}">
           <h3>Recognized files</h3>
@@ -325,10 +363,13 @@
               <select name="sheet_{{ entry.index }}">{% for name in entry.info.sheets %}<option value="{{ name }}" {% if name == entry.info.sheet %}selected{% endif %}>{{ name }}</option>{% endfor %}</select>
               <span class="help">Press <em>Update review</em> after changing it.</span></label>
           {% endif %}{% if entry.info.preview %}
-            <details><summary>Preview of {{ entry.info.name }} ({{ entry.info.records }} rows{% if entry.info.columns|length > 10 %}; first 10 of {{ entry.info.columns|length }} columns{% endif %})</summary>
+            {% set source_columns = entry.info.source_columns or entry.info.columns|length %}
+            <details><summary>Preview of {{ entry.info.name }} ({{ entry.info.source_records or entry.info.records }} rows as uploaded{% if source_columns > 10 %}; first 10 of {{ source_columns }} columns{% endif %}{% if entry.info.source_records and entry.info.source_records != entry.info.records %}; {{ entry.info.records }} records after reading the layout{% endif %})</summary>
               <div class="scroll"><table><thead><tr>{% for name in entry.info.preview[0].keys() %}<th>{{ name }}</th>{% endfor %}</tr></thead>
                 <tbody>{% for row in entry.info.preview %}<tr>{% for value in row.values() %}<td>{{ value }}</td>{% endfor %}</tr>{% endfor %}</tbody></table></div></details>
           {% endif %}{% endfor %}
+
+          {% include "_review_import.html" %}
 
           {% if r.pathogen_needed is defined and r.pathogen_needed %}
             <label>Pathogen of all individual sequences
@@ -346,6 +387,7 @@
           {% if r.individual_ids %}<p class="help"><strong>Individual sample IDs:</strong> {{ r.individual_ids[:15]|join(', ') }}{% if r.individual_ids|length > 15 %}, …{% endif %}</p>{% endif %}
           {% if r.pooled_ids %}<p class="help"><strong>Pooled sample IDs:</strong> {{ r.pooled_ids[:15]|join(', ') }}{% if r.pooled_ids|length > 15 %}, …{% endif %}</p>{% endif %}
 
+          <details class="more" {% if r.warnings %}open{% endif %}><summary>Reference and metadata details</summary>
           {% if r.compatibility %}
             <h3>Reference compatibility</h3>
             <div class="scroll"><table><thead><tr><th>Source</th><th>Reference</th><th>How it is checked</th></tr></thead>
@@ -358,6 +400,7 @@
               <tbody>{% for row in r.completeness %}<tr><td>{{ row.Source }}</td><td>{{ row.Samples }}</td><td>{{ row.With_Collection_Date }}</td><td>{{ row.With_Location }}</td><td>{{ row.With_Coordinates }}</td><td>{{ row.With_Genome_Coverage }}</td></tr>{% endfor %}</tbody></table></div>
           {% endif %}
           {% if r.annotation_notes %}<ul class="notes">{% for item in r.annotation_notes %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
+          </details>
           {% if r.location_conflicts %}<h3>Location values to review</h3><ul class="warnings">{% for item in r.location_conflicts[:20] %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
 
           {% if r.readiness %}{% set rd = r.readiness %}
@@ -366,8 +409,10 @@
             {% if rd.blocking %}<p class="problems"><strong>Required information missing:</strong> {{ rd.blocking|join('; ') }}. The analysis cannot start without it; the fix is listed under "Required information to fix before running".</p>{% endif %}
             {% if rd.partial %}<p class="warnings"><strong>Required for one analysis:</strong> {{ rd.partial|join('; ') }}. Everything else can still run.</p>{% endif %}
             {% if not rd.blocking and not rd.partial %}<p class="stat"><strong>All required fields were found.</strong> You can run the analysis{% if rd.counts.Recommended or rd.counts.Optional %}; the gaps below limit only the calculations they name{% endif %}.</p>{% endif %}
+            <details class="more" {% if rd.blocking %}open{% endif %}><summary>Field-by-field check ({{ rd.rows|length }} fields)</summary>
             <div class="scroll"><table><thead><tr><th>Level</th><th>Field</th><th>Status</th><th>What was found</th><th>Used for</th>{% if enrich %}<th>Could Sprint 4 help?</th>{% endif %}</tr></thead>
               <tbody>{% for row in rd.rows %}<tr><td><span class="badge level {{ row.Level|lower }}">{{ row.Level }}</span></td><td>{{ row.Field }}{% if rd.mode == 'combined' %}<br><span class="help">{{ row.Source }}</span>{% endif %}</td><td><span class="badge {{ row.Tone }}">{{ row.Status }}</span></td><td>{{ row.Detail }}</td><td>{{ row.Used_For }}</td>{% if enrich %}<td>{% if row.Sprint4 %}{{ 'Possibly. ' if row.Sprint4_Possible }}{{ row.Sprint4 }}{% else %}—{% endif %}</td>{% endif %}</tr>{% endfor %}</tbody></table></div>
+            </details>
             {% if rd.kept_columns %}<p class="help"><strong>Other columns kept unchanged</strong> (carried along, not used in calculations): {{ rd.kept_columns[:20]|join(', ') }}{% if rd.kept_columns|length > 20 %}, …{% endif %}</p>{% endif %}
             {% if rd.consequences %}<h3>What the missing or imprecise information affects</h3><ul class="warnings">{% for item in rd.consequences %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
             {% if rd.enrichable and not enrich %}<p class="help">Optional Sprint 4 enrichment (below) could look in linked publications for: {{ rd.enrichable|join(', ') }}.</p>{% endif %}
@@ -376,9 +421,11 @@
           {% if r.warnings %}<h3>Missing optional information</h3><ul class="warnings">{% for item in r.warnings %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
           {% if r.problems %}<h3>Required information to fix before running</h3><ul class="problems">{% for item in r.problems %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
 
-          <h3>Analyses available with these files</h3>
+          {% include "_readiness_step.html" %}
+          <details class="more" {% if not r.analysis_readiness %}open{% endif %}><summary>Analyses available with these files (step-by-step plan by input file)</summary>
           <div class="scroll"><table><thead><tr><th>Analysis</th><th>Status</th><th>Needs</th><th>With these files</th></tr></thead>
             <tbody>{% for row in (r.readiness.analyses if r.readiness else r.analyses) %}<tr><td>{{ row.Analysis }}</td><td><span class="badge {{ row.Status|lower|replace(' ', '-') }}">{{ row.Status }}</span></td><td>{{ row.Needs }}</td><td>{{ row.Reason }}</td></tr>{% endfor %}</tbody></table></div>
+          </details>
           {% if r.readiness %}<p class="help">Shown for: {{ r.readiness.mode_label|lower }}. Analyses of other modes are left out when their files are absent. "Unavailable" stops only that analysis.</p>{% endif %}
 
           <h3>Sprint 4 · Metadata enrichment (optional)</h3>
@@ -402,7 +449,7 @@
             {% endif %}
           {% else %}<p class="help">Off: the analysis runs with your metadata as uploaded. Tick the box and press <em>Update review</em> to add the enrichment step.</p>{% endif %}
 
-          <h3>Step 3 · Run</h3>
+          <h3>Step 4 · Run analysis</h3>
           {{ settings_fields(values) }}
           <div class="button-row action-bar">
             <button type="submit" class="secondary">Update review</button>
@@ -556,12 +603,95 @@
       </div>
     {% endmacro %}
 
+    {% macro uncertainty_panel(u) %}
+      <div class="uncertainty-panel" id="sequencing-uncertainty">
+        <h3>Sequencing Uncertainty and Variant Frequency</h3>
+        <p>{{ u.explanation }}</p>
+        <p class="conclusion"><span class="badge {{ 'completed' if u.calibrated else 'limited' }}">{{ 'Empirically calibrated' if u.calibrated else 'Not calibrated' }}</span> {{ u.headline }}</p>
+        <div class="scroll"><table><caption>Uncertainty models compared (median over observations)</caption>
+          <thead><tr>{% for name in u.comparison.columns %}<th>{{ name }}</th>{% endfor %}</tr></thead>
+          <tbody>{{ table_rows(u.comparison.rows) }}</tbody></table></div>
+        {% if u.examples %}
+          <div class="scroll"><table><caption>Example observations: frequency, depth, and both intervals</caption>
+            <thead><tr>{% for name in u.examples[0].keys() %}<th>{{ name }}</th>{% endfor %}</tr></thead>
+            <tbody>{% for row in u.examples %}<tr>{% for value in row.values() %}<td>{{ value }}</td>{% endfor %}</tr>{% endfor %}</tbody></table></div>
+        {% endif %}
+        {% if u.reasons %}
+          <details class="more"><summary>Why some uncertainty results are unavailable ({{ u.reasons|length }})</summary>
+            <ul class="notes">{% for reason in u.reasons %}<li>{{ reason }}</li>{% endfor %}</ul></details>
+        {% endif %}
+      </div>
+    {% endmacro %}
+
+    {% macro grouping_panel(g) %}
+      <div class="uncertainty-panel grouping-panel" id="mutation-frequency-groups">
+        <h3>{{ g.title }}</h3>
+        <p>{{ g.explanation }}</p>
+        <p class="conclusion"><span class="badge {{ 'limited' if g.experimental else 'skipped' }}">{{ g.badge }}</span>
+          {% for reason in g.reasons %}{{ reason }} {% endfor %}</p>
+        {% if g.stats %}
+          <div class="summary-grid">{% for item in g.stats %}<p class="stat{% if not item.available %} na{% endif %}"><strong>{{ item.label }}:</strong> {{ item.value }}{% if item.detail %} <span class="detail">({{ item.detail }})</span>{% endif %}</p>{% endfor %}</div>
+        {% endif %}
+        {% if g.validation %}<p class="help"><strong>Validation:</strong> {{ g.validation }}</p>{% endif %}
+        {% if g.figures %}{{ show_figure(g.figures[0]) }}{% endif %}
+        {% if g.methods %}
+          <div class="scroll"><table><caption>Grouping methods in this run</caption>
+            <thead><tr>{% for name in g.methods.columns %}<th>{{ name }}</th>{% endfor %}</tr></thead>
+            <tbody>{{ table_rows(g.methods.rows) }}</tbody></table></div>
+        {% endif %}
+        {% if g.figures|length > 1 or g.summary_table or g.comparison or g.overlap %}
+          <details class="more"><summary>Group details, comparisons, and more figures</summary>
+            {% for item in g.figures[1:] %}{{ show_figure(item) }}{% endfor %}
+            {% if g.summary_table %}{{ show_table(g.summary_table) }}{% endif %}
+            {% if g.comparison %}
+              <div class="scroll"><table><caption>Agreement between methods and hypothetical rho scenarios</caption>
+                <thead><tr>{% for name in g.comparison.columns %}<th>{{ name }}</th>{% endfor %}</tr></thead>
+                <tbody>{{ table_rows(g.comparison.rows) }}</tbody></table></div>
+            {% endif %}
+            {% if g.overlap %}{{ show_table(g.overlap) }}{% endif %}
+          </details>
+        {% endif %}
+        <details class="more"><summary>Limitations of exploratory grouping ({{ g.limitations|length }})</summary>
+          <ul class="notes">{% for item in g.limitations %}<li>{{ item }}</li>{% endfor %}</ul></details>
+        {% if g.downloads and download_id %}<p class="section-downloads"><strong>Grouping downloads:</strong> {% for name in g.downloads %}<a href="{{ url_for('result_download', download_id=download_id, filename=name) }}">{{ name }}</a>{% if not loop.last %} · {% endif %}{% endfor %}</p>{% endif %}
+      </div>
+    {% endmacro %}
+
+    {% macro annotation_panel(a) %}
+      <div class="uncertainty-panel annotation-panel" id="mutation-annotation">
+        <h3>{{ a.title }}</h3>
+        <p>{{ a.explanation }}</p>
+        {% if not a.available %}
+          <p class="conclusion"><span class="badge skipped">Annotation not supplied</span> {{ a.message }}</p>
+        {% else %}
+          <p class="conclusion"><span class="badge completed">Predicted from the reference annotation</span> {{ a.source }}</p>
+          <div class="summary-grid">{% for item in a.stats %}<p class="stat{% if not item.available %} na{% endif %}"><strong>{{ item.label }}:</strong> {{ item.value }}{% if item.detail %} <span class="detail">({{ item.detail }})</span>{% endif %}</p>{% endfor %}</div>
+          <p class="help"><strong>Reading these results:</strong> a predicted amino-acid change describes the sequence only. It does not show an effect on transmissibility, severity, immune escape, drug resistance, or outbreak risk. Each mutation is predicted on its own; pooled reads do not show which mutations share a viral genome.</p>
+          {% if a.agreement %}<p class="help">{{ a.agreement }}</p>{% endif %}
+          {% if a.notes %}<ul class="notes">{% for item in a.notes %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
+          {% if a.figures %}{{ show_figure(a.figures[0]) }}{% endif %}
+          {% if a.table %}{{ show_table(a.table) }}{% endif %}
+          <details class="more"><summary>Technical details: codons, coding positions, and annotated coding regions</summary>
+            {% if a.details %}{{ show_table(a.details) }}{% endif %}
+            {% if a.sources %}{{ show_table(a.sources) }}{% endif %}
+          </details>
+        {% endif %}
+        <details class="more"><summary>Limitations of mutation annotation ({{ a.limitations|length }})</summary>
+          <ul class="notes">{% for item in a.limitations %}<li>{{ item }}</li>{% endfor %}</ul></details>
+        {% if a.downloads and download_id %}<p class="section-downloads"><strong>Annotation downloads:</strong> {% for name in a.downloads %}<a href="{{ url_for('result_download', download_id=download_id, filename=name) }}">{{ name }}</a>{% if not loop.last %} · {% endif %}{% endfor %}</p>{% endif %}
+      </div>
+    {% endmacro %}
+
     {% macro render_section(s) %}
       <section id="{{ s.id }}" class="result-section">
         {% if s.sprint %}<p class="sprint-tag">{{ s.sprint }}</p>{% endif %}
         <h2>{{ s.number }}. {{ s.title }}</h2>
         <p class="purpose">{{ s.purpose }}</p>
         {% if s.unavailable %}<p class="unavailable">{{ s.unavailable }}</p>{% endif %}
+        {% if s.id == 'depth-aware' and s.uncertainty %}{{ uncertainty_panel(s.uncertainty) }}{% endif %}
+        {% if s.id == 'depth-aware' and s.annotation %}{{ annotation_panel(s.annotation) }}{% endif %}
+        {% if s.id == 'depth-aware' and s.grouping %}{{ grouping_panel(s.grouping) }}{% endif %}
+        {% if s.messages %}<ul class="notes availability">{% for message in s.messages %}<li>{{ message }}</li>{% endfor %}</ul>{% endif %}
         {% if s.stats %}
           <div class="summary-grid">{% for item in s.stats %}<p class="stat{% if not item.available %} na{% endif %}"><strong>{{ item.label }}:</strong> {{ item.value }}{% if item.detail %} <span class="detail">({{ item.detail }})</span>{% endif %}</p>{% endfor %}</div>
         {% endif %}
@@ -680,6 +810,15 @@
           {% if enrichment_report %}<a href="#enrichment-report">Sprint 4 report</a>{% elif enrichment and is_literature_example %}<a href="#literature">Sprint 4 enrichment</a>{% endif %}
           <a href="#provenance">Provenance &amp; downloads</a>
         </nav>
+        {% if dashboard.report_downloads or dashboard.export_notes %}
+          <section class="downloads-bar" aria-label="Download results">
+            <p><strong>Download these results:</strong>
+              {% for name in dashboard.report_downloads %}<a class="button-link" href="{{ url_for('result_download', download_id=download_id, filename=name) }}">{{ 'Results workbook (XLSX)' if name.endswith('.xlsx') else 'Analysis report (PDF)' }}</a> {% endfor %}
+              <a href="#provenance">All CSV tables and PNG figures</a></p>
+            <p class="help">The workbook and the report are built from the same tables and figures as this page, so their numbers match. The CSV files keep every row.</p>
+            {% if dashboard.export_notes %}<ul class="warnings">{% for item in dashboard.export_notes %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
+          </section>
+        {% endif %}
         {% for s in dashboard.sections %}{{ render_section(s) }}{% endfor %}
       {% else %}
         <section id="relationships">
@@ -701,6 +840,18 @@
         <h2>Provenance and downloads</h2>
         {% if dashboard and dashboard.provenance %}
           <details><summary>Show the provenance record</summary>{{ show_table(dashboard.provenance) }}</details>
+        {% endif %}
+        {% if dashboard and dashboard.readiness %}
+          <details><summary>Analyses the data supported (decided in Step 3, before the run)</summary>
+            <div class="scroll"><table><thead><tr><th>Analysis</th><th>Status</th><th>Why</th></tr></thead>
+              <tbody>{% for row in dashboard.readiness %}<tr><td>{{ row.Analysis }}</td><td><span class="badge {{ row.Status|lower|replace(' ', '-') }}">{{ row.Status }}</span></td><td>{{ row.Reason }}</td></tr>{% endfor %}</tbody></table></div>
+          </details>
+        {% endif %}
+        {% if dashboard and dashboard.import_provenance %}
+          <details><summary>How each uploaded file was read (import provenance)</summary>{{ show_table(dashboard.import_provenance) }}</details>
+        {% endif %}
+        {% if dashboard and dashboard.matching %}
+          <details><summary>Sample metadata matching</summary>{{ show_table(dashboard.matching) }}</details>
         {% endif %}
         {% if downloads %}
           <p class="note">Result files are kept in this server's memory for up to 10 minutes (sooner if several newer analyses run); uploaded files were deleted after the analysis.</p>

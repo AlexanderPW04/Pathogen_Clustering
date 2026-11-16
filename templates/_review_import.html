@@ -1,0 +1,78 @@
+{# Sprint 5 Phase 4A: how to read each table, sample-metadata matching, and saved mapping profiles.
+   Included inside the review form of index.html; every input is named opt_<index>_<option>. #}
+{% set table_entries = [] %}
+{% for entry in r.files %}{% if entry.options is defined and entry.role in ['snv', 'positions', 'pooled_metadata'] %}{% set _ = table_entries.append(entry) %}{% endif %}{% endfor %}
+{% for entry in r.files %}{% if entry.info.needs_sample_id and entry not in table_entries %}{% set _ = table_entries.append(entry) %}{% endif %}{% endfor %}
+
+{% if table_entries %}
+  <h3 id="how-to-read">How to read each table</h3>
+  <p class="purpose">Headers cannot say everything. Confirm only what the file's documentation states; each choice is recorded in <code>import_provenance.csv</code>, and any value that is changed keeps its original next to it. Press <em>Update review</em> after a change.</p>
+  {% for entry in table_entries %}{% set info = entry.info %}{% set o = entry.options or {} %}{% set i = entry.index %}
+    <fieldset class="read-options">
+      <legend>{{ info.name }}{% if info.layout %} · {{ info.layout }}{% endif %}</legend>
+      {% if info.layout == wide_layout and entry.role == 'snv' %}
+        <label><span><input type="checkbox" name="opt_{{ i }}_layout_confirmed" {% if o.layout_confirmed %}checked{% endif %}> Each row is one sample and each mutation column holds that sample's reported frequency</span>
+          <span class="help">{{ info.layout_counts.samples }} sample rows × {{ info.layout_counts.mutation_columns }} mutation columns: {{ '{:,}'.format(info.layout_counts.reported) }} reported values become records; {{ '{:,}'.format(info.layout_counts.not_reported) }} blank/NA cells mean "not reported" (never 0%).</span></label>
+      {% endif %}
+      {% if info.layout == base_count_layout and entry.role == 'snv' %}
+        <label>Minimum reads for a non-reference base
+          <input type="number" name="opt_{{ i }}_base_count_minimum" min="1" max="1000" step="1" value="{{ o.base_count_minimum or '' }}" placeholder="from the source's methods">
+          <span class="help">Each base other than Ref with at least this many reads becomes one observation with measured counts; its frequency is calculated as reads / (A+C+G+T) and labelled calculated. Use the threshold the source documents (for example "at least two reads supporting a variant allele").</span></label>
+      {% endif %}
+      {% if entry.role in ['snv', 'positions'] or info.needs_sample_id %}
+        {% if entry.role == 'snv' and info.layout != base_count_layout %}
+          <div class="option-row"><span class="option-label">Frequency scale</span>
+            {% for key, label in frequency_scales.items() %}<label class="inline"><input type="radio" name="opt_{{ i }}_frequency_scale" value="{{ key }}" {% if (o.frequency_scale or 'fraction') == key %}checked{% endif %}> {{ label }}</label>{% endfor %}</div>
+        {% endif %}
+        <div class="option-row"><span class="option-label">Position numbering</span>
+          {% for key, label in position_bases.items() %}<label class="inline"><input type="radio" name="opt_{{ i }}_position_base" value="{{ key }}" {% if (o.position_base or '1') == key %}checked{% endif %}> {{ label }}</label>{% endfor %}
+          {% if entry.numbering_check %}<span class="help">Ref bases matching the reference FASTA: {{ '%.0f'|format(entry.numbering_check['1'] * 100) }}% if 1-based, {{ '%.0f'|format(entry.numbering_check['0'] * 100) }}% if 0-based ({{ entry.numbering_check.checked }} checked).</span>{% endif %}</div>
+        {% if entry.declared_reference or not (entry.columns and ('Reference_Genome' in entry.columns or 'Reference_ID' in entry.columns)) %}
+          <label>Reference genome used by the source (this table has no reference column)
+            <input type="text" name="opt_{{ i }}_declared_reference" value="{{ o.declared_reference or '' }}" maxlength="80" list="reference-ids" placeholder="accession.version from the methods">
+            <span class="help">Recorded as stated by you. With a reference FASTA of the same name, every Ref base is checked against it; otherwise the reference stays unverified.</span></label>
+        {% endif %}
+        {% if entry.role == 'snv' and info.layout != base_count_layout %}
+          <label>What the depth column counts
+            <select name="opt_{{ i }}_depth_definition">{% for key, label in depth_definitions.items() %}<option value="{{ key }}" {% if (o.depth_definition or '') == key %}selected{% endif %}>{{ label }}</option>{% endfor %}</select>
+            <span class="help">Recorded for provenance only; it changes no calculation. Leave "Not stated" when the source does not define it.</span></label>
+        {% endif %}
+        <label><span><input type="checkbox" name="opt_{{ i }}_sample_from_filename" {% if o.sample_from_filename or info.sample_from_filename %}checked{% endif %}> Use the file name as the sample ID (the file holds one sample)</span></label>
+      {% endif %}
+      <label>Header row <input type="number" name="opt_{{ i }}_header_row" min="1" max="50" step="1" value="{{ info.header_row_choice or '' }}" placeholder="detected">
+        <span class="help">Leave empty to use the detected header row.</span></label>
+    </fieldset>
+  {% endfor %}
+  {% if r.reference %}<datalist id="reference-ids"><option value="{{ r.reference.id }}"></datalist>{% endif %}
+{% endif %}
+
+{% if r.matching %}
+  <h3 id="matching">Sample metadata matching</h3>
+  <p class="purpose">Samples are joined only by identical Sample_ID text. Similar names, dates, or sites are never used to join samples, and a conflicting value is never chosen silently.</p>
+  <div class="scroll"><table><thead><tr><th>Check</th><th>Count</th><th>Details</th><th>Status</th></tr></thead>
+    <tbody>{% for row in r.matching %}<tr><td>{{ row.Check }}</td><td>{{ row.Count }}</td><td>{{ row.Detail }}</td><td>{{ row.Status }}</td></tr>{% endfor %}</tbody></table></div>
+  {% if r.metadata_conflicts %}
+    <details open><summary>Conflicting values ({{ r.metadata_conflicts|length }})</summary>
+      <div class="scroll"><table><thead><tr><th>Sample</th><th>Field</th><th>Where</th><th>Variant table</th><th>Metadata file</th></tr></thead>
+        <tbody>{% for item in r.metadata_conflicts[:50] %}<tr><td>{{ item.Sample_ID }}</td><td>{{ item.Field }}</td><td>{{ item.Kind }}</td><td>{{ item.Variant_Table_Value }}</td><td>{{ item.Metadata_Value }}</td></tr>{% endfor %}</tbody></table></div>
+      {% if r.metadata_conflicts|length > 50 %}<p class="help">First 50 shown; all are listed in metadata_matching.csv after the run.</p>{% endif %}
+    </details>
+    <fieldset><legend>How to handle these conflicts</legend>
+      {% for key, label in resolutions.items() %}<label class="inline"><input type="radio" name="conflict_resolution" value="{{ key }}" {% if conflict_resolution == key %}checked{% endif %}> {{ label }}</label>{% endfor %}
+    </fieldset>
+  {% endif %}
+  {% if r.matching_summary and r.matching_summary.unmatched %}
+    <label><span><input type="checkbox" name="allow_unmatched_metadata" {% if allow_unmatched_metadata %}checked{% endif %}> Continue without metadata for unmatched samples (their dates and sites stay unknown)</span></label>
+  {% endif %}
+{% endif %}
+
+<details class="more" id="mapping-profile">
+  <summary>Save or load a mapping profile</summary>
+  <p class="help">A mapping profile is a small JSON file with this page's roles, column choices, and confirmed options. It contains no sequencing records or sample values. Loading one applies it only to files with the same layout and every mapped column; any other file keeps its detected mapping and is listed below.</p>
+  <div class="button-row">
+    <button type="submit" class="secondary" formaction="{{ url_for('download_mapping_profile') }}">Download mapping profile (JSON)</button>
+    <label class="inline">Load a profile <input type="file" name="mapping_profile" accept=".json,application/json"></label>
+    <button type="submit" class="secondary" formaction="{{ url_for('review_upload') }}">Apply profile</button>
+  </div>
+  {% if profile_report %}<ul class="notes">{% for item in profile_report %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
+</details>

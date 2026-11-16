@@ -14,6 +14,7 @@ Compressed files are decompressed into a plain copy with a size limit, so every
 existing loader keeps reading ordinary files.
 """
 
+import os
 import gzip
 import math
 import shutil
@@ -22,7 +23,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from genomics.excel_tables import read_sheet
+from genomics.excel_tables import WorkbookTooLarge, max_cells, read_sheet
 
 
 SEQUENCE_EXTENSIONS = {".fasta", ".fa", ".fna"}
@@ -30,6 +31,7 @@ TABLE_EXTENSIONS = {".csv", ".tsv", ".txt", ".xlsx"}
 VARIANT_EXTENSIONS = {".vcf"}
 RAW_READ_EXTENSIONS = {".fastq", ".fq"}
 ALIGNMENT_EXTENSIONS = {".sam", ".bam", ".cram"}
+ANNOTATION_EXTENSIONS = {".gb", ".gbk", ".genbank", ".gff", ".gff3"}
 SUPPORTED_EXTENSIONS = SEQUENCE_EXTENSIONS | TABLE_EXTENSIONS | VARIANT_EXTENSIONS
 
 # A small upload can expand a lot when decompressed; refuse anything larger.
@@ -41,6 +43,7 @@ EXCEL_KIND = "Excel workbook"
 VCF_KIND = "VCF variant calls"
 FASTQ_KIND = "FASTQ raw reads"
 ALIGNMENT_KIND = "Read alignment (SAM/BAM/CRAM)"
+ANNOTATION_KIND = "Genome annotation (GenBank or GFF3)"
 UNKNOWN_KIND = "Unrecognized"
 
 RAW_READ_MESSAGE = (
@@ -160,6 +163,8 @@ def detect_kind(path, filename):
         return VCF_KIND
     if lines[0].startswith(">"):
         return FASTA_KIND
+    if lines[0].startswith("##gff-version") or lines[0].startswith("LOCUS "):
+        return ANNOTATION_KIND
     if lines[0].startswith("@") and len(lines) >= 3 and lines[2].startswith("+"):
         return FASTQ_KIND
     if extension in RAW_READ_EXTENSIONS:
@@ -182,14 +187,62 @@ def table_separator(path, filename):
     return "\t" if header.count("\t") > header.count(",") else ","
 
 
-def read_table(path, filename=None, nrows=None, sheet=None):
-    """Read a plain CSV/TSV/XLSX table as text (nothing is converted or guessed)."""
+def read_table(path, filename=None, nrows=None, sheet=None, header_row=None):
+    """Read a plain CSV/TSV/XLSX table as text (nothing is converted or guessed).
+
+    `header_row` (0-based) skips the rows above a header the user pointed to.
+    """
 
     filename = filename or Path(path).name
     if detect_kind(path, filename) == EXCEL_KIND:
-        return read_sheet(path, sheet, nrows)
-    return pd.read_csv(path, sep=table_separator(path, filename), dtype=str,
-                       keep_default_na=False, encoding="utf-8-sig", nrows=nrows)
+        return read_sheet(path, sheet, nrows, header_row=header_row)
+    separator = table_separator(path, filename)
+    check_table_size(path, filename, separator, header_row)
+    return pd.read_csv(path, sep=separator, dtype=str,
+                       keep_default_na=False, encoding="utf-8-sig", nrows=nrows,
+                       skiprows=header_row or None)
+
+
+def max_columns():
+    """Widest text table accepted; each column costs memory even when the table has few rows."""
+
+    return int(os.getenv("MAX_TABLE_COLUMNS", "20000"))
+
+
+def check_table_size(path, filename, separator, header_row=None):
+    """Refuse a CSV/TSV before parsing when it is larger than this server can hold (audit P1-1).
+
+    Uses the same cell limit as worksheets (MAX_WORKSHEET_CELLS) plus a column
+    limit. Counting lines and header fields is cheap; parsing a table of
+    millions of text cells is what exhausts a 512 MB server. Quoted fields
+    that contain line breaks are counted as extra lines, so the estimate can
+    only err on the cautious side. Nothing is trimmed: the file is refused
+    with an explanation.
+    """
+
+    skip = header_row or 0
+    size = Path(path).stat().st_size
+    with open(path, "rb") as handle:
+        header = b""
+        for _ in range(skip + 1):
+            header = handle.readline()
+        handle.seek(0)
+        lines = sum(block.count(b"\n") for block in iter(lambda: handle.read(1024 * 1024), b""))
+        if size:
+            handle.seek(size - 1)
+            if handle.read(1) != b"\n":
+                lines += 1  # a last line without a line break
+    columns = header.count(separator.encode()) + 1
+    rows = max(lines - skip - 1, 0)
+    label = filename or Path(path).name
+    if columns > max_columns():
+        raise WorkbookTooLarge(
+            f"Table '{label}' has {columns:,} columns, more than this server can process safely "
+            f"({max_columns():,}). Split it into smaller files, or run the analysis locally.")
+    if rows * columns > max_cells():
+        raise WorkbookTooLarge(
+            f"Table '{label}' is larger than this server can process safely (about {rows * columns:,} cells; "
+            f"the limit is {max_cells():,}). Split it into smaller files, or run the analysis locally.")
 
 
 def write_csv(table, path):

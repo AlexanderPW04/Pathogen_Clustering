@@ -1,0 +1,10 @@
+{# Sprint 5 Phase 4A Step 3: which Sprint 3 + 5 analyses the reviewed data support (four statuses). #}
+{% if r.analysis_readiness %}
+  {% set counts = {'Available': 0, 'Partially available': 0, 'Unavailable': 0, 'Experimental': 0} %}
+  {% for row in r.analysis_readiness %}{% set _ = counts.update({row.Status: counts[row.Status] + 1}) %}{% endfor %}
+  <h3 id="analysis-readiness">Step 3 · Analyses these data support</h3>
+  <p class="stat"><span class="badge available">{{ counts['Available'] }} available</span> <span class="badge partially-available">{{ counts['Partially available'] }} partially available</span> <span class="badge unavailable">{{ counts['Unavailable'] }} unavailable</span> <span class="badge experimental">{{ counts['Experimental'] }} experimental</span></p>
+  <p class="purpose">Decided from the mapped and checked values, never from a file or paper name. <strong>Available</strong>: required data and checks are satisfied. <strong>Partially available</strong>: a meaningful result with a stated limit. <strong>Unavailable</strong>: required information is missing; only that analysis is skipped. <strong>Experimental</strong>: the method has not met its validation criteria.</p>
+  <div class="scroll"><table><thead><tr><th>Analysis</th><th>Status</th><th>Why</th></tr></thead>
+    <tbody>{% for row in r.analysis_readiness %}<tr><td>{{ row.Analysis }}<br><span class="help">{{ row.Group }}</span></td><td><span class="badge {{ row.Status|lower|replace(' ', '-') }}">{{ row.Status }}</span></td><td>{{ row.Reason }}<br><span class="help">Needs: {{ row.Needs }}</span></td></tr>{% endfor %}</tbody></table></div>
+{% endif %}

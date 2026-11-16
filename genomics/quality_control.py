@@ -107,6 +107,66 @@ def reference_check(row, reference, registry):
     return PASS
 
 
+REFERENCE_VERIFIED = "Verified compatible"
+REFERENCE_PARTLY_MISMATCHED = "Verified compatible, with record-level mismatches"
+REFERENCE_MISMATCH = "Verified mismatch"
+REFERENCE_UNVERIFIED = "Supplied but unverified"
+REFERENCE_NOT_PROVIDED = "No reference provided"
+
+
+def reference_verification(variants, reference=None, registry=None, label_source="From the uploaded table"):
+    """Say, for each pooled reference label, how far its positions were checked (audit S3-07).
+
+    - Verified compatible: a FASTA for this reference was supplied and every
+      record's position and Ref base agree with it.
+    - Verified compatible, with record-level mismatches: most agree; the
+      disagreeing records fail the Ref-base check.
+    - Verified mismatch: most checked records disagree (or lie beyond the
+      reference), so the coordinates are probably on another reference.
+    - Supplied but unverified: a label exists but no matching FASTA was
+      supplied, so positions and Ref bases are taken as reported.
+    - No reference provided: the records carry no reference label.
+    """
+
+    columns = ["Reference_ID", "Label_Source", "Records", "Status", "Records_Checked",
+               "Ref_Base_Matches", "Ref_Base_Mismatches", "Beyond_Reference", "Detail"]
+    rows = []
+    labels = variants["Reference_ID"].fillna("").astype(str).str.strip()
+    checks = variants["QC_Reference_Base"].astype(str) if "QC_Reference_Base" in variants else None
+    for label, index in labels.groupby(labels).groups.items():
+        result = checks[index] if checks is not None else pd.Series(dtype=str)
+        matches = int(result.eq(PASS).sum())
+        beyond = int(result.str.contains("beyond").sum())
+        mismatches = int(result.str.startswith("Fail").sum()) - beyond
+        checked = matches + mismatches + beyond
+        if not label:
+            status, detail = REFERENCE_NOT_PROVIDED, "Records have no reference label; positions cannot be placed."
+        elif reference is None:
+            status = REFERENCE_UNVERIFIED
+            detail = ("No reference FASTA was supplied, so reported positions and Ref bases were not "
+                      "checked. Comparisons that depend on the reference sequence are unverified.")
+        elif not checked:
+            status = REFERENCE_UNVERIFIED
+            detail = (f"The supplied FASTA is {reference['Reference_ID']}; a different label is never "
+                      "assumed to be the same genome, so these records were not checked.")
+        elif matches == checked:
+            status = REFERENCE_VERIFIED
+            detail = f"All {checked} record(s) match the supplied reference at their positions."
+        elif matches > checked / 2:
+            status = REFERENCE_PARTLY_MISMATCHED
+            detail = (f"{matches} of {checked} record(s) match; {mismatches + beyond} disagree and fail "
+                      "the Ref-base check.")
+        else:
+            status = REFERENCE_MISMATCH
+            detail = (f"Only {matches} of {checked} record(s) match the supplied reference; the table "
+                      "probably uses another coordinate system or reference version.")
+        rows.append({"Reference_ID": label or "(blank)", "Label_Source": label_source,
+                     "Records": len(index), "Status": status, "Records_Checked": checked,
+                     "Ref_Base_Matches": matches, "Ref_Base_Mismatches": mismatches,
+                     "Beyond_Reference": beyond, "Detail": detail})
+    return pd.DataFrame(rows, columns=columns)
+
+
 def apply_pooled_quality_control(variants, samples, mode=PAPER_MODE, masked_sites=None,
                                  settings=None, reference=None, registry=None):
     """Return (variants, samples, method_report) with quality columns added."""

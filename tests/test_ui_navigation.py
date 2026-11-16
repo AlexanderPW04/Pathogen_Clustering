@@ -161,10 +161,11 @@ class UiNavigationTest(unittest.TestCase):
                      "pooled 1 day(s) earlier", "no kilometer distance can be computed"]:
             self.assertIn(text, story)
         sections = re.findall(r'<section id="([a-z-]+)" class="result-section">', page)
+        # Sprint 5 added section 9, "Sprint 5 — Depth-Aware Variant Analysis".
         self.assertEqual(sections, ["overview", "cross-source", "variation", "temporal", "geography",
-                                    "quality", "population", "relationships"])
-        self.assertEqual(page.count('<p class="sprint-tag">'), 8)
-        self.assertEqual(page.count("↑ Back to results overview"), 8)  # 7 sections + provenance
+                                    "quality", "population", "relationships", "depth-aware"])
+        self.assertEqual(page.count('<p class="sprint-tag">'), 9)
+        self.assertEqual(page.count("↑ Back to results overview"), 9)  # 8 sections + provenance
         figures = page.count('<figure>')
         self.assertEqual(page.count("How to read this chart"), figures)
         self.assertIn("In these results:</strong> 2 of 8 variants were observed in both sources", page)

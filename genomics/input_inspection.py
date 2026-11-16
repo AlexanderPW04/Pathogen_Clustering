@@ -18,13 +18,21 @@ Nothing here fills in a missing date, location, reference, frequency, or depth.
 
 import re
 import os
+from functools import wraps
+from shutil import copyfile
+from tempfile import TemporaryDirectory
+from threading import RLock
 from pathlib import Path
 
 import pandas as pd
 from Bio import SeqIO
 
 from genomic_regions import fasta_region
+from genomics.genome_annotation import GENBANK_FORMAT, detect_annotation_format, load_genbank, load_gff3
+from genomics.collection_dates import date_warnings, parse_collection_dates
 from genomics.column_detection import (
+    ROLE_FIELDS,
+    SEQUENCE_COLUMN_NAMES,
     apply_mapping,
     detect_columns,
     explain_snv_columns,
@@ -33,12 +41,59 @@ from genomics.column_detection import (
     unresolved,
     value_warnings,
 )
-from genomics.excel_tables import WorkbookTooLarge, best_sheet, data_sheets, describe_sheets
+from genomics.excel_tables import WorkbookTooLarge, best_sheet, data_sheets, describe_sheets, read_sheet
+from genomics.import_options import (
+    DEPTH_DEFINITIONS,
+    DOCUMENTED_DEPTH,
+    frequency_problems,
+    interpret_table,
+    numbering_warning,
+    reference_check,
+)
+from genomics.table_layouts import (
+    BASE_COUNT_LAYOUT,
+    LONG_LAYOUT,
+    WIDE_LAYOUT,
+    base_count_columns,
+    derive_from_base_counts,
+    detect_wide_matrix,
+    wide_to_long,
+)
 from genomics.location_hierarchy import location_hierarchy
+from genomics.analysis_readiness import analysis_readiness
+from genomics.metadata_matching import match_metadata, resolve_metadata_table, resolve_variant_table
+
+
+# Reading an upload is the most memory-hungry step before an analysis, and it is
+# not covered by the one-analysis-at-a-time slot. Several visitors reviewing
+# large tables at once could exhaust a small server (audit P1-1), so file
+# inspection, review, and preparation run one at a time. The lock is
+# re-entrant (a review may inspect a file again) and a visitor waits at most
+# INSPECTION_WAIT_SECONDS before being told the server is busy.
+INSPECTION_LOCK = RLock()
+INSPECTION_WAIT_SECONDS = 60
+
+
+class ServerBusy(ValueError):
+    """Another upload is being read; nothing was changed."""
+
+
+def one_at_a_time(function):
+    @wraps(function)
+    def guarded(*args, **kwargs):
+        if not INSPECTION_LOCK.acquire(timeout=INSPECTION_WAIT_SECONDS):
+            raise ServerBusy("The server is busy reading another upload. Wait a minute and try again; "
+                             "your files are kept for 30 minutes.")
+        try:
+            return function(*args, **kwargs)
+        finally:
+            INSPECTION_LOCK.release()
+    return guarded
 from genomics.metadata_readiness import metadata_readiness
 from geocode_locations import is_state_only_location
 from genomics.file_formats import (
     ALIGNMENT_KIND,
+    ANNOTATION_KIND,
     EXCEL_KIND,
     FASTA_KIND,
     FASTQ_KIND,
@@ -72,9 +127,10 @@ ROLE_LABELS = {
     "positions": "Per-position depth or A/C/G/T counts",
     "masked_sites": "Masked problematic sites (quality control)",
     "signatures": "Documented variant profiles (annotation)",
+    "annotation": "Genome annotation (GenBank or GFF3) for coding consequences",
     "ignore": "Do not use this file",
 }
-ROLE_ORDER = ["fasta", "metadata", "reference", "snv", "pooled_metadata", "positions",
+ROLE_ORDER = ["fasta", "metadata", "reference", "annotation", "snv", "pooled_metadata", "positions",
               "masked_sites", "signatures"]
 MULTI_FILE_ROLES = {"fasta", "snv"}  # several files are combined into one input
 FASTA_ROLES = {"fasta", "reference"}
@@ -120,7 +176,8 @@ def empty_info(name):
         "sheets": [], "sheet": None, "sheet_choice_needed": False, "preview": [], "variant_keys": 0,
         "candidates": [], "suggested_role": None, "role_evidence": "", "role_status": "",
         "auto_choices": {}, "annotations": {}, "descriptions": {}, "id_columns": {},
-        "header_hints": {},
+        "header_hints": {}, "layout": LONG_LAYOUT, "layout_counts": {}, "not_interpreted": [],
+        "header_row_choice": None,
     }
 
 
@@ -150,6 +207,25 @@ def inspect_fasta(path, info):
                              + ", ".join(fields) + ".")
     info["format"] = f"FASTA ({len(records)} record{'s' if len(records) != 1 else ''})"
     info["candidates"] = ["fasta"] if len(records) > 1 else ["reference", "fasta"]
+
+
+def inspect_annotation(path, info):
+    """Describe a GenBank or GFF3 annotation: its references and coding features (not yet verified)."""
+
+    annotation = (load_genbank(path) if detect_annotation_format(path) == GENBANK_FORMAT else load_gff3(path))
+    records = annotation["records"]
+    info["format"] = annotation["format"]
+    info["records"] = len(records)
+    info["reference_ids"] = list(records)
+    info["lengths"] = [record["Length"] for record in records.values()]
+    info["candidates"] = ["annotation"]
+    for reference_id, record in records.items():
+        coding = sum(cds["Reference_ID"] == reference_id for cds in annotation["cds"])
+        info["notes"].append(f"Describes {reference_id} ({record['Organism']}"
+                             + (f", segment {record['Segment']}" if record["Segment"] else "")
+                             + f", {record['Length'] or 'unknown'} bases): {coding} coding region(s)"
+                             + ("" if record["Sequence"] else "; no sequence in the file, so a matching "
+                                "reference FASTA is needed") + ".")
 
 
 def inspect_vcf(path, info):
@@ -198,22 +274,72 @@ def choose_sheet(path, info, sheet):
     return best_sheet(sheets)
 
 
-def inspect_table(path, info, sheet=None):
+def read_raw_table(path, info):
+    """The uploaded table as text, with the chosen worksheet and header row."""
+
+    header = info.get("header_row_choice")
+    if info["kind"] == EXCEL_KIND:
+        if header:
+            table = read_sheet(path, info["sheet"], header_row=header - 1)
+        else:
+            table = read_snv_table(path, info["sheet"])  # handles the paper's descriptive first row
+    else:
+        table = read_table(path, info["name"], header_row=(header - 1) if header else None)
+    table.columns = [str(name).strip() for name in table.columns]
+    if info.get("sample_from_filename") and not any(
+            squash(column) in SAMPLE_FIELD_ALIASES for column in table.columns):
+        # The user stated that this file holds one sample, named by the file.
+        table.insert(0, "Sample_ID", file_stem(info["name"]))
+    return table
+
+
+SAMPLE_FIELD_ALIASES = next(spec["aliases"] for spec in ROLE_FIELDS["snv"] if spec["name"] == "Sample_ID")
+
+
+def inspect_table(path, info, sheet=None, header_row=None, sample_from_filename=False):
+    info["header_row_choice"] = header_row
+    info["sample_from_filename"] = bool(sample_from_filename)
     if info["kind"] == EXCEL_KIND:
         info["sheet"] = choose_sheet(path, info, sheet)
-        table = read_snv_table(path, info["sheet"])  # handles the paper's descriptive first row
+    table = read_raw_table(path, info)
+    if info["kind"] == EXCEL_KIND:
         if len(info["sheets"]) > 1:
             info["notes"].append(f"Worksheet '{info['sheet']}' was read (the workbook has "
                                  f"{len(info['sheets'])} worksheets).")
-        if table.attrs.get("header_row"):
-            info["notes"].append(f"Column headers were found on row {table.attrs['header_row'] + 1} "
-                                 "of the worksheet.")
-    else:
-        table = read_table(path, info["name"])
-    table.columns = [str(name).strip() for name in table.columns]
+    if header_row:
+        info["notes"].append(f"Column headers are read from row {header_row}, as you chose.")
+    elif table.attrs.get("header_row"):
+        info["notes"].append(f"Column headers were found on row {table.attrs['header_row'] + 1} "
+                             "of the worksheet. If that is wrong, set 'Header row' under 'How to read this file'.")
+    info["source_records"] = len(table)
+    info["source_columns"] = len(table.columns)
+    info["preview"] = table.head(3).iloc[:, :10].astype(str).to_dict("records")
+    wide = detect_wide_matrix(table.columns)
+    if wide is not None:
+        table, counts = wide_to_long(table, wide)
+        info["layout"] = WIDE_LAYOUT
+        info["wide"] = wide
+        info["layout_counts"] = counts
+        info["not_interpreted"] = list(wide["not_interpreted"])
+        info["notes"].append(
+            f"Wide layout detected: {counts['samples']} sample rows x {counts['mutation_columns']} mutation "
+            f"columns (headers such as '{next(iter(wide['mutation_columns']))}'). {counts['reported']:,} cells "
+            f"hold a value and become records; {counts['not_reported']:,} blank or NA cells mean 'not "
+            "reported' and become no record (never 0%). Confirm this reading under 'How to read this file'.")
+        if wide["not_interpreted"]:
+            info["notes"].append(
+                f"{len(wide['not_interpreted'])} column(s) describe changes that are not single-nucleotide "
+                "substitutions and are not analyzed: " + preview(wide["not_interpreted"], 5))
+        samples = wide["other_columns"][0]
+        empty = [str(value) for value in counts.get("rows_without_records", [])]
+        if empty:
+            info["notes"].append(f"{len(empty)} sample row(s) have no reported single-nucleotide mutation and "
+                                 f"therefore no records (first column '{samples}': {preview(empty, 5)}).")
+        if counts["repeated_mutations"]:
+            info["notes"].append(f"{counts['repeated_mutations']} mutation column(s) repeat a nucleotide "
+                                 "change already listed under another label; repeated records are flagged later.")
     info["records"] = len(table)
     info["columns"] = list(table.columns)
-    info["preview"] = table.head(3).iloc[:, :10].astype(str).to_dict("records")
     columns = set(table.columns)
 
     if (table.attrs.get("fontenele_2021_table2") and set(PAPER_COLUMNS).issubset(columns)
@@ -251,10 +377,19 @@ def inspect_table(path, info, sheet=None):
 
     has_alleles = present("snv", "Ref") and present("snv", "Alt")
     candidates = []
+    base_counts = base_count_columns(matches["snv"] + matches["positions"]) if wide is None else None
     if complete("signatures"):
         candidates.append("signatures")
     elif complete("snv"):
         candidates.append("snv")
+    elif base_counts is not None:
+        candidates.append("snv")
+        info["layout"] = BASE_COUNT_LAYOUT
+        info["notes"].append(
+            "This table has a reference base and A/C/G/T read counts but no alternative-base column. It can "
+            "be used as variant records derived from the counts (each non-reference base with at least the "
+            "minimum number of reads you confirm) or as per-position coverage. Tool-specific columns such as "
+            "a consensus or 'variant' base are carried along, not reinterpreted.")
     if not has_alleles and complete("positions") and (
             present("positions", "Depth")
             or all(present("positions", f"{base}_Count") for base in "ACGT")):
@@ -283,6 +418,8 @@ def inspect_table(path, info, sheet=None):
                               if match["field"] in {"Reference_Genome", "Reference_ID"}), None)
             if reference and reference["status"] == "matched":
                 info["reference_ids"] = column_values(table, reference["column"])
+            elif reference:
+                info["reference_column_missing"] = True
             sample = next((match for match in matches[role] if match["field"] == "Sample_ID"), None)
             if sample and sample["status"] == "matched" and role == "snv":
                 info["ids"] = column_values(table, sample["column"])
@@ -291,6 +428,20 @@ def inspect_table(path, info, sheet=None):
                 if {"Position", "Ref", "Alt"} <= set(fields):
                     info["variant_keys"] = count_variants(
                         table, [fields["Position"], fields["Ref"], fields["Alt"]])
+                elif base_counts is not None:
+                    # Upper bound: every listed site with a non-reference base (exact after derivation).
+                    info["variant_keys"] = count_variants(table, [fields["Position"], fields["Ref"]]) * 3
+    complete_but_sample = all(present("snv", name) for name in ("Position", "Ref", "Alt", "Alt_Frequency"))
+    if not candidates and not present("snv", "Sample_ID") and present("snv", "Position") and (
+            complete_but_sample or base_count_columns(
+                [dict(match, status="matched", column=match["column"] or "Sample_ID") if match["field"] == "Sample_ID"
+                 else match for match in matches["snv"] + matches["positions"]]) is not None):
+        info["needs_sample_id"] = True
+        info["problems"].append(
+            "This table has variant positions but no sample column. If the file holds the results of one "
+            "sample, tick 'Use the file name as the sample ID' under 'How to read this file' and press "
+            f"Update review (the sample would be '{file_stem(info['name'])}').")
+        return
     if not candidates:
         reason = explain_snv_columns(table.columns) if looks_like_variants(table.columns) else None
         if table.attrs.get("preamble") and "Supplementary Table" in table.attrs["preamble"] and reason:
@@ -313,8 +464,10 @@ def looks_like_variants(columns):
     return bool(found & {"Position", "Ref", "Alt", "Alt_Frequency"})
 
 
-def inspect_file(path, name, sheet=None):
-    """Describe one decompressed upload; `sheet` is the worksheet the user selected."""
+@one_at_a_time
+def inspect_file(path, name, sheet=None, header_row=None, sample_from_filename=False):
+    """Describe one decompressed upload; `sheet`, `header_row` (1-based), and
+    `sample_from_filename` are the user's choices from the review page."""
 
     info = empty_info(name)
     info["kind"] = detect_kind(path, name)
@@ -324,15 +477,17 @@ def inspect_file(path, name, sheet=None):
             inspect_fasta(path, info)
         elif info["kind"] == VCF_KIND:
             inspect_vcf(path, info)
+        elif info["kind"] == ANNOTATION_KIND:
+            inspect_annotation(path, info)
         elif info["kind"] in {TABLE_KIND, EXCEL_KIND}:
-            inspect_table(path, info, sheet)
+            inspect_table(path, info, sheet, header_row, sample_from_filename)
         elif info["kind"] in {FASTQ_KIND, ALIGNMENT_KIND}:
             info["refused"] = True
             info["problems"].append(RAW_READ_MESSAGE)
         else:
             info["refused"] = True
             info["problems"].append("This file type is not supported. Use FASTA, CSV/TSV/XLSX, "
-                                    "or VCF (each optionally .gz).")
+                                    "VCF, or a GenBank/GFF3 annotation (each optionally .gz).")
     except WorkbookTooLarge as error:
         info["refused"] = True
         info["problems"].append(str(error))
@@ -483,12 +638,20 @@ def choose_metadata_role(info, fasta_ids, variant_ids):
 # Dataset review
 # ----------------------------------------------------------------------------
 
-def table_for(path, info):
-    if info["kind"] == EXCEL_KIND:
-        table = read_snv_table(path, info.get("sheet"))
-    else:
-        table = read_table(path, info["name"])
-    table.columns = [str(name).strip() for name in table.columns]
+def table_for(path, info, role=None, file_options=None):
+    """The table as the analysis sees it: wide matrices and base counts are rewritten as long records."""
+
+    table = read_raw_table(path, info)
+    if info.get("layout") == WIDE_LAYOUT:
+        table, _ = wide_to_long(table, info["wide"])
+    elif info.get("layout") == BASE_COUNT_LAYOUT and role == "snv":
+        minimum = (file_options or {}).get("base_count_minimum")
+        if minimum:
+            columns = base_count_columns(detect_columns(table.columns, "snv")
+                                         + detect_columns(table.columns, "positions"))
+            table, summary = derive_from_base_counts(table, columns, minimum)
+            info["layout_counts"] = summary
+            info["base_count_source_columns"] = columns
     return table
 
 
@@ -496,6 +659,7 @@ def native_format(info):
     return info["kind"] == VCF_KIND or info["format"] in {PAPER_TABLE_FORMAT, IVAR_TABLE_FORMAT}
 
 
+@one_at_a_time
 def review_dataset(staged, inspections, roles, choices=None, options=None):
     """Summarize the dataset under the chosen roles.
 
@@ -506,10 +670,12 @@ def review_dataset(staged, inspections, roles, choices=None, options=None):
 
     choices = choices or {}
     options = options or {}
-    review = {"files": [], "problems": [], "warnings": [], "by_role": {}, "mappings": {},
+    review = {"options": options, "files": [], "problems": [], "warnings": [], "by_role": {}, "mappings": {},
               "individual_ids": [], "pooled_ids": [], "reference": None, "compatibility": [],
               "completeness": [], "analyses": [], "annotation_notes": [], "ready": False}
 
+    review["reference_assigned"] = any(
+        roles.get(index, info["suggested_role"]) == "reference" for index, info in enumerate(inspections))
     for index, info in enumerate(inspections):
         role = roles.get(index, info["suggested_role"]) or None
         entry = {"index": index, "info": info, "role": role, "matches": [], "problems": []}
@@ -525,12 +691,20 @@ def review_dataset(staged, inspections, roles, choices=None, options=None):
             entry["problems"].append(f"The content does not fit the role '{ROLE_LABELS[role]}'.")
         review["by_role"].setdefault(role, []).append(entry)
         if role in TABLE_ROLES and info["kind"] in {TABLE_KIND, EXCEL_KIND} and not native_format(info):
-            table = table_for(staged[index], info)
+            file_options = options.get("files", {}).get(index, {})
+            entry["options"] = file_options
+            try:
+                table = table_for(staged[index], info, role, file_options)
+            except ValueError as problem:
+                entry["problems"].append(str(problem))
+                continue
             matches = resolve_choices(detect_columns(table.columns, role), choices.get(index, {}))
             matches = resolve_choices(matches, info["auto_choices"].get(role, {}),
                                       "matching its values with the other uploaded files")
             entry["matches"] = matches
-            entry["problems"] += unresolved(matches) + value_warnings(table, matches)
+            entry["problems"] += unresolved(matches) + value_warnings(
+                table, matches, file_options.get("frequency_scale"))
+            interpretation_review(review, entry, table, role, file_options)
             review["mappings"][index] = matches
             entry["table"] = table
 
@@ -548,9 +722,12 @@ def review_dataset(staged, inspections, roles, choices=None, options=None):
             review["reference"] = {"id": info["ids"][0], "length": info["lengths"][0]}
             sequence_bases = set()
             for record in SeqIO.parse(str(staged[review["by_role"]["reference"][0]["index"]]), "fasta"):
-                sequence_bases = set(clean_sequence(record.seq))
+                sequence = clean_sequence(record.seq)
+                sequence_bases = set(sequence)
+                review["reference_sequence"] = {"id": info["ids"][0], "sequence": sequence}
             if sequence_bases - set("ACGTN"):
                 review["problems"].append("The reference sequence may contain only A, C, G, T, and N.")
+            numbering_review(review)
     for entry in review["files"]:
         for problem in entry["problems"]:
             review["problems"].append(f"{entry['info']['name']}: {problem}")
@@ -559,15 +736,140 @@ def review_dataset(staged, inspections, roles, choices=None, options=None):
                 review["problems"].append(f"{entry['info']['name']}: {problem}")
 
     individual_review(review, options)
-    pooled_review(review)
+    pooled_review(review, options.get("date_order", "auto"))
     compatibility_review(review)
     review["analyses"] = analysis_plan(review, options)
+    review["analysis_readiness"] = analysis_readiness(review, options)
     review["readiness"] = metadata_readiness(review, options)
     review["ready"] = not review["problems"] and any(
         role in review["by_role"] for role in ("fasta", "snv", "reference"))
+    if review["ready"]:
+        pooled_validation_review(review, staged, options)
+        review["ready"] = not review["problems"]
     if not review["by_role"]:
         review["problems"].append("No file has been assigned a role yet.")
     return review
+
+
+def pooled_validation_review(review, staged, options):
+    """Run the analysis's own pooled-table validation now, so Step 2 shows what Run would refuse.
+
+    Audit P1-3: some checks (alternative reads above depth, a non-ACGT base,
+    an unreadable metadata date, ...) used to run only when the analysis
+    started, after the review had said "ready", and the uploads were then
+    deleted. The same function the analysis uses (`load_processed_snvs`) is
+    called here on the same prepared files, so the two can never disagree.
+    Nothing is changed or filled in; the problem is shown and Run stays
+    disabled until it is corrected.
+    """
+
+    if "snv" not in review["by_role"]:
+        return
+    with TemporaryDirectory() as folder:
+        try:
+            paths, _ = prepare_inputs(staged, review, Path(folder), options)
+            if "snv" in paths:
+                load_processed_snvs(paths["snv"], paths.get("pooled_metadata"),
+                                    date_order=options.get("date_order", "auto"))
+        except ServerBusy:
+            raise
+        except ValueError as problem:
+            text = str(problem).replace(str(folder), "[temporary upload]")
+            review["problems"].append(
+                f"The analysis would refuse the pooled variant data: {text} Correct the file and upload it "
+                "again, or change the roles or choices above (for example, stop using a metadata file whose "
+                "values cannot be read). Nothing was changed or guessed.")
+
+
+def interpretation_review(review, entry, table, role, file_options):
+    """Check the choices that headers cannot settle (layout, scale, reference, depth) for one table."""
+
+    info = entry["info"]
+    name = info["name"]
+    columns = {match["field"]: match["column"] for match in entry["matches"] if match["status"] == "matched"}
+    entry["columns"] = columns
+    if info.get("layout") == WIDE_LAYOUT and role == "snv" and not file_options.get("layout_confirmed"):
+        entry["problems"].append(
+            "Confirm the wide layout under 'How to read this file': each row is one sample and each "
+            "mutation column holds that sample's reported frequency (blank or NA = not reported).")
+    if info.get("layout") == BASE_COUNT_LAYOUT and role == "snv" and not file_options.get("base_count_minimum"):
+        entry["problems"].append(
+            "Enter the minimum number of reads for a non-reference base under 'How to read this file' "
+            "(use the threshold documented by the source). Variant records are derived from the A/C/G/T "
+            "counts only after you confirm it.")
+    if role in {"snv", "positions"}:
+        field = "Reference_Genome" if role == "snv" else "Reference_ID"
+        declared = file_options.get("declared_reference")
+        if field not in columns:
+            if not declared:
+                entry["problems"].append(
+                    "This table has no reference-genome column. State the reference accession the source "
+                    "used (for example from its methods) under 'How to read this file'.")
+            elif several_sequences(table, columns):
+                column, values = several_sequences(table, columns)
+                entry["problems"].append(
+                    f"Column '{column}' names {len(values)} different sequences (for example "
+                    f"{', '.join(values[:3])}), so one stated reference would put records from different "
+                    "segments or chromosomes on one sequence. Choose that column as the reference column "
+                    "under 'Columns', or split the file into one file per sequence.")
+            else:
+                entry["declared_reference"] = declared
+                info["reference_ids"] = [declared]
+                review["annotation_notes"].append(
+                    f"{name}: reference '{declared}' stated by you (the table has no reference column). "
+                    + ("It is checked base by base against the uploaded reference FASTA when the names match."
+                       if review.get("reference_assigned") else
+                       "No reference FASTA was uploaded, so it stays unverified."))
+        elif declared:
+            review["annotation_notes"].append(f"{name}: the stated reference '{declared}' was not used because "
+                                              f"the table has its own reference column '{columns[field]}'.")
+    if role == "snv" and "Alt_Frequency" in columns:
+        problems, warnings = frequency_problems(table, columns["Alt_Frequency"], file_options)
+        entry["problems"] += problems
+        review["warnings"] += [f"{name}: {text}" for text in warnings]
+    if role == "snv" and info.get("layout") != BASE_COUNT_LAYOUT:
+        if "Read_Depth" not in columns:
+            review["warnings"].append(
+                f"{name}: no read-depth column was recognized. Reported frequencies are still summarized, but "
+                "depth QC, count-based frequencies, uncertainty intervals, and the depth-aware methods are "
+                "unavailable for this file. Depth is never filled in.")
+        elif not file_options.get("depth_definition"):
+            review["annotation_notes"].append(
+                f"{name}: column '{columns['Read_Depth']}' is used as the total usable depth at each position. "
+                "If the source defines it differently, state the definition under 'How to read this file'.")
+
+
+def several_sequences(table, columns):
+    """(column, values) when an unmapped segment/chromosome-like column holds more than one value."""
+
+    if table is None:
+        return None
+    used = set(columns.values())
+    for column in table.columns:
+        if column in used or squash(column) not in SEQUENCE_COLUMN_NAMES:
+            continue
+        values = sorted({str(value).strip() for value in table[column].dropna() if str(value).strip()})
+        if len(values) > 1:
+            return column, values
+    return None
+
+
+def numbering_review(review):
+    """Warn when Ref bases fit the reference only under the other position numbering."""
+
+    reference = review.get("reference_sequence")
+    for role in ("snv", "positions"):
+        for entry in review["by_role"].get(role, []):
+            if entry.get("table") is None or "Ref" not in entry.get("columns", {}):
+                continue
+            columns = dict(entry["columns"])
+            if "Reference_Genome" not in columns and entry.get("declared_reference") != (reference or {}).get("id"):
+                continue
+            check = reference_check(entry["table"], columns, reference)
+            entry["numbering_check"] = check
+            warning = numbering_warning(check, entry.get("options", {}), entry["info"]["name"])
+            if warning:
+                review["warnings"].append(warning)
 
 
 def mapped_values(entry, field):
@@ -761,10 +1063,28 @@ def check_analysis_size(review, entries):
             "computer (see the README), or upload a smaller study.")
 
 
-def pooled_review(review):
+def pooled_date_review(review, entries, date_order):
+    """Flag ambiguous, partial, or two-digit-year pooled collection dates at review (audit S3-05)."""
+
+    columns = [mapped_values(entry, "Collection_Date") for entry in entries]
+    metadata = review["by_role"].get("pooled_metadata", [None])[0]
+    if metadata is not None:
+        columns.append(mapped_values(metadata, "Collection_Date"))
+    values = [column for column in columns if column is not None]
+    if not values:
+        return
+    parsed = parse_collection_dates(pd.concat(values, ignore_index=True), date_order)
+    review["pooled_date_status"] = parsed["Status"].value_counts().to_dict()
+    for message in date_warnings(parsed):
+        review["warnings"].append("Pooled collection dates: " + message)
+
+
+def pooled_review(review, date_order="auto"):
     entries = review["by_role"].get("snv", [])
     if not entries:
         return
+    pooled_date_review(review, [entry for entry in entries
+                                if entry["info"]["format"] != PAPER_TABLE_FORMAT], date_order)
     ids = []
     for entry in entries:
         ids += [str(value) for value in entry["info"]["ids"]]
@@ -784,19 +1104,23 @@ def pooled_review(review):
         dates = sum(samples_with(entry, "Collection_Date") for entry in entries)
         locations = sum(samples_with(entry, "Location_Name") for entry in entries)
     if metadata is not None:
-        dates = max(dates, count_present(mapped_values(metadata, "Collection_Date")))
-        locations = max(locations, count_present(mapped_values(metadata, "Location_Name")))
-        latitudes = mapped_values(metadata, "Latitude")
-        longitudes = mapped_values(metadata, "Longitude")
+        # Phase 4A fix: count only metadata rows of samples that have variant records
+        # (rows of other samples, or without a Sample_ID, describe nothing analyzed).
+        keys = mapped_values(metadata, "Sample_ID")
+        joined = (keys.isin(set(review["pooled_ids"])) if keys is not None
+                  else pd.Series(False, index=metadata["table"].index))
+
+        def matched_present(field):
+            values = mapped_values(metadata, field)
+            return None if values is None else values.where(joined, "")
+
+        dates = max(dates, count_present(matched_present("Collection_Date")))
+        locations = max(locations, count_present(matched_present("Location_Name")))
+        latitudes = matched_present("Latitude")
+        longitudes = matched_present("Longitude")
         if latitudes is not None and longitudes is not None:
-            coordinates = int((latitudes.ne("") & longitudes.ne("")).sum())
-        coverage = count_present(mapped_values(metadata, "Genome_Coverage_Percent"))
-        key = mapped_values(metadata, "Sample_ID")
-        if key is not None:
-            unknown = sorted(set(review["pooled_ids"]) - set(key))
-            if unknown:
-                review["problems"].append("Pooled sample(s) missing from the pooled metadata: "
-                                          + preview(unknown, 8))
+            coordinates = int((latitudes.ne("") & longitudes.ne("") & joined).sum())
+        coverage = count_present(matched_present("Genome_Coverage_Percent"))
     elif not paper:
         if vcf_only:
             review["warnings"].append("VCF files carry no collection dates or sites; add pooled-sample "
@@ -805,6 +1129,7 @@ def pooled_review(review):
         coverage = "From the per-position table"
     elif metadata is None:
         coverage = "Not supplied"
+    match_metadata(review, review.get("options", {}))
     review["completeness"].append({
         "Source": "Pooled samples", "Samples": len(review["pooled_ids"]),
         "With_Collection_Date": dates, "With_Location": locations,
@@ -855,6 +1180,44 @@ def compatibility_review(review):
                 review["warnings"].append(f"{entry['info']['name']}: {status}")
             rows.append({"Source": f"{label} ({entry['info']['name']})",
                          "Reference": ", ".join(names) or "-", "Status": status})
+    for entry in review["by_role"].get("annotation", []):
+        rows.append({"Source": f"Genome annotation ({entry['info']['name']})",
+                     "Reference": ", ".join(entry["info"]["reference_ids"]) or "-",
+                     "Status": annotation_status(review, entry["info"])})
+
+
+def variant_reference_ids(review):
+    names = set()
+    for entry in review["by_role"].get("snv", []):
+        names |= set(entry["info"]["reference_ids"])
+    if review["by_role"].get("fasta") and review["reference"]:
+        names.add(review["reference"]["id"])
+    return names
+
+
+def annotation_status(review, info):
+    """How the annotation will be matched; it is applied only to the exact same accession.version."""
+
+    described = set(info["reference_ids"])
+    variants = variant_reference_ids(review)
+    reference = review["reference"]
+    if reference and reference["id"] in described:
+        lengths = dict(zip(info["reference_ids"], info["lengths"]))
+        if lengths.get(reference["id"]) and lengths[reference["id"]] != reference["length"]:
+            text = (f"The annotation's {reference['id']} has {lengths[reference['id']]} bases but the reference "
+                    f"FASTA has {reference['length']}: different sequences, so nothing will be annotated.")
+            review["warnings"].append(f"{info['name']}: {text}")
+            return text
+    matched = sorted(described & variants)
+    if matched:
+        return ("Describes " + ", ".join(matched) + ", the reference of the uploaded variants. The sequence is "
+                "checked again before use, and every reference base is verified.")
+    text = ("Describes " + (", ".join(sorted(described)) or "no sequence") + ", but the variants use "
+            + (", ".join(sorted(variants)) or "no identified reference")
+            + ". Annotations are never transferred between references, so coding consequences will not be "
+              "determined.")
+    review["warnings"].append(f"{info['name']}: {text}")
+    return text
 
 
 def analysis_plan(review, options):
@@ -917,6 +1280,13 @@ def analysis_plan(review, options):
                     "Needs " + ", ".join(name for name, present in [
                         ("individual sequences", has_fasta), ("a reference FASTA", has_reference),
                         ("pooled variant calls", has_snv)] if not present)))
+    annotation = roles.get("annotation")
+    matched = bool(annotation) and bool(set(annotation[0]["info"]["reference_ids"]) & variant_reference_ids(review))
+    plan.append(row("Mutation annotation and protein consequences", matched and (has_snv or has_fasta),
+                    "A GenBank or GFF3 annotation of the variants' reference (same accession.version)",
+                    "Coding consequences will be predicted for each distinct SNV" if matched and (has_snv or has_fasta)
+                    else ("The annotation describes a different reference" if annotation else
+                          "Optional: without an annotation, coding consequences are not determined")))
     plan.append(row("Documented-profile overlap", "signatures" in roles and (has_snv or has_fasta),
                     "A documented profile table", "Profile overlap only, never a lineage call"
                     if "signatures" in roles else "No profile table"))
@@ -991,19 +1361,25 @@ def prepared_metadata(review, options):
     return table
 
 
-def combine_variant_tables(entries, staged, folder, notes=None):
+def combine_variant_tables(entries, staged, folder, notes=None, date_order="auto"):
     """Load each pooled variant file and write one standardized CSV.
 
     Each file's import warnings are added to `notes` with the file's name.
+    A date that could not be used (for example an ambiguous day/month) is
+    written back as its original text, so the combined table flags it again.
     """
 
     frames = []
     for number, entry in enumerate(entries):
         single = prepare_variant_file(entry, staged, folder, f"variants_part{number}")
-        data, warnings = load_processed_snvs(single)
+        data, warnings = load_processed_snvs(single, date_order=date_order)
+        data["Source_File"] = entry["info"]["name"]  # which uploaded file each record came from
         if notes is not None:
             notes += [f"{entry['info']['name']}: {warning}" for warning in warnings]
-        data["Collection_Date"] = data["Collection_Date"].dt.strftime("%Y-%m-%d")
+        data["Collection_Date"] = (data["Collection_Date"].dt.strftime("%Y-%m-%d")
+                                   .fillna(data["Collection_Date_Original"]))
+        data = data.drop(columns=["Collection_Date_Original", "Collection_Date_Status",
+                                  "Frequency_Significant_Digits"])
         frames.append(data)
     combined = pd.concat(frames, ignore_index=True).astype(object)
     combined = combined.where(combined.notna(), "")  # blanks stay blank (unknown), never 0
@@ -1029,7 +1405,7 @@ def prepare_variant_file(entry, staged, folder, stem):
         return path
     table = entry.get("table")
     if table is None:
-        table = table_for(source, info)
+        table = table_for(source, info, "snv", entry.get("options"))
     if info["format"] == IVAR_TABLE_FORMAT:
         if ivar_sample_column(table.columns) is None:
             table.insert(0, "SAMPLE", info["ids"][0])
@@ -1037,10 +1413,29 @@ def prepare_variant_file(entry, staged, folder, stem):
         table.to_csv(path, sep="\t", index=False)
         return path
     path = Path(folder) / f"{stem}.csv"
-    apply_mapping(table, entry["matches"]).to_csv(path, index=False)
+    interpreted_table(entry, "snv").to_csv(path, index=False)
     return path
 
 
+def interpreted_table(entry, role):
+    """The mapped table with the user's confirmed interpretation applied (originals kept)."""
+
+    table = apply_mapping(entry["table"], entry["matches"])
+    if role == "snv" and entry.get("conflicts"):
+        table = resolve_variant_table(table, entry["conflicts"])
+    field = "Reference_Genome" if role == "snv" else "Reference_ID"
+    has_reference = field in entry.get("columns", {})
+    table, rows = interpret_table(table, entry.get("options", {}), has_reference)
+    if role == "positions" and "Reference_Genome" in table and not has_reference:
+        table = table.rename(columns={"Reference_Genome": "Reference_ID"})
+    if role != "snv" and "Read_Depth" in table and "Read_Depth" not in entry.get("columns", {}):
+        table = table.drop(columns=["Read_Depth"])
+        rows = [row for row in rows if row[0] != "Read_Depth"]
+    entry["interpretation"] = rows
+    return table
+
+
+@one_at_a_time
 def prepare_inputs(staged, review, folder, options=None):
     """Write the standardized inputs; return (paths by input key, display names)."""
 
@@ -1061,16 +1456,160 @@ def prepare_inputs(staged, review, folder, options=None):
         names["reference"] = roles["reference"][0]["info"]["name"]
     if "snv" in roles:
         entries = roles["snv"]
+        for entry in entries:
+            entry["conflicts"] = review.get("metadata_conflicts", [])
         notes = []
         paths["snv"] = (prepare_variant_file(entries[0], staged, folder, "pooled_variants")
-                        if len(entries) == 1 else combine_variant_tables(entries, staged, folder, notes))
+                        if len(entries) == 1 else combine_variant_tables(entries, staged, folder, notes,
+                                                                         options.get("date_order", "auto")))
         if notes:
             names["_notes"] = notes
         names["snv"] = ", ".join(entry["info"]["name"] for entry in entries)
+    if "annotation" in roles:
+        entry = roles["annotation"][0]
+        paths["annotation"] = folder / "annotation.txt"
+        copyfile(staged[entry["index"]], paths["annotation"])
+        names["annotation"] = entry["info"]["name"]
     for role in ("pooled_metadata", "positions", "masked_sites", "signatures"):
         if role in roles:
             entry = roles[role][0]
             paths[role] = folder / f"{role}.csv"
-            apply_mapping(entry["table"], entry["matches"]).to_csv(paths[role], index=False)
+            if role == "positions":
+                table = interpreted_table(entry, role)
+            elif role == "pooled_metadata":
+                table = prepared_pooled_metadata(review, entry, options)
+            else:
+                table = apply_mapping(entry["table"], entry["matches"])
+            table.to_csv(paths[role], index=False)
             names[role] = entry["info"]["name"]
+    if "snv" in roles and "pooled_metadata" not in roles:
+        derived = coordinates_from_variants(review)
+        if derived is not None:
+            paths["pooled_metadata"] = folder / "pooled_metadata_from_variant_table.csv"
+            derived.to_csv(paths["pooled_metadata"], index=False)
+            names["pooled_metadata"] = "Coordinates from the variant table columns"
+    names["_provenance"] = import_provenance(review)
     return paths, names
+
+
+def variant_coordinates(review):
+    """{Sample_ID: (latitude, longitude)} from mapped coordinate columns of the variant tables."""
+
+    found = {}
+    for entry in review["by_role"].get("snv", []):
+        columns = entry.get("columns", {})
+        if entry.get("table") is None or not {"Sample_ID", "Latitude", "Longitude"} <= set(columns):
+            continue
+        table = entry["table"]
+        samples = table[columns["Sample_ID"]].astype(str).str.strip()
+        latitude = table[columns["Latitude"]].astype(str).str.strip()
+        longitude = table[columns["Longitude"]].astype(str).str.strip()
+        for sample, lat, lon in zip(samples, latitude, longitude):
+            if lat and lon and sample not in found:
+                found[sample] = (lat, lon)
+    return found
+
+
+def coordinates_from_variants(review):
+    """Sample metadata holding only the variant table's coordinates (conflicts left blank), or None."""
+
+    coordinates = variant_coordinates(review)
+    if not coordinates:
+        return None
+    conflicted = {(item["Sample_ID"], item["Field"]) for item in review.get("metadata_conflicts", [])}
+    rows = [{"Sample_ID": sample,
+             "Latitude": "" if (sample, "Latitude") in conflicted else lat,
+             "Longitude": "" if (sample, "Longitude") in conflicted else lon,
+             "Metadata_Status": "Coordinates copied from the variant table"}
+            for sample, (lat, lon) in coordinates.items()]
+    samples = {row["Sample_ID"] for row in rows}
+    rows += [{"Sample_ID": sample, "Latitude": "", "Longitude": "", "Metadata_Status": "No coordinates supplied"}
+             for sample in review["pooled_ids"] if sample not in samples]
+    return pd.DataFrame(rows)
+
+
+def prepared_pooled_metadata(review, entry, options):
+    """The pooled metadata with resolutions applied; blank coordinates filled from the variant table."""
+
+    table = resolve_metadata_table(apply_mapping(entry["table"], entry["matches"]),
+                                   review.get("metadata_conflicts", []), review["pooled_ids"],
+                                   options.get("allow_unmatched_metadata"))
+    coordinates = variant_coordinates(review)
+    if coordinates:
+        conflicted = {(item["Sample_ID"], item["Field"]) for item in review.get("metadata_conflicts", [])}
+        for field, position in (("Latitude", 0), ("Longitude", 1)):
+            if field not in table:
+                table[field] = ""
+            blank = table[field].fillna("").astype(str).str.strip().eq("")
+            fill = table["Sample_ID"].map(lambda sample: "" if (sample, field) in conflicted
+                                          else coordinates.get(sample, ("", ""))[position])
+            table.loc[blank, field] = fill[blank]
+    return table
+
+
+def import_provenance(review):
+    """One row per file decision: layout, worksheet, header row, field columns, and transformations."""
+
+    rows = []
+    for entry in review["files"]:
+        info, role = entry["info"], entry["role"]
+        if info["refused"] or role in {None, "ignore"}:
+            continue
+        name, layout = info["name"], info.get("layout") or info.get("format") or info["kind"]
+
+        def add(item, source, transformation="", decided="Detected"):
+            rows.append({"File": name, "Role": ROLE_LABELS.get(role, role), "Layout": layout, "Item": item,
+                         "Source": source, "Transformation": transformation, "Decided_By": decided})
+
+        add("Format", info.get("format") or info["kind"])
+        if info.get("sheet"):
+            add("Worksheet", info["sheet"], decided="User" if len(info.get("sheets", [])) > 1 else "Detected")
+        if info.get("header_row_choice"):
+            add("Header row", f"row {info['header_row_choice']}", decided="User")
+        if info.get("sample_from_filename"):
+            add("Sample_ID", f"file name '{file_stem(name)}'", "The file holds one sample (stated by the user)",
+                "User")
+        if native_format(info):
+            depth = DOCUMENTED_DEPTH.get(info.get("format"), DOCUMENTED_DEPTH["VCF"] if info["kind"] == VCF_KIND else "")
+            if depth:
+                add("Read_Depth definition", depth, decided="Documented format")
+        if info.get("layout") == WIDE_LAYOUT:
+            counts = info.get("layout_counts", {})
+            add("Layout", f"{counts.get('samples')} sample rows x {counts.get('mutation_columns')} mutation columns",
+                f"Wide to long: {counts.get('reported')} reported cells became records; {counts.get('not_reported')} "
+                "blank/NA cells became no record", "User confirmed")
+        if info.get("layout") == BASE_COUNT_LAYOUT and role == "snv":
+            counts = info.get("layout_counts", {})
+            add("Layout", f"{counts.get('rows')} base-count rows",
+                f"Each non-reference base with at least {counts.get('minimum_reads')} read(s) became one record "
+                f"({counts.get('records')} records); frequency calculated as reads / (A+C+G+T)", "User confirmed")
+        derived_fields = {"Alt": "each non-reference base with enough reads",
+                          "Alt_Frequency": "alternative reads / (A+C+G+T)", "Read_Depth": "A+C+G+T",
+                          "Alt_Depth": "reads of the alternative base", "Ref_Depth": "reads of the Ref base"}
+        base_columns = info.get("base_count_source_columns") if role == "snv" else None
+        for match in entry.get("matches", []):
+            if match["status"] != "matched":
+                continue
+            decided = "User" if "chosen by the user" in match["evidence"] else (
+                "Matched with other files" if "chosen by matching" in match["evidence"] else "Detected")
+            if base_columns and match["field"] in derived_fields:
+                counts = ", ".join(f"'{base_columns[f'{base}_Count']}'" for base in "ACGT")
+                add(match["field"], f"derived from base-count columns {counts}", derived_fields[match["field"]],
+                    "Importer (user-confirmed minimum)")
+            elif base_columns and match["field"] in base_columns:
+                if not (match["field"] == "Sample_ID" and info.get("sample_from_filename")):
+                    add(match["field"], f"column '{base_columns[match['field']]}'", "recognized name", "Detected")
+            elif not (match["field"] == "Sample_ID" and info.get("sample_from_filename")):
+                add(match["field"], f"column '{match['column']}'", match["evidence"], decided)
+        for field, text in entry.get("interpretation", []):
+            add(field, "Option on the review page", text, "User")
+        definition = entry.get("options", {}).get("depth_definition")
+        if definition:
+            add("Read_Depth definition", DEPTH_DEFINITIONS[definition], decided="User")
+    return rows
+
+
+def mapping_rows(review):
+    """Alias kept short for the view: the provenance rows of the current review."""
+
+    return import_provenance(review)

@@ -292,7 +292,8 @@ class UploadEnrichmentTest(unittest.TestCase):
 
     def test_enrichment_page_navigation_returns_to_the_review(self):
         page, token = self.enrichment_example()
-        self.assertIn("3 · Metadata enrichment (Sprint 4, optional)", page)
+        # Phase 4A renumbered the steps (3 is now "Review available analyses").
+        self.assertIn("4 · Run · Metadata enrichment (Sprint 4, optional)", page)
         staged = literature_view.get_session(token)["staged_token"]
         names = re.findall(r'name="previous_file" value="([^"]+)"', page)
         back = self.client.post("/back", data={"target": "review", "token": staged, "previous_file": names})

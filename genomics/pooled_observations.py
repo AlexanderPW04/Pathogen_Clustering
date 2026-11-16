@@ -19,6 +19,7 @@ import pandas as pd
 from genomics.unified_schema import (
     COVERAGE_UNKNOWN,
     FREQUENCY_CALL,
+    FREQUENCY_TOLERANCE,
     NUCLEOTIDES,
     POOLED,
     depth_status,
@@ -197,12 +198,78 @@ def pooled_position_status(lookup, sample_id, reference_id, position, minimum_de
     return depth_status(depth, minimum_depth), depth
 
 
+# Loader columns kept for provenance and the depth-aware (Sprint 5) analysis.
+PROVENANCE_COLUMNS = ["Ref_Depth", "Frequency_Significant_Digits", "Collection_Date_Original",
+                      "Collection_Date_Status", "Specimen_ID", "Library_ID"]
+
+UNIQUE_RECORD = "Unique record"
+REPEAT_IDENTICAL = "Repeated record, identical measurement"
+REPEAT_CONFLICTING = "Repeated record, conflicting measurements"
+
+
+def mark_repeated_records(table):
+    """Add Duplicate_Status and Counted_Once (audit S3-13).
+
+    A pooled sample has one frequency per allele at one reference position, so
+    rows sharing Sample_ID and Variant_Key describe one observation. The first
+    row is counted; later rows are kept but not counted. When the repeated rows
+    report different frequency or depth the group is flagged as conflicting:
+    which value is right cannot be told from the table. Technical replicates
+    must use separate sample IDs to be analyzed as separate measurements.
+    """
+
+    keys = ["Sample_ID", "Variant_Key"]
+    counted = ~table.duplicated(keys, keep="first")
+    repeated = table.duplicated(keys, keep=False)
+    status = pd.Series(UNIQUE_RECORD, index=table.index, dtype=object)
+    if repeated.any():
+        subset = table.loc[repeated]
+        grouping = [subset[key] for key in keys]
+        differing = pd.Series(False, index=subset.index)
+        for column in ["Alt_Frequency", "Read_Depth", "Alt_Depth"]:
+            values = subset[column].astype("string").fillna("<blank>")
+            differing |= values.groupby(grouping).transform("nunique").gt(1)
+        status.loc[differing.index] = [REPEAT_CONFLICTING if flag else REPEAT_IDENTICAL
+                                       for flag in differing]
+        later = repeated & ~counted
+        status[later] = status[later] + " (not counted again)"
+    table["Duplicate_Status"] = status
+    table["Counted_Once"] = counted.to_numpy()
+    return table
+
+
+def add_frequency_checks(table, tolerance=FREQUENCY_TOLERANCE):
+    """Compare each reported frequency with alternate reads / depth (audit S3-06).
+
+    Nothing is overwritten: Alt_Frequency stays the reported value.
+    Count_Derived_Frequency is calculated only from a supplied alternate count
+    and depth, and Frequency_Check says whether the two agree.
+    """
+
+    alt = pd.to_numeric(table["Alt_Depth"], errors="coerce").astype(float)
+    depth = pd.to_numeric(table["Read_Depth"], errors="coerce").astype(float)
+    derived = (alt / depth).where(alt.notna() & depth.gt(0))
+    difference = table["Alt_Frequency"] - derived
+    checks = []
+    for value, gap in zip(derived, difference):
+        if pd.isna(value):
+            checks.append("No alternate read count supplied")
+        elif abs(gap) <= tolerance:
+            checks.append("Agrees with alternate reads / depth")
+        else:
+            checks.append(f"Differs from alternate reads / depth by {gap:+.4f}")
+    table["Count_Derived_Frequency"] = derived
+    table["Frequency_Difference"] = difference
+    table["Frequency_Check"] = checks
+    return table
+
+
 def pooled_variant_records(snv_data, data_source):
     """Convert standardized processed SNV rows to the shared variant table."""
 
     passthrough = [
         name for name in snv_data.columns
-        if name.startswith("Published_") or name.startswith("Source_")
+        if name.startswith("Published_") or name.startswith("Source_") or name in PROVENANCE_COLUMNS
     ]
     rows = []
     for record in snv_data.to_dict("records"):
@@ -229,7 +296,10 @@ def pooled_variant_records(snv_data, data_source):
         for name in passthrough:
             row[name] = record[name]
         rows.append(row)
-    return make_variant_table(rows)
+    table = make_variant_table(rows)
+    if "Ref_Depth" in table:
+        table["Ref_Depth"] = pd.array(pd.to_numeric(table["Ref_Depth"], errors="coerce"), dtype="Int64")
+    return add_frequency_checks(mark_repeated_records(table))
 
 
 def load_pooled_metadata(path):

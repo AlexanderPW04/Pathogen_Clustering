@@ -188,7 +188,8 @@ class ReadinessTest(unittest.TestCase):
         readiness = self.readiness(page)
         self.assertIn("Metadata readiness for: Pooled sequencing results", readiness)
         self.assertIn("Required Variant frequency Detected", readiness)
-        self.assertIn("Required Read depth Detected", readiness)
+        # Phase 4A: depth is recommended (frequency-only tables are accepted; depth analyses then stop).
+        self.assertIn("Recommended Read depth Detected", readiness)
         self.assertIn("Optional Per-position A/C/G/T counts (separate table) Missing", readiness)
         self.assertIn("the study's PCoA cannot be reproduced", readiness)
         self.assertNotIn("Sample identifier", readiness.replace("Pooled sample identifier", ""))

@@ -12,6 +12,8 @@ from base64 import b64encode
 import pandas as pd
 
 from dashboard_guide import FIGURE_GUIDE, interpretation
+from genomics.report_exports import PDF_NAME, SUMMARY_NAME, XLSX_NAME, summary_json
+from genomics.spreadsheet_safety import escape_csv_bytes, safe_csv
 
 
 MISSING = "—"  # an em dash marks a value that is not available
@@ -102,7 +104,197 @@ SECTION_SPRINTS = {
     "variation": "Sprint 2 + Sprint 3", "temporal": "Sprint 3 (with Sprint 2 dates)",
     "geography": "Sprint 2 + Sprint 3", "quality": "Sprint 2 + Sprint 3",
     "population": "Sprint 3 (Fontenele et al. 2021)", "relationships": "Sprint 2",
+    "depth-aware": "Sprint 5 (optional; builds on Sprint 3)",
 }
+
+DEPTH_AWARE_LIMITATIONS = [
+    "Higher sequencing depth generally makes a frequency more precise; low depth means more sampling "
+    "uncertainty. Depth alone does not show that a variant call is correct.",
+    "The 95% Wilson interval reflects read sampling only (a binomial model). It does not include "
+    "sequencing or amplification errors, primer bias, mapping errors, or differences between wastewater "
+    "samples, so the real uncertainty is usually larger.",
+    "A high frequency does not show that a mutation spreads more easily.",
+    "Similar frequencies do not show that two mutations are on the same viral genome: short reads rarely "
+    "connect distant positions.",
+    "Observations without quality information (base quality, strand balance, caller test) remain limited.",
+    "Changes and slopes are descriptive, not statistical tests. They do not identify lineages, outbreaks, "
+    "or transmission. Mutation-frequency grouping (Phase 3) is exploratory and kept in its own panel.",
+]
+
+OVERDISPERSION_LIMITATIONS = [
+    "Overdispersion (rho) is estimated only from technical replicates of the same specimen. Different "
+    "dates, sites, or mutations are never used instead, because real biological differences would be "
+    "mistaken for sequencing noise.",
+    "Calibrated beta-binomial intervals cover read sampling plus library-to-library variation. They do "
+    "not correct primer bias shared by every library, mapping or reference errors, contamination, or "
+    "biological differences between samples, and one rho is assumed for every site of a library.",
+    "Hypothetical rho values are sensitivity scenarios: they show how the uncertainty would change, not "
+    "what it is. A calibration on synthetic data does not show that real wastewater libraries are calibrated.",
+]
+
+
+def format_rho(value):
+    return "" if value is None or pd.isna(value) else f"{value:.3g}"
+
+
+def uncertainty_view(summary):
+    """The Phase 2 conclusion panel: one sentence, the model table, a few examples, the reasons."""
+
+    rows = []
+    for row in summary["comparison"].to_dict("records"):
+        rows.append([row["Model"], format_rho(row["Rho"]) or row["Rho_Source"], row["Calibration"],
+                     row["Observations_With_Interval"],
+                     "" if pd.isna(row["Median_Width"]) else f"{row['Median_Width']:.3f}",
+                     "" if pd.isna(row["Median_Width_Ratio_To_Wilson"])
+                     else f"{row['Median_Width_Ratio_To_Wilson']:.2f}x"])
+    return {"explanation": summary["explanation"], "headline": summary["headline"],
+            "calibrated": bool(summary["calibrated_specimens"]),
+            "comparison": {"columns": ["Model", "rho", "Calibration", "Observations with interval",
+                                       "Median 95% interval width", "Width vs basic"], "rows": rows},
+            "examples": summary["examples"], "reasons": summary["reasons"]}
+
+
+GROUPING_FIGURES = ["mutation_group_heatmap", "mutation_profile_heatmap", "mutation_group_trajectories",
+                    "grouping_comparison"]
+GROUPING_DOWNLOADS = ["sprint5_mutation_groups.csv", "sprint5_mutation_group_summary.csv",
+                      "sprint5_mutation_group_trajectories.csv", "sprint5_mutation_eligibility.csv",
+                      "sprint5_mutation_profiles.csv", "sprint5_grouping_parameters.csv",
+                      "sprint5_grouping_comparison.csv", "sprint5_group_individual_overlap.csv"]
+
+
+def grouping_view(grouping, figures, tables, available):
+    """The Phase 3 panel: what was evaluated, whether groups are shown, and why."""
+
+    if not grouping:
+        return None
+    mode = grouping.get("mode", "profiles")
+    badge = ("Off" if not grouping.get("enabled", True) else
+             "Experimental (not validated)" if grouping.get("experimental") else "Profiles only: no groups shown")
+    stats = []
+    if grouping.get("enabled", True) and "units" in grouping:
+        stats = [
+            stat("Mutations evaluated", grouping["mutations"], f"across {grouping['units']} observation unit(s)"),
+            stat("Eligible for grouping", grouping.get("eligible_ordinary", 0),
+                 f"known in at least {grouping['minimum_shared']} units; {grouping['eligible']} with read counts "
+                 "(needed by the depth-aware method)"),
+            stat("Excluded because of missing information", grouping["excluded"],
+                 "reasons in sprint5_mutation_eligibility.csv"),
+            stat("Calibration status", grouping["calibration"].split(":")[0], grouping["calibration"]),
+        ]
+        ran = [item for item in grouping["methods"] if item.get("ran")]
+        if grouping.get("experimental"):
+            depth = next((item for item in ran if item["method"].startswith("Depth-aware")), None)
+            stats.insert(3, stat("Exploratory groups found (experimental)", depth["groups"] if depth else "None",
+                                 f"{depth['grouped']} of {depth['analyzed']} analyzed mutations grouped"
+                                 if depth else "the depth-aware method did not run"))
+            stats.insert(4, stat("Grouping method", "Depth-aware (MAGOS-inspired)" if depth else "None",
+                                 "ordinary clustering shown only for comparison"))
+    methods = {"columns": ["Method", "Measurement model", "Mutations analyzed", "Groups", "Mutations grouped",
+                           "Note"],
+               "rows": [[item["method"], item["model"], item["analyzed"], item["groups"], item["grouped"],
+                         item.get("reason") or item.get("limit_note") or ""] for item in grouping["methods"]]}
+    comparison = {"columns": ["Comparison", "Mutations compared", "Adjusted Rand index", "Groups (first)",
+                              "Groups (second)", "Note"],
+                  "rows": [[row["Comparison"], row["Mutations_Compared"], f"{row['Adjusted_Rand_Index']:.2f}",
+                            row["Groups_First"], row["Groups_Second"], row["Note"]]
+                           for row in grouping.get("comparison", [])]}
+    summary_table = None
+    if "sprint5_mutation_group_summary.csv" in tables and len(tables["sprint5_mutation_group_summary.csv"]):
+        summary_table = table_view(tables["sprint5_mutation_group_summary.csv"], columns=[
+            "Group_ID", "Method", "Size", "Position_Range", "Units_With_Two_Or_More_Members", "Median_Depth",
+            "Homogeneity_P", "Group_VAF_Min", "Group_VAF_Max", "Group_Stability", "Members"],
+            limit=12, title="Exploratory groups (experimental; not lineages)",
+            filename="sprint5_mutation_group_summary.csv")
+    overlap = None
+    if "sprint5_group_individual_overlap.csv" in tables:
+        overlap = table_view(tables["sprint5_group_individual_overlap.csv"], limit=12,
+                             title="Individual sequences compared with each group (descriptive only)",
+                             filename="sprint5_group_individual_overlap.csv")
+    return {"title": grouping["title"], "explanation": grouping["explanation"], "badge": badge, "mode": mode,
+            "experimental": bool(grouping.get("experimental")), "stats": stats, "reasons": grouping["reasons"],
+            "validation": grouping.get("validation", ""), "methods": methods if methods["rows"] else None,
+            "comparison": comparison if comparison["rows"] else None, "summary_table": summary_table,
+            "overlap": overlap, "figures": figures, "limitations": grouping["limitations"],
+            "downloads": [name for name in GROUPING_DOWNLOADS if name in tables
+                          and (available is None or name in available)]}
+
+
+ANNOTATION_DOWNLOADS = ["sprint5_annotated_mutations.csv", "sprint5_mutation_annotations.csv",
+                        "sprint5_annotated_observations.csv", "sprint5_annotation_sources.csv",
+                        "sprint5_annotation_comparison.csv"]
+ANNOTATION_TABLE_HEADINGS = {
+    "Variant_Key": "Mutation", "Genes": "Gene", "Mature_Peptides": "Protein region (mature peptide)",
+    "Nucleotide_Change": "Nucleotide change", "Amino_Acid_Changes": "Predicted amino-acid change",
+    "Consequence_Category": "Predicted consequence", "Reference_Check": "Reference verification",
+    "Pooled_Samples_Observed": "Pooled samples reporting it", "Median_VAF": "Median VAF", "Max_VAF": "Highest VAF",
+    "Max_VAF_Wilson_95": "95% Wilson interval at highest VAF", "Min_Depth": "Lowest depth",
+    "Max_Depth": "Highest depth", "Count_Basis": "Read-count basis",
+    "Series_With_Two_Or_More_Dates": "Site series with 2+ dates",
+    "Individual_Sequences_Carrying": "Individual sequences carrying it",
+    "Exploratory_Group": "Exploratory group (not validated)",
+}
+
+
+def annotation_view(annotation, figures, tables, available, messages=()):
+    """The Phase 4 panel: predicted coding consequences with their sequencing evidence."""
+
+    if not annotation:
+        return None
+    view = {"title": annotation["title"], "explanation": annotation["explanation"],
+            "available": annotation["available"], "limitations": annotation["limitations"],
+            "message": annotation.get("message", ""), "notes": list(messages)}
+    if not annotation["available"]:
+        return view
+    other = ", ".join(f"{name.lower()} {count}" for name, count in annotation["other_detail"].items())
+    view["stats"] = [
+        stat("Distinct SNVs evaluated", annotation["evaluated"]),
+        stat("Successfully annotated", annotation["annotated"],
+             "reference identity and reference base verified; every overlapping coding region interpreted"),
+        stat("Synonymous", annotation["synonymous"], "same amino acid; not necessarily without effect"),
+        stat("Missense", annotation["missense"], "different amino acid predicted"),
+        stat("Other coding consequences", annotation["other_coding"], other or "stop or start codon changes"),
+        stat("Noncoding", annotation["noncoding"], "outside annotated coding regions (never counted as synonymous)"),
+        stat("Unverified or unannotatable", annotation["evaluated"] - annotation["annotated"],
+             f"{annotation['not_annotated']} not annotated, {annotation['partly']} partly annotated; reasons in the "
+             "downloads"),
+    ]
+    if annotation["overlap_differs"]:
+        view["stats"].insert(5, stat("Different consequences in overlapping coding regions",
+                                     annotation["overlap_differs"], "every consequence is kept"))
+    if annotation["shared_codons"]:
+        view["stats"].append(stat("SNVs sharing a codon with another reported SNV", annotation["shared_codons"],
+                                  "combined change not predicted without linkage evidence"))
+    references = "; ".join(f"{item['Reference_ID']} ({item['Organism']}"
+                           + (f", segment {item['Segment']}" if item["Segment"] else "") + ")"
+                           for item in annotation["references"])
+    view["source"] = (f"{annotation['format']} {annotation['source_file']}: {references}. "
+                      f"{annotation['cds_supported']} of {annotation['cds']} coding regions passed the structure "
+                      "and translation checks.")
+    if annotation["agreement"]:
+        view["agreement"] = ("Independent check against the codons and amino acids supplied with the input ("
+                             + annotation["comparison_source"] + "): "
+                             + ", ".join(f"{name.lower()} {count}" for name, count in annotation["agreement"].items())
+                             + " (sprint5_annotation_comparison.csv).")
+    table = annotation["table"]
+    shown = table[annotation["table_columns"]].rename(columns=ANNOTATION_TABLE_HEADINGS)
+    view["table"] = table_view(shown, limit=TABLE_ROWS, expand=75,
+                               title="Observed mutations: predicted consequence and sequencing evidence",
+                               filename="sprint5_annotated_mutations.csv")
+    detail_columns = ["Variant_Key", "Gene", "CDS_ID", "Product", "Strand", "Coding_Change", "Codon_Number",
+                      "Codon_Position", "Ref_Codon", "Alt_Codon", "Ref_Amino_Acid", "Alt_Amino_Acid",
+                      "Amino_Acid_Change", "Mature_Peptide", "Mature_Peptide_Position", "Consequence",
+                      "Consequence_Detail", "Linkage_Note"]
+    view["details"] = table_view(tables.get("sprint5_mutation_annotations.csv"), columns=detail_columns,
+                                 limit=25, title="Technical details: one row per mutation per coding region",
+                                 filename="sprint5_mutation_annotations.csv")
+    view["sources"] = table_view(tables.get("sprint5_annotation_sources.csv"), columns=[
+        "Reference_ID", "Segment", "Gene", "CDS_ID", "Product", "Strand", "Parts_1_Based", "Codons", "Structure",
+        "Status", "Status_Detail", "Verification"], limit=40,
+        title="Annotated coding regions and their checks", filename="sprint5_annotation_sources.csv")
+    view["figures"] = figures
+    view["downloads"] = [name for name in ANNOTATION_DOWNLOADS if name in tables
+                         and (available is None or name in available)]
+    return view
 
 
 def section(identifier, number, title, purpose):
@@ -144,6 +336,20 @@ def major_findings(result):
                         + (f"; the others: {others}." if others else "."))
     if summary.get("population_method"):
         findings.append(f"Population structure: {summary['population_method']}.")
+    aware = result.get("depth_aware")
+    if aware is not None:
+        findings.append(f"Sprint 5: {aware['with_interval']} of {aware['observations_counted']} pooled "
+                        "observations have a read-sampling uncertainty interval; "
+                        f"{aware['eligible_series']} mutation-site series have known frequencies on two or "
+                        "more dates.")
+        phase2 = aware.get("uncertainty")
+        if phase2:
+            findings.append("Sprint 5 Phase 2: " + (
+                f"overdispersion was estimated from technical replicates for {phase2['calibrated_specimens']} "
+                f"specimen(s) ({phase2['calibrated_observations']} calibrated intervals)."
+                if phase2["calibrated_specimens"] else
+                "technical overdispersion could not be estimated (no usable technical replicates); "
+                "binomial intervals are the baseline."))
     if "date_start" in summary:
         findings.append(f"Collection dates run from {summary['date_start']} to {summary['date_end']}.")
     return findings
@@ -324,9 +530,10 @@ def build_dashboard(result, download_id, available=None):
         trends = trends.sort_values(["Reported", "Variant_Key"], ascending=[False, True])
         temporal["stats"] = [
             stat("Variant-site series with 2+ reports", int(trends["Reported"].ge(2).sum())),
-            stat("Largest change between first and last report",
-                 float(trends["Change_In_Reported_Frequency"].abs().max())
-                 if trends["Change_In_Reported_Frequency"].notna().any() else None),
+            stat("Largest change between first and last known frequency",
+                 float(trends["Change_In_Callable_Frequency"].abs().max())
+                 if trends["Change_In_Callable_Frequency"].notna().any() else None,
+                 "reported values and base-count non-detections only"),
         ]
     elif pooled is None and "sampling_timeline" not in result["figures"]:
         temporal["unavailable"] = "Temporal analysis needs collection dates."
@@ -366,6 +573,9 @@ def build_dashboard(result, download_id, available=None):
             stat("Pooled samples with known genome coverage",
                  int(pooled["samples"]["Genome_Coverage_Percent"].notna().sum()),
                  f"of {len(pooled['samples'])}"),
+            stat("Pooled reference", "; ".join(sorted(set(pooled["reference_status"]["Status"])))
+                 if pooled.get("reference_status") is not None else None,
+                 "positions and Ref bases checked against a supplied FASTA only when verified"),
             stat("Median depth at reported variants",
                  float(pd.to_numeric(variants["Read_Depth"], errors="coerce").median())
                  if pd.to_numeric(variants["Read_Depth"], errors="coerce").notna().any() else None,
@@ -380,6 +590,7 @@ def build_dashboard(result, download_id, available=None):
     finish(quality, ["quality", "qc_outcomes", "depth_distribution", "callable_positions",
                      "variants_per_sample", "depth_vs_snvs"], [
         table("paper_method_reproduction.csv", "Which Fontenele et al. (2021) methods were reproduced"),
+        table("reference_verification.csv", "Pooled reference verification"),
         table("variants_per_sample.csv", "Pooled samples: SNVs, coverage, and QC",
               columns=["Sample_ID", "Collection_Date", "Location_Name", "SNV_Records",
                        "Distinct_SNVs", "Distinct_SNVs_After_QC", "Genome_Coverage_Percent",
@@ -388,7 +599,8 @@ def build_dashboard(result, download_id, available=None):
               columns=["Sample_ID", "Collection_Date", "Location_Name", "Sequenced_Span",
                        "Reference_Identity_Percent", "Genome_Coverage_Percent",
                        "Quality_Status", "Variant_Profile_Status"]),
-    ], ["quality", "figures"], ["paper_method_reproduction.csv", "pooled_variants_with_qc.csv",
+    ], ["quality", "figures"], ["paper_method_reproduction.csv", "reference_verification.csv",
+                                "pooled_variants_with_qc.csv",
                                 "pooled_samples_with_qc.csv", "variants_per_sample.csv",
                                 "individual_samples.csv"])
     fit = result.get("regression")
@@ -422,7 +634,9 @@ def build_dashboard(result, download_id, available=None):
         table("pcoa_coordinates.csv", "PCoA coordinates"),
         table("nucleotide_diversity.csv",
               "Mean per-position nucleotide diversity (1 - sum of squared A/C/G/T frequencies)"),
-    ], ["population"], ["pcoa_coordinates.csv", "dissimilarity_matrix.csv", "nucleotide_diversity.csv"])
+        table("yue_clayton_pairs.csv", "Shared covered positions for each sample pair (paper method)"),
+    ], ["population"], ["pcoa_coordinates.csv", "dissimilarity_matrix.csv", "nucleotide_diversity.csv",
+                        "yue_clayton_pairs.csv"])
     if structure.get("exploratory"):
         for item in structure["figures"]:
             if item["name"] == "pcoa" and item["guide"]:
@@ -440,24 +654,105 @@ def build_dashboard(result, download_id, available=None):
             "Geographic_Precision_1", "Geographic_Precision_2"]),
     ], ["relationships"], ["pairwise_distances.csv"])
 
+    # 9. Sprint 5: depth-aware variant analysis ------------------------------
+    depth = section("depth-aware", 9, "Sprint 5 — Depth-Aware Variant Analysis",
+                    "This analysis examines how strongly sequencing data support observed pathogen mutations "
+                    "and how their frequencies change over time.")
+    aware = result.get("depth_aware")
+    depth["messages"] = []
+    depth["annotation"] = annotation_view(result.get("annotation"), figures_for("mutation_annotation_overview"),
+                                          tables, available, notes.get("annotation", []))
+    if aware is None:
+        depth["unavailable"] = ("This optional analysis needs a processed pooled SNV table: sample, position, "
+                                "reference and alternative base, and frequency. Read depth (and ideally read "
+                                "counts) is needed for uncertainty, and collection dates for time series.")
+    else:
+        depth["messages"] = aware["messages"]
+        counts_detail = (f"{aware['supplied_counts']} supplied or from base counts, "
+                         f"{aware['reconstructed_counts']} reconstructed from frequency x depth")
+        depth["stats"] = [
+            stat("Samples evaluated", aware["samples"]),
+            stat("SNV observations evaluated", aware["observations_counted"],
+                 f"{aware['observations'] - aware['observations_counted']} repeated record(s) counted once"
+                 if aware["observations"] != aware["observations_counted"] else ""),
+            stat("Observations with usable depth", aware["with_depth"]),
+            stat("Observations with verified or reconstructed alternative read counts",
+                 aware["supplied_counts"] + aware["reconstructed_counts"], counts_detail),
+            stat("Observations with calculated uncertainty", aware["with_interval"], "95% Wilson interval"),
+            stat("Observations missing required information", aware["missing_required"],
+                 "no interval; see the reasons table"),
+            stat("Variants eligible for time-series analysis", aware["eligible_variants"],
+                 f"known values on 2+ dates at one site; {aware['eligible_series']} mutation-site series"),
+        ]
+        depth["grouping"] = grouping_view(aware.get("grouping"), figures_for(*GROUPING_FIGURES), tables, available)
+        phase2 = aware.get("uncertainty")
+        if phase2:
+            depth["uncertainty"] = uncertainty_view(phase2)
+            depth["stats"].append(stat(
+                "Overdispersion (rho) estimated", f"{phase2['calibrated_specimens']} specimen(s)"
+                if phase2["calibrated_specimens"] else "Not estimated",
+                f"{phase2['calibrated_observations']} calibrated beta-binomial intervals"
+                if phase2["calibrated_specimens"] else "needs documented technical replicates (Specimen_ID + distinct Library_ID)"))
+    finish(depth, ["vaf_time_series", "uncertainty_models", "replicate_concordance", "vaf_depth",
+                   "depth_dependence"], [
+        table("sprint5_overdispersion_calibration.csv", "Overdispersion estimated from technical replicates",
+              columns=["Specimen_ID", "Replicate_1", "Replicate_2", "Status", "Sites_Used", "Rho_Estimate",
+                       "Rho_Lower_95", "Rho_Upper_95", "Rho_Used_For_Intervals", "Plugin_Likelihood_Rho",
+                       "Status_Detail"]),
+        table("sprint5_missing_information.csv", "What the data lack and what that prevents"),
+        table("sprint5_temporal_summary.csv", "Mutation frequencies over time by site (first 30)", limit=30,
+              columns=["Variant_Key", "Location_Name", "Samples", "Detections", "Supported_Non_Detections",
+                       "Unknown_Or_Uncallable", "Known_Dated_Time_Points", "Earliest_Date", "Earliest_VAF",
+                       "Latest_Date", "Latest_VAF", "Absolute_Change", "Slope_Per_Week", "Series_Status",
+                       "Interpretation_Note"]),
+        table("sprint5_vaf_observations.csv", "VAF, read support, and uncertainty per observation (first 25)",
+              columns=["Sample_ID", "Collection_Date", "Variant_Key", "Reported_Frequency", "Alt_Read_Count",
+                       "Alt_Count_Source", "Total_Depth", "VAF", "Wilson_Lower", "Wilson_Upper",
+                       "Interval_Status", "QC_Status", "Validation_Warnings"]),
+        table("sprint5_depth_dependence.csv", "Same VAF at different depths (illustration)"),
+    ], ["depth_aware"], ["sprint5_vaf_observations.csv", "sprint5_temporal_summary.csv",
+                         "sprint5_missing_information.csv", "sprint5_depth_dependence.csv",
+                         "sprint5_uncertainty_models.csv", "sprint5_overdispersion_sensitivity.csv",
+                         "sprint5_overdispersion_calibration.csv", "sprint5_calibration_sites.csv"])
+    if aware is not None:
+        depth["limitations"] += DEPTH_AWARE_LIMITATIONS + OVERDISPERSION_LIMITATIONS
+
     cross["story"] = shared_variant_story(result)
     view = {"summary": summary, "notes": notes, "download_id": download_id,
             "sections": [overview, cross, variation, temporal, geography, quality, structure,
-                         relationships]}
+                         relationships, depth]}
     for item in view["sections"]:
         view[item["id"].replace("-", "_")] = item
     view["provenance"] = table_view(tables.get("provenance.csv"), title="Provenance record")
     view["downloads"] = sorted(tables) + sorted(f"{name}.png" for name in result["figures"])
+    # Phase 4A: consolidated downloads, the pre-run readiness, and the import record.
+    view["report_downloads"] = ([XLSX_NAME, PDF_NAME] if available is None or SUMMARY_NAME in available else [])
+    view["export_notes"] = result.get("export_notes", [])
+    view["findings"] = major_findings(result)
+    view["readiness"] = (result.get("import_details") or {}).get("readiness") or []
+    view["import_provenance"] = (table_view(tables["import_provenance.csv"], limit=TABLE_ROWS, title="Import provenance",
+                                            filename="import_provenance.csv", expand=EXPANDED_ROWS)
+                                 if len(tables.get("import_provenance.csv", [])) else None)
+    view["matching"] = (table_view(tables["metadata_matching.csv"], title="Sample metadata matching",
+                                   filename="metadata_matching.csv")
+                        if "metadata_matching.csv" in tables else None)
+    view["canonical"] = result.get("canonical")
     return view
 
 
-def download_files(result, extra_files=None, size_limit=8 * 1024 * 1024):
-    """Encode tables as CSV and figures as PNG for the temporary download cache."""
+def download_files(result, extra_files=None, size_limit=8 * 1024 * 1024, reports=True):
+    """Encode tables as CSV and figures as PNG for the temporary download cache.
+
+    Phase 4A also stores a small analysis_summary.json (findings, notes,
+    readiness, figure titles). The XLSX workbook and the PDF report are built
+    from these stored files only when someone downloads them
+    (genomics.report_exports), so the analysis request is not slowed down.
+    """
 
     files = {}
     skipped = []
     for name, table in result["tables"].items():
-        content = table.to_csv(index=False).encode("utf-8")
+        content = safe_csv(table)  # formula-like text escaped (audit P1-2)
         if len(content) > size_limit:
             skipped.append(name)
             continue
@@ -465,5 +760,12 @@ def download_files(result, extra_files=None, size_limit=8 * 1024 * 1024):
     for name, figure in result["figures"].items():
         files[f"{name}.png"] = (figure["png"], "image/png")
     for name, content in (extra_files or {}).items():
-        files[name] = (content, "text/csv")
+        files[name] = (escape_csv_bytes(content), "text/csv")
+    result["export_notes"] = []
+    if reports and (result.get("pooled") is not None or result.get("individual") is not None):
+        files[SUMMARY_NAME] = (summary_json(result, major_findings(result)), "application/json")
+        large = [name for name in skipped if name.endswith(".csv")]
+        if large:
+            result["export_notes"].append("Tables too large for the download cache are also missing from the "
+                                          "workbook: " + ", ".join(large) + ".")
     return files, skipped

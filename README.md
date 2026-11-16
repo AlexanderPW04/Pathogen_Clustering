@@ -493,6 +493,10 @@ The named-field form fields (`fasta_file`, `metadata_file`, `reference_file`,
 | Fontenele et al. (2021) Supplementary Table 2 (`mmc2.xlsx`) | Pooled SNV table with published annotations | Full; verified against the real workbook (see `ARTICLE_METHOD_VALIDATION.md`). |
 | iVar `variants` TSV | Pooled SNV table | Full for SNVs; insertions/deletions are set aside and counted. Without a `SAMPLE` column, one file = one sample named after the file (shown on the review page). Several iVar files are combined. |
 | VCF `.vcf`, `.vcf.gz` | Pooled SNV calls | Partial by design: single-nucleotide alleles only. Frequencies come only from allele-specific values: `FORMAT/AD` (one value per allele), `FORMAT/AO`+`RO`, `FORMAT/AF`, iVar `FORMAT/ALT_FREQ` (single ALT), or `INFO/AF` only for a sites-only file (LoFreq style; with sample columns INFO/AF can be genotype-based). With allele counts, depth is their total, so frequency = alternate reads / depth. Multi-allelic records are split per allele only when such values exist. Genotype-only (`GT`) entries, indels, symbolic alleles, and entries with no alternate reads are set aside and counted; they are never turned into 0% frequencies. `FILTER` is recorded, not applied. VCF has no dates or sites, so add pooled metadata for those analyses. A sites-only VCF uses its file name as the sample ID (shown). |
+| GenBank (`.gb`, `.gbk`) or GFF3 (`.gff3`), optional | Genome annotation for predicted coding consequences (Sprint 5 Phase 4) | Full for single-nucleotide substitutions. It must describe the same accession.version as the variants; a GenBank file carries the sequence, and a GFF3 file without `##FASTA` needs the matching reference FASTA. Segmented genomes (one record per segment), joined and minus-strand coding regions, and ribosomal slippage are supported. Partial genes, RNA editing, and translation exceptions are marked unsupported. The official NCBI files for SARS-CoV-2 NC_045512.2 are in `examples/annotation/`. |
+| Wide sample-by-mutation matrix (CSV/TSV/XLSX; Sprint 5 Phase 4A) | Pooled frequencies: one row per sample, one column per mutation | Full once you confirm the layout on the review page. A column is a mutation only when its header states one single-nucleotide change (`C10029T`, `10029C>T`, `g.10029C>T`, or PiGx `GENE:AA::C10029T`); other change headers are listed and not analyzed. Blank or `NA` cells are "not reported" and become no record (never 0%). There is no depth in such a table, so count-based analyses are unavailable. Checked on Schumann et al. (2022) mmc1/mmc2. |
+| Base-count table with a reference base (Phase 4A) | Sample, position, Ref, and A/C/G/T read counts but no Alt column (for example inStrain output) | Full once you enter the minimum number of reads documented by the source: each non-reference base with at least that many reads becomes one record with measured counts. Its frequency is labelled "calculated by the importer". Checked on Crits-Christoph et al. (2021) Table S4 and the authors' GitHub tables. |
+| Mapping profile `.json` (Phase 4A, optional) | Reuse confirmed column choices | Saved and loaded on the review page. It holds roles, column names, and confirmed options, never records or sample values, and is applied only to files with the same layout and every mapped column. |
 | FASTQ (`.fastq`, `.fq`), SAM/BAM/CRAM | Raw reads / alignments | **Not accepted** as results. They are recognized and refused with a pointer to `offline_workflow/`. |
 | Other files | — | Refused with a message. |
 
@@ -521,6 +525,7 @@ names (except the visible fallback sample ID above) or from sequence length.
 | Variant-frequency analysis | Interpretable 0–1 frequencies | Records without one are rejected by the importer |
 | Coverage-aware non-detection | Per-position depth | Unreported variants stay "coverage unknown", never 0% |
 | Paper Yue–Clayton PCoA | Per-position A/C/G/T counts | A labeled exploratory ordination is shown instead |
+| Mutation annotation and protein consequences (Sprint 5 Phase 4) | A GenBank or GFF3 annotation of the same reference (same accession.version and sequence) | Coding consequences are not determined; the panel says so and every other analysis runs |
 
 **Metadata rule change (documented and tested).** Individual metadata now
 requires only `Accession` and `Pathogen`. A missing `Collection_Date`,
@@ -635,12 +640,39 @@ coverage), and the paper-method PCoA on 7 pooled samples.
   differences) is in `ARTICLE_METHOD_VALIDATION.md`, and
   `python validation/check_fontenele_2021.py path\to\mmc2.xlsx` repeats it.
   The whole table runs in about 8 seconds.
+- **Mutation annotation:** add `examples/annotation/NC_045512.2.gb` (the official
+  NCBI GenBank record, also downloadable from the upload page) to the upload of
+  `mmc2.xlsx`. Section 9 then shows each SNV's gene, codon, and predicted
+  amino-acid change. All 5,613 coding SNVs agree with the codons and amino
+  acids published in the workbook; its 64 UTR SNVs, labeled "Syn" there, are
+  reported as noncoding. Predictions are sequence consequences only, not
+  biological effects (see `docs/SPRINT5_PHASE4_IMPLEMENTATION_REPORT.md`).
 - **Individual + cross-source:** upload SARS-CoV-2 consensus sequences from a
   comparable place and period, the NC_045512.2 reference FASTA (one record),
   and the pooled table. The bundled H5N1 influenza Sprint 2 data and the
   SARS-CoV-2 wastewater data are different pathogens and cannot be compared.
 - Data larger than the 10 MB web limit (for example a genome-wide A/C/G/T
-  table for 52 samples) should be analyzed with `run_integrated_analysis.py`.
+  table for 52 samples) should be analyzed with `run_integrated_analysis.py`
+  (add `--reports` for the XLSX workbook and the PDF report).
+- **Other laboratories' tables (Sprint 5 Phase 4A).** The review page asks only
+  what headers cannot settle:
+  - whether frequencies are fractions or percentages;
+  - 0-based or 1-based positions (checked against the reference FASTA);
+  - the reference accession when a table has none;
+  - the depth definition;
+  - a wide layout;
+  - the base-count minimum;
+  - the header row;
+  - whether to use the file name as the sample ID.
+
+  Separate metadata is joined only by identical Sample_IDs, and conflicts are never settled
+  silently. Step 3 lists which analyses the data support (Available, Partially available,
+  Unavailable, Experimental). Results come as a dashboard, CSV/PNG files, one XLSX workbook,
+  and a PDF report.
+
+  `validation/check_published_datasets.py` repeats the real-data checks on
+  Fontenele et al. (2021), Crits-Christoph et al. (2021), and Schumann et
+  al. (2022). Details are in `docs/SPRINT5_PHASE4A_IMPLEMENTATION_REPORT.md`.
 
 ## Requirements
 
@@ -1217,8 +1249,15 @@ combinations** (measured locally on generated tables).
 - `MAX_OBSERVATION_CELLS` (set to 700,000 in the Dockerfile; unset locally means
   no limit) refuses larger analyses at the review step with a clear message.
   Samples and variants are **never** removed to make a dataset fit.
-- `MAX_WORKSHEET_CELLS` (default 4,000,000) refuses oversized worksheets while
-  they are being read.
+- `MAX_WORKSHEET_CELLS` (default 4,000,000; 1,500,000 in the Dockerfile) refuses
+  oversized worksheets while they are being read, and CSV/TSV tables before they
+  are parsed. `MAX_TABLE_COLUMNS` (default 20,000) refuses very wide text tables.
+  Uploads are read one at a time; a second visitor waits up to a minute and is
+  then told the server is busy. (Comprehensive audit P1-1: before this, a 0.2 MB
+  compressed CSV could push the review step to about 1 GB.)
+- Downloaded CSV and XLSX files never contain live spreadsheet formulas: text
+  that starts with `=`, `+`, `-`, or `@` (and is not a number) is written with a
+  leading apostrophe (audit P1-2). Numbers and a lone `+`/`-` are unchanged.
 - The published workbook's companion `mmc3.xlsx` (Supplementary Table 3) lists
   novel SNVs without per-sample frequencies or depths, so it cannot be analyzed;
   the review page says so. Use `mmc2.xlsx`.

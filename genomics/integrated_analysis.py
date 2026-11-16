@@ -23,6 +23,13 @@ import pandas as pd
 
 from geocode_locations import is_state_only_location
 from genomics import figures
+from genomics.depth_aware_analysis import run_depth_aware_analysis
+from genomics.mutation_group_analysis import add_individual_overlap
+from genomics.canonical_model import add_canonical_tables
+from genomics.mutation_annotation import run_mutation_annotation
+from genomics.overdispersion import CALIBRATION_MIN_DEPTH, CALIBRATION_VAF_HIGH, CALIBRATION_VAF_LOW, MINIMUM_SITES
+from genomics.overdispersion_analysis import DEFAULT_SENSITIVITY_RHOS
+from genomics import mutation_grouping
 from genomics.diversity_analysis import EXPLORATORY_ORDINATION, population_structure
 from genomics.pooled_observations import (
     build_depth_lookup,
@@ -36,6 +43,7 @@ from genomics.quality_control import (
     PAPER_SETTINGS,
     apply_pooled_quality_control,
     load_masked_sites,
+    reference_verification,
 )
 from genomics.references import build_reference_registry, load_reference_fasta
 from genomics.sequence_variants import (
@@ -59,16 +67,21 @@ from genomics.variant_matching import (
     compare_signatures,
     load_signatures,
 )
-from wastewater.processed_snv import load_processed_snvs
+from wastewater.processed_snv import PAPER_FORMAT, load_processed_snvs
 
 
 DEFAULT_SETTINGS = {
     "qc_mode": PAPER_MODE,
     "date_window_days": 14,
+    "overdispersion_rhos": list(DEFAULT_SENSITIVITY_RHOS),
+    "grouping_mode": "profiles",
+    "grouping_minimum_shared": mutation_grouping.DEFAULT_MINIMUM_SHARED,
     **PAPER_SETTINGS,
 }
 
 TRAJECTORY_VARIANTS = 6
+NO_DATES_MESSAGE = ("Temporal trends unavailable because collection dates were not provided (or none "
+                    "could be used: missing, partial, or ambiguous day/month dates are not guessed).")
 MATRIX_VARIANTS = 40
 HEATMAP_VARIANTS = 40
 
@@ -97,7 +110,10 @@ def position_summary(pooled_variants, individual_variants, reference_id):
                                    & pooled_variants["Reference_ID"].eq(reference_id)]
         by_variant = included.groupby("Variant_Key")
         sample_counts = by_variant["Sample_ID"].nunique()
-        medians = by_variant["Alt_Frequency"].median()
+        # Each sample counts once in the median (audit S3-13): repeated rows for one
+        # sample and variant are one observation, as in the observation matrix.
+        once = included.drop_duplicates(["Sample_ID", "Variant_Key"])
+        medians = once.groupby("Variant_Key")["Alt_Frequency"].median()
         firsts = included.drop_duplicates("Variant_Key").to_dict("records")
         for first in sorted(firsts, key=lambda row: row["Variant_Key"]):
             key = first["Variant_Key"]
@@ -161,7 +177,7 @@ def run_integrated_analysis(individual_data=None, mafft_path=None, reference_pat
                             snv_path=None, pooled_metadata_path=None, position_path=None,
                             masked_sites_path=None, signature_path=None, settings=None,
                             input_labels=None, relationship=None, input_notes=None,
-                            pooled_overrides=None):
+                            pooled_overrides=None, annotation_path=None, import_details=None):
     """Return a dictionary of tables, figures, summaries, notes, and provenance.
 
     `relationship` optionally carries the Sprint 2 pairwise results
@@ -169,13 +185,17 @@ def run_integrated_analysis(individual_data=None, mafft_path=None, reference_pat
     drawn with the rest of the dashboard; they are not recalculated here.
     `input_notes` are messages from preparing the inputs (for example each
     combined file's import warnings); they are shown with the quality notes.
+    `import_details` (Phase 4A) carries the import provenance, the metadata
+    matching report, and the pre-run readiness assessment from the review
+    page; they are written as tables and change no calculation.
     """
 
     settings = {**DEFAULT_SETTINGS, **(settings or {})}
-    labels = input_labels or {}
+    labels = {key: value for key, value in (input_labels or {}).items() if not str(key).startswith("_")}
     result = {"tables": {}, "figures": {}, "notes": {}, "summary": {}, "reference": None,
               "individual": None, "pooled": None, "population": None, "comparison": None,
-              "settings": settings, "relationship": relationship}
+              "depth_aware": None, "annotation": None,
+              "settings": settings, "relationship": relationship, "input_labels": labels}
 
     def note(section, text):
         result["notes"].setdefault(section, []).append(text)
@@ -217,7 +237,8 @@ def run_integrated_analysis(individual_data=None, mafft_path=None, reference_pat
     # 3. Pooled observations and quality control.
     pooled = None
     if snv_path:
-        snv_data, warnings = load_processed_snvs(snv_path, pooled_metadata_path)
+        snv_data, warnings = load_processed_snvs(snv_path, pooled_metadata_path,
+                                                 settings.get("date_order", "auto"))
         if pooled_overrides:
             override_pooled_records(snv_data, pooled_overrides)
         input_format = snv_data.attrs.get("input_format", "Processed SNV table")
@@ -234,8 +255,17 @@ def run_integrated_analysis(individual_data=None, mafft_path=None, reference_pat
         variants, samples, report = apply_pooled_quality_control(
             variants, samples, settings["qc_mode"], masked, settings, reference, registry
         )
+        label_source = ("Assigned by this application from the publication's methods (reads mapped to "
+                        "NC_045512.2); not stated in the table itself" if input_format == PAPER_FORMAT
+                        else "From the uploaded table")
+        references = reference_verification(variants, reference, registry, label_source)
+        result["tables"]["reference_verification.csv"] = references
+        for row in references.to_dict("records"):
+            if row["Status"] != "Verified compatible":
+                note("quality", f"Reference {row['Reference_ID']}: {row['Status'].lower()}. {row['Detail']}")
         pooled = {"variants": variants, "samples": samples, "report": report,
-                  "metadata_supplied": metadata is not None,
+                  "reference_status": references,
+                  "metadata_supplied": metadata is not None, "metadata": metadata,
                   "warnings": warnings, "input_format": input_format,
                   "position_table": position_table,
                   "depth_lookup": build_depth_lookup(position_table)}
@@ -294,10 +324,15 @@ def run_integrated_analysis(individual_data=None, mafft_path=None, reference_pat
                            lambda: figures.genome_position_figure(summary, annotation_ranges(summary)))
 
         matrix = observation_matrix(variants, samples, pooled["depth_lookup"],
-                                    settings["min_variant_depth"])
+                                    settings["min_variant_depth"], pooled["position_table"])
         result["tables"]["pooled_observation_matrix.csv"] = matrix
         trends = frequency_trends(matrix)
         result["tables"]["temporal_trends.csv"] = trends
+        if trends.attrs.get("series_without_known_frequency"):
+            note("temporal", f"{trends.attrs['series_without_known_frequency']} variant-site series have no "
+                             "known frequency (the variant was never reported at that site and no base counts "
+                             "were supplied); they are left out of temporal_trends.csv. Their statuses are in "
+                             "pooled_observation_matrix.csv.")
         result["tables"]["site_date_summary.csv"] = location_date_summary(variants, samples)
         # Figures show one reference at a time so positions are never mixed.
         figure_matrix = matrix[matrix["Reference_ID"].eq(reference_id)] if reference_id else matrix
@@ -307,18 +342,25 @@ def run_integrated_analysis(individual_data=None, mafft_path=None, reference_pat
                              + ", ".join(other_references) + " are in the downloadable tables only.")
         if not figure_matrix.empty:
             matrix_for_figures = figure_matrix
-            counts = (figure_matrix[figure_matrix["Status"].eq("Variant observed")]
-                      .groupby("Variant_Key")["Sample_ID"].nunique().sort_values(ascending=False))
-            repeated = [key for key, value in counts.items() if value >= 2][:TRAJECTORY_VARIANTS]
+            observed = figure_matrix[figure_matrix["Status"].eq("Variant observed")]
+            counts = observed.groupby("Variant_Key")["Sample_ID"].nunique().sort_values(ascending=False)
+            # Time figures need dated samples (audit S3-04): undated or ambiguous dates are never plotted.
+            dated_counts = (observed[observed["Collection_Date"].notna()].groupby("Variant_Key")["Sample_ID"]
+                            .nunique().sort_values(ascending=False))
+            repeated = [key for key, value in dated_counts.items() if value >= 2][:TRAJECTORY_VARIANTS]
             heatmap_keys = sorted(list(counts.index[:HEATMAP_VARIANTS]),
                                   key=lambda key: (int(key.split(":")[1]), key))
-            if repeated:
+            if not figure_matrix["Collection_Date"].notna().any():
+                note("temporal", NO_DATES_MESSAGE)
+            elif repeated:
                 add_figure(result, "trajectories", "Variant frequencies over time",
-                           "Lines join reported frequencies only. Unreported observations sit in "
-                           "the gray strip by reason; they are not plotted as 0%.",
+                           "Lines join known frequencies: reported values and, when A/C/G/T counts were "
+                           "supplied, base-count values at covered unreported positions (open circles on "
+                           "0 = no alternative reads). Observations without a known frequency sit in the "
+                           "gray strip by reason; they are not plotted as 0%. Undated samples are not shown.",
                            lambda: figures.trajectory_figure(matrix_for_figures, repeated))
             else:
-                note("temporal", "No variant was reported in two or more included pooled samples.")
+                note("temporal", "No variant was reported in two or more dated, included pooled samples.")
             add_figure(result, "heatmap", "Sample-by-variant heatmap",
                        f"Up to {HEATMAP_VARIANTS} variants reported in the most samples.",
                        lambda: figures.heatmap_figure(matrix_for_figures, heatmap_keys))
@@ -327,19 +369,23 @@ def run_integrated_analysis(individual_data=None, mafft_path=None, reference_pat
                        "depth without a report, low or no coverage, unknown coverage, or a QC-excluded "
                        "call. Unknown is never treated as 0%.",
                        lambda: figures.observation_status_figure(matrix_for_figures))
-            if trends["Change_In_Reported_Frequency"].notna().any():
+            if trends["Change_In_Callable_Frequency"].notna().any():
                 add_figure(result, "frequency_changes", "Changes between collection dates",
-                           "First versus last reported frequency for each variant reported at least "
-                           "twice at one site, with the number of days between them. Intervals are "
+                           "First versus last known frequency for each variant with at least two known "
+                           "values at one site. Known values are reported frequencies and, when A/C/G/T "
+                           "counts were supplied, base-count values at covered unreported positions "
+                           "(0 = no alternative reads). Unknown coverage is never 0. Intervals are "
                            "irregular, so the changes are not rates.",
                            lambda: figures.frequency_change_figure(trends))
             else:
-                note("temporal", "No variant has two reported frequencies at the same site, so "
-                                 "changes between dates cannot be shown.")
+                note("temporal", "No variant has two known frequencies on different dates at the same "
+                                 "site, so changes between dates cannot be shown.")
 
         population = population_structure(samples, variants, pooled["position_table"])
         result["population"] = population
         note("population", population["message"])
+        if population.get("pairs") is not None:
+            result["tables"]["yue_clayton_pairs.csv"] = population["pairs"]
         if population["available"]:
             result["tables"]["pcoa_coordinates.csv"] = population["coordinates"]
             result["tables"]["dissimilarity_matrix.csv"] = population["distances"].reset_index(
@@ -357,6 +403,9 @@ def run_integrated_analysis(individual_data=None, mafft_path=None, reference_pat
                        population["message"],
                        lambda: figures.pcoa_figure(population["coordinates"], pcoa,
                                                    population["method"], exploratory))
+
+        # Sprint 5: depth-aware VAF, uncertainty, and mutation-frequency time series.
+        run_depth_aware_analysis(result, pooled, matrix, reference, settings, add_figure, note)
 
     # 5. Cross-source comparison.
     if individual is not None and pooled is not None:
@@ -393,7 +442,12 @@ def run_integrated_analysis(individual_data=None, mafft_path=None, reference_pat
             add_figure(result, "cross_source_positions", "Reference positions by evidence category",
                        "Every comparable variant at its reference position, one row per category.",
                        lambda: figures.cross_source_positions_figure(comparison, reference["Length"]))
-        if not comparison.empty:
+        dated_sources = (individual["variants"]["Collection_Date"].notna().any()
+                         or pooled["variants"]["Collection_Date"].notna().any())
+        if not comparison.empty and not dated_sources:
+            note("cross_source", "The cross-source timeline is not drawn because no collection dates "
+                                 "were provided (or none could be used).")
+        elif not comparison.empty:
             add_figure(result, "cross_source_timeline", "When variants were seen in each source",
                        "Triangles: individual sequences carrying the variant. Circles: pooled "
                        "samples reporting it (larger = higher frequency).",
@@ -404,9 +458,16 @@ def run_integrated_analysis(individual_data=None, mafft_path=None, reference_pat
             signatures = load_signatures(signature_path)
             result["tables"]["variant_signature_overlap.csv"] = compare_signatures(
                 signatures, reference, registry, individual, pooled, settings["min_variant_depth"])
+        # Sprint 5 Phase 3: descriptive comparison of exploratory groups with individual sequences.
+        add_individual_overlap(result)
     elif individual is not None or pooled is not None:
         note("cross_source", "Cross-source comparison needs individual sequences with a "
                              "reference FASTA and a pooled SNV table on a compatible reference.")
+
+    # Sprint 5 Phase 4: predicted coding consequences of the observed SNVs (optional annotation file).
+    if pooled is not None or individual is not None:
+        run_mutation_annotation(result, annotation_path, reference, pooled, individual, add_figure, note,
+                                labels.get("annotation"))
 
     if individual is not None and pooled is None and not individual["variants"].empty:
         summary = position_summary(None, individual["variants"], reference["Reference_ID"])
@@ -462,6 +523,15 @@ def run_integrated_analysis(individual_data=None, mafft_path=None, reference_pat
                    lambda: figures.completeness_figure(result["completeness"]))
     if relationship is not None and relationship.get("pairs") is not None:
         relationship_figures(result, relationship, note)
+
+    # Sprint 5 Phase 4A: canonical tables and the import record (selection only, no calculation).
+    details = import_details or {}
+    add_canonical_tables(result, details.get("provenance"))
+    for name, rows in [("analysis_readiness.csv", details.get("readiness")),
+                       ("metadata_matching.csv", details.get("matching"))]:
+        if rows:
+            result["tables"][name] = pd.DataFrame(rows)
+    result["import_details"] = details
 
     result["summary"] = build_summary(result, individual_data)
     result["analyses"] = analysis_status(result, individual_data, relationship)
@@ -679,18 +749,81 @@ def analysis_status(result, individual_data, relationship):
             "Completed" if result.get("regression") else "Skipped",
             "Needs mean depth for at least three included pooled samples"
             if not result.get("regression") else f"n = {result['regression']['n']}")
-        add("Temporal frequency trends", "Completed" if "trajectories" in result["figures"] else "Limited",
-            "Trajectories need a variant reported in two or more included samples"
-            if "trajectories" not in result["figures"] else "Reported frequencies over collection dates")
+        dated = int(pooled["samples"]["Collection_Date"].notna().sum())
+        if not dated:
+            add("Temporal frequency trends", "Skipped", NO_DATES_MESSAGE)
+        else:
+            add("Temporal frequency trends", "Completed" if "trajectories" in result["figures"] else "Limited",
+                "Trajectories need a variant reported in two or more dated, included samples"
+                if "trajectories" not in result["figures"] else
+                f"Known frequencies over collection dates ({dated} of {len(pooled['samples'])} pooled "
+                "samples have a usable date)")
+        statuses = pooled["reference_status"]["Status"]
+        add("Pooled reference verification",
+            "Completed" if statuses.eq("Verified compatible").all() else "Limited",
+            "; ".join(f"{row['Reference_ID']}: {row['Status']}"
+                      for row in pooled["reference_status"].to_dict("records")))
         population = result["population"]
         if population is not None:
             add("Population structure", "Completed" if population["available"] else "Skipped",
                 population["method"] if population["available"] else population["message"])
+        depth_aware = result.get("depth_aware")
+        if depth_aware is not None:
+            counted = depth_aware["observations_counted"]
+            add("Depth-aware VAF and uncertainty (Sprint 5)",
+                "Completed" if depth_aware["with_interval"] == counted and counted else
+                ("Limited" if depth_aware["with_interval"] else "Skipped"),
+                f"{depth_aware['with_interval']} of {counted} observations have a 95% read-sampling interval"
+                + (f" ({depth_aware['reconstructed_counts']} from reconstructed counts)"
+                   if depth_aware["reconstructed_counts"] else ""))
+            phase2 = depth_aware["uncertainty"]
+            add("Overdispersion calibration (Sprint 5 Phase 2)",
+                "Completed" if phase2["calibrated_specimens"] else
+                ("Limited" if phase2["specimens_with_replicates"] else "Skipped"),
+                (f"rho estimated for {phase2['calibrated_specimens']} of {phase2['specimens_with_replicates']} "
+                 f"specimen(s) with technical replicates; {phase2['calibrated_observations']} calibrated intervals")
+                if phase2["specimens_with_replicates"] else
+                "No documented technical replicates (shared Specimen_ID, distinct Library_ID): overdispersion cannot be estimated")
+            add("Overdispersion sensitivity (hypothetical)",
+                "Completed" if phase2["sensitivity_rhos"] and depth_aware["with_interval"] else "Skipped",
+                ("Assumed rho " + ", ".join(f"{value:g}" for value in phase2["sensitivity_rhos"])
+                 + " (scenarios, not estimates)") if phase2["sensitivity_rhos"] else
+                "No hypothetical overdispersion values entered")
+            grouping = depth_aware.get("grouping") or {}
+            ran = [item for item in grouping.get("methods", []) if item.get("ran")]
+            depth_run = next((item for item in ran if item["method"] == mutation_grouping.DEPTH_AWARE_METHOD), None)
+            label = "Exploratory mutation-frequency groups (Sprint 5 Phase 3)"
+            if not grouping.get("enabled", True):
+                add(label, "Skipped", "Switched off in settings")
+            elif not grouping.get("experimental"):
+                add(label, "Limited", f"Profiles for {grouping.get('mutations', 0)} mutations "
+                    f"({grouping.get('eligible_ordinary', 0)} with enough known values); groups not shown by default "
+                    "because the method did not meet its validation criteria")
+            elif depth_run is not None:
+                add(label, "Limited", f"Experimental (not validated): {depth_run['groups']} group(s) among "
+                    f"{depth_run['analyzed']} eligible mutations; not lineages")
+            else:
+                reason = "; ".join(grouping.get("reasons", [])) or "No eligible mutations"
+                add(label, "Skipped", "Experimental view requested; " + reason.split(". ")[0])
+            add("Mutation-frequency time series (Sprint 5)",
+                "Completed" if depth_aware["eligible_series"] else "Skipped",
+                f"{depth_aware['eligible_series']} mutation-site series have known values on two or more dates"
+                if depth_aware["eligible_series"] else "Needs known values for one mutation on two or more dates")
         add("Coverage-aware non-detection", "Completed" if pooled["position_table"] is not None else "Skipped",
             "Per-position depth supplied" if pooled["position_table"] is not None else
             "No per-position depth: unreported variants stay 'coverage unknown' (never 0%)")
     else:
         add("Pooled variant QC and frequencies", "Skipped", "No pooled variant file supplied")
+    annotation = result.get("annotation")
+    if annotation is not None:
+        label = "Mutation annotation and protein consequences (Sprint 5 Phase 4)"
+        if not annotation["available"]:
+            add(label, "Skipped", "No genome annotation (GenBank or GFF3) uploaded; coding consequences not determined")
+        else:
+            add(label, "Completed" if annotation["annotated"] else "Limited",
+                f"{annotation['annotated']} of {annotation['evaluated']} distinct SNVs annotated with "
+                f"{annotation['format']} {annotation['source_file']} ({annotation['cds_supported']} of "
+                f"{annotation['cds']} coding regions supported)")
     if result["comparison"] is not None:
         add("Cross-source comparison", "Completed",
             f"{len(result['comparison']['table'])} variants placed in evidence categories")
@@ -862,6 +995,32 @@ def provenance(result, settings, labels, mafft_path):
                  "max_fisher_p", "min_base_quality", "date_window_days"]:
         add("Parameter", name, settings[name])
     add("Parameter", "minimum_callable_positions_for_mapping", MINIMUM_CALLABLE_POSITIONS)
+    add("Parameter", "overdispersion_sensitivity_rho (hypothetical)",
+        ", ".join(f"{value:g}" for value in settings.get("overdispersion_rhos", [])) or "none")
+    add("Parameter", "overdispersion_calibration_sites",
+        f"depth > {CALIBRATION_MIN_DEPTH} in both replicates, mean VAF {CALIBRATION_VAF_LOW:.0%}-"
+        f"{CALIBRATION_VAF_HIGH:.0%}, at least {MINIMUM_SITES} sites (Tonkin-Hill et al. 2021 site criteria)")
+    add("Parameter", "grouping_mode (Phase 3)", settings.get("grouping_mode", "profiles"))
+    add("Parameter", "grouping_minimum_shared_units", settings.get("grouping_minimum_shared",
+                                                                  mutation_grouping.DEFAULT_MINIMUM_SHARED))
+    add("Parameter", "grouping_depth_aware_criteria",
+        f"chi-square homogeneity P >= {mutation_grouping.ALPHA}, power {mutation_grouping.POWER:.0%} to detect "
+        f"{mutation_grouping.RESOLUTION:.2f}, pooled-frequency range >= {mutation_grouping.PATTERN_RANGE:.2f}, "
+        "complete linkage")
+    add("Parameter", "grouping_ordinary_cut_height", mutation_grouping.ORDINARY_HEIGHT)
+    annotation = result.get("annotation")
+    if annotation is not None:
+        add("Annotation (Phase 4)", "Source", f"{annotation['format']}: {annotation['source_file']}"
+            if annotation["available"] else "No annotation file supplied")
+        if annotation["available"]:
+            for item in annotation["references"]:
+                add("Annotation (Phase 4)", f"Reference {item['Reference_ID']}",
+                    f"{item['Organism']}; {item['Length']} bases"
+                    + (f"; segment {item['Segment']}" if item["Segment"] else "")
+                    + (f"; {item['Sequence_Check']}" if item["Sequence_Check"] else ""))
+            add("Annotation (Phase 4)", "Consequence rules",
+                "Sequence Ontology categories; one SNV at a time against the reference; standard or "
+                "record-specified translation table")
     add("Parameter", "minimum_reference_identity_for_mapping", MINIMUM_MAPPING_IDENTITY)
 
     if result["pooled"] is not None:

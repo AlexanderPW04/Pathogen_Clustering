@@ -25,6 +25,7 @@ from pathlib import Path
 from compare_genetic_distances import read_pair_table
 from genomics.file_formats import plain_copy, split_name
 from genomics.integrated_analysis import run_integrated_analysis
+from genomics.spreadsheet_safety import safe_csv
 from run_pipeline import output_paths, run_pipeline
 
 
@@ -53,6 +54,8 @@ def parse_arguments(arguments=None):
     parser.add_argument("--positions", type=Path, help="Per-position depth or A/C/G/T counts")
     parser.add_argument("--masked-sites", type=Path, help="Problematic-site list")
     parser.add_argument("--signatures", type=Path, help="Documented variant profiles")
+    parser.add_argument("--annotation", type=Path,
+                        help="Genome annotation (GenBank or GFF3) of the same reference, for coding consequences")
     parser.add_argument("--max-p-distance", type=float, default=0.05)
     parser.add_argument("--max-days-apart", type=float, default=14)
     parser.add_argument("--max-km-apart", type=float, default=50)
@@ -61,6 +64,8 @@ def parse_arguments(arguments=None):
     parser.add_argument("--qc-mode", choices=["paper", "exploratory"], default="paper")
     parser.add_argument("--date-window-days", type=float, default=14)
     parser.add_argument("--output-folder", type=Path, required=True)
+    parser.add_argument("--reports", action="store_true",
+                        help="Also write the consolidated XLSX workbook and the PDF report (Phase 4A)")
     return parser.parse_args(arguments)
 
 
@@ -70,7 +75,7 @@ def main(arguments=None):
         "fasta": options.fasta, "metadata": options.metadata, "reference": options.reference,
         "snv": options.snv, "pooled_metadata": options.pooled_metadata,
         "positions": options.positions, "masked_sites": options.masked_sites,
-        "signatures": options.signatures,
+        "signatures": options.signatures, "annotation": options.annotation,
     }
     if options.example:
         inputs.update({key: EXAMPLE_FOLDER / name for key, name in EXAMPLE_FILES.items()})
@@ -141,6 +146,7 @@ def main(arguments=None):
             reference_path=inputs["reference"], snv_path=inputs["snv"],
             pooled_metadata_path=inputs["pooled_metadata"], position_path=inputs["positions"],
             masked_sites_path=inputs["masked_sites"], signature_path=inputs["signatures"],
+            annotation_path=inputs["annotation"],
             settings={"qc_mode": options.qc_mode, "date_window_days": options.date_window_days},
             input_labels={key: Path(path).name for key, path in supplied.items()},
             relationship=relationship,
@@ -150,9 +156,17 @@ def main(arguments=None):
         return 1
 
     for name, table in result["tables"].items():
-        table.to_csv(output / name, index=False)
+        (output / name).write_bytes(safe_csv(table))
     for name, figure in result["figures"].items():
         (output / f"{name}.png").write_bytes(figure["png"])
+    if options.reports:
+        from genomics.report_exports import report_files
+        from integrated_view import major_findings
+        files, messages = report_files(result, major_findings(result), size_limit=float("inf"))
+        for name, (content, _) in files.items():
+            (output / name).write_bytes(content)
+        for text in messages:
+            print(f"[reports] {text}")
     for section, notes in result["notes"].items():
         for text in notes:
             print(f"[{section}] {text}")

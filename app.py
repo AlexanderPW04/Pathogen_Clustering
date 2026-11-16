@@ -38,14 +38,24 @@ from system_diagnostics import check_mafft
 from validate_inputs import FASTA_EXTENSIONS, METADATA_EXTENSIONS
 from environmental_analysis import load_measurements, make_charts, summarize_measurements, table_records
 from genomics.file_formats import (
-    EXCEL_KIND, FASTA_KIND, MAX_DECOMPRESSED_BYTES, VCF_KIND, detect_kind, plain_copy,
+    ANNOTATION_EXTENSIONS, EXCEL_KIND, FASTA_KIND, MAX_DECOMPRESSED_BYTES, VCF_KIND, detect_kind, plain_copy,
     read_table, split_name,
 )
+from genomics.collection_dates import DATE_ORDERS
+from genomics.overdispersion_analysis import DEFAULT_SENSITIVITY_RHOS, parse_rho_values
+from genomics.mutation_group_analysis import PROFILES_MODE, parse_grouping_mode, parse_minimum_shared
+from genomics.mutation_grouping import DEFAULT_MINIMUM_SHARED
 from genomics.input_inspection import (
-    ROLE_LABELS, apply_declared_role, empty_info, inspect_file, prepare_inputs, review_dataset,
+    ROLE_LABELS, ServerBusy, apply_declared_role, empty_info, inspect_file, prepare_inputs, review_dataset,
     suggest_roles,
 )
 from genomics.integrated_analysis import run_integrated_analysis
+from genomics.import_options import DEPTH_DEFINITIONS, FREQUENCY_SCALES, POSITION_BASES, read_file_options
+from genomics.mapping_profiles import apply_profile, profile_json, read_profile
+from genomics.report_exports import MIMETYPES as REPORT_MIMETYPES, SUMMARY_NAME, build_from_stored
+from genomics.metadata_matching import RESOLUTIONS
+from genomics.spreadsheet_safety import escape_csv_bytes, safe_csv
+from genomics.table_layouts import BASE_COUNT_LAYOUT, WIDE_LAYOUT
 from dashboard_guide import GLOSSARY
 from integrated_view import build_dashboard, download_files
 from literature.config import ai_status
@@ -94,6 +104,7 @@ TABLE_EXTENSIONS = {".csv", ".tsv", ".xlsx"}
 # (form field, input key, allowed extensions, readable name)
 OPTIONAL_UPLOADS = [
     ("reference_file", "reference", FASTA_EXTENSIONS, "reference FASTA"),
+    ("annotation_file", "annotation", ANNOTATION_EXTENSIONS, "genome annotation (GenBank or GFF3)"),
     ("snv_file", "snv", TABLE_EXTENSIONS | {".vcf"}, "pooled SNV table"),
     ("pooled_metadata_file", "pooled_metadata", TABLE_EXTENSIONS, "pooled-sample metadata"),
     ("position_file", "positions", TABLE_EXTENSIONS, "per-position depth table"),
@@ -104,6 +115,7 @@ INPUT_LABELS = {
     "fasta": "Individual sequences (FASTA)",
     "metadata": "Individual metadata",
     "reference": "Reference FASTA",
+    "annotation": "Genome annotation",
     "snv": "Pooled SNV table",
     "pooled_metadata": "Pooled-sample metadata",
     "positions": "Per-position depth/base counts",
@@ -155,6 +167,14 @@ UPLOAD_FIELDS = [
              "Pooled results: checks the reported reference bases and genome coverage. Combined: required, "
              "because both sources must use this same verified reference to be compared.",
      "example": "synthetic_reference.fasta"},
+    {"role": "annotation", "label": "Genome annotation (GenBank or GFF3, optional)",
+     "accept": ".gb,.gbk,.genbank,.gff,.gff3,.gz", "multiple": False,
+     "modes": {"individual": "optional", "pooled": "optional", "combined": "optional"},
+     "summary": "Genes and predicted amino-acid changes",
+     "help": "The annotation of the same reference used for variant calling (for SARS-CoV-2, NCBI NC_045512.2 as "
+             "GenBank or GFF3). It must name the same accession.version; a GenBank file also carries the sequence "
+             "used to verify each reference base. Without it, every other analysis still runs.",
+     "example": "NC_045512.2.gb"},
     {"role": "snv", "label": "Processed pooled SNV results (table or VCF)",
      "accept": ".csv,.tsv,.txt,.xlsx,.vcf,.gz", "multiple": True,
      "modes": {"pooled": "required", "combined": "required"},
@@ -191,6 +211,8 @@ UPLOAD_FIELDS = [
 EXAMPLE_DOWNLOADS = {name: INTEGRATED_FOLDER / name for name in INTEGRATED_EXAMPLE_FILES.values()}
 EXAMPLE_DOWNLOADS.update({name: EXAMPLE_FOLDER / name
                           for name in ["synthetic_sequences.fasta", "synthetic_metadata.csv"]})
+# Official NCBI RefSeq annotation for SARS-CoV-2 (real, public; matches the published mmc2.xlsx reference).
+EXAMPLE_DOWNLOADS["NC_045512.2.gb"] = EXAMPLE_FOLDER / "annotation" / "NC_045512.2.gb"
 RESULT_DOWNLOADS = {}  # Short-lived integrated-result files; no database.
 ANALYSIS_SLOT = BoundedSemaphore(1)
 OUT_OF_MEMORY = ("The uploaded dataset exceeds the available memory for this server, so the analysis "
@@ -210,6 +232,10 @@ STAGED_LIMIT = 6
 MAX_GUIDED_FILES = 20
 
 
+DEFAULT_RHO_TEXT = ", ".join(f"{value:g}" for value in DEFAULT_SENSITIVITY_RHOS)
+DEFAULT_MINIMUM_SHARED_TEXT = str(DEFAULT_MINIMUM_SHARED)
+
+
 def default_values(form):
     """Form values with the prototype defaults."""
 
@@ -221,6 +247,10 @@ def default_values(form):
         "confirm_complete_genomes": form.get("confirm_complete_genomes") == "on",
         "qc_mode": form.get("qc_mode", "paper"),
         "date_window_days": form.get("date_window_days", "14"),
+        "pooled_date_order": form.get("pooled_date_order", "auto"),
+        "overdispersion_rho_values": form.get("overdispersion_rho_values", DEFAULT_RHO_TEXT),
+        "grouping_mode": form.get("grouping_mode", PROFILES_MODE),
+        "grouping_minimum_shared": form.get("grouping_minimum_shared", DEFAULT_MINIMUM_SHARED_TEXT),
     }
 
 
@@ -364,7 +394,7 @@ def environmental_page():
                     organized["Collection_Date"] = (
                         organized["Collection_Date"].dt.strftime("%Y-%m-%d").fillna("")
                     )
-                    csv_bytes = organized.to_csv(index=False).encode("utf-8")
+                    csv_bytes = safe_csv(organized)
                     if len(csv_bytes) > 4 * 1024 * 1024:
                         raise ValueError("The organized CSV is too large for this prototype (4 MB limit).")
 
@@ -475,7 +505,7 @@ def wastewater_page():
                     summary = summarize_snvs(data)
                     display = data.copy()
                     display["Collection_Date"] = display["Collection_Date"].dt.strftime("%Y-%m-%d").fillna("")
-                    csv_bytes = display.to_csv(index=False).encode("utf-8")
+                    csv_bytes = safe_csv(display)
                     if len(csv_bytes) > 4 * 1024 * 1024:
                         raise ValueError("The standardized CSV is too large for this prototype (4 MB limit).")
                     with WASTEWATER_LOCK:
@@ -634,10 +664,52 @@ def store_result_files(files):
     return download_id
 
 
+def build_report_download(download_id, filename):
+    """Build the XLSX workbook or PDF report from the stored downloads, once, and cache it.
+
+    Runs only when someone asks for it, one at a time with the analyses, so a
+    small server never builds a report and runs an analysis at the same moment.
+    """
+
+    with RESULT_LOCK:
+        item = RESULT_DOWNLOADS.get(download_id)
+        if item is None or monotonic() - item[0] > RESULT_DOWNLOAD_SECONDS or SUMMARY_NAME not in item[1]:
+            abort(404)
+        stored = dict(item[1])
+    if not ANALYSIS_SLOT.acquire(blocking=False):
+        return error_page("Another analysis is running on this server. Wait a minute, then click the link "
+                          "again; the CSV files are available now.", 503)
+    try:
+        content, _ = build_from_stored(
+            filename, lambda name: zlib.decompress(stored[name][0]) if name in stored else None)
+    except MemoryError:
+        return error_page("The file could not be built because this server ran out of memory. The CSV "
+                          "downloads hold the same values.", 503)
+    except Exception:
+        app.logger.exception("Building %s failed", filename)
+        return error_page("The file could not be built. The CSV downloads hold the same values; the details "
+                          "were written to the server log.", 500)
+    finally:
+        ANALYSIS_SLOT.release()
+        release_memory()
+    mimetype = REPORT_MIMETYPES[filename]
+    if len(content) <= 8 * 1024 * 1024:
+        with RESULT_LOCK:
+            if download_id in RESULT_DOWNLOADS:
+                RESULT_DOWNLOADS[download_id][1][filename] = (zlib.compress(content, 6), mimetype)
+    return send_file(BytesIO(content), mimetype=mimetype, as_attachment=True, download_name=filename)
+
+
 @app.route("/results/<download_id>/<filename>")
 def result_download(download_id, filename):
     """Download one table or figure from a recent integrated analysis."""
 
+    with RESULT_LOCK:
+        item = RESULT_DOWNLOADS.get(download_id)
+        # The workbook and the report are built the first time they are asked for (Phase 4A).
+        on_demand = item is not None and filename in REPORT_MIMETYPES and filename not in item[1]
+    if on_demand:
+        return build_report_download(download_id, filename)
     with RESULT_LOCK:
         item = RESULT_DOWNLOADS.get(download_id)
         if (item is None or monotonic() - item[0] > RESULT_DOWNLOAD_SECONDS
@@ -819,6 +891,14 @@ def check_settings(values):
         return None, None, error
     if values["qc_mode"] not in {"paper", "exploratory"}:
         return None, None, "Choose the paper-reproduction or exploratory quality-control mode."
+    if values["pooled_date_order"] not in DATE_ORDERS:
+        return None, None, "Choose how ambiguous day/month collection dates should be read."
+    try:
+        parse_rho_values(values["overdispersion_rho_values"])
+        parse_grouping_mode(values["grouping_mode"])
+        parse_minimum_shared(values["grouping_minimum_shared"])
+    except ValueError as problem:
+        return None, None, str(problem)
     return thresholds, date_window, None
 
 
@@ -859,6 +939,15 @@ def run_analyses(paths, names, values, thresholds, date_window, temporary_folder
         ANALYSIS_SLOT.release()
         release_memory()
     return page
+
+
+def import_details(review, names):
+    """Phase 4A: the import record, matching report, and readiness from the review (no calculation)."""
+
+    return {"provenance": names.pop("_provenance", []),
+            "readiness": review.get("analysis_readiness"),
+            "matching": review.get("matching"),
+            "conflicts": review.get("metadata_conflicts")}
 
 
 def release_memory():
@@ -944,11 +1033,17 @@ def run_genomic_analyses(paths, names, values, thresholds, date_window, temporar
             position_path=paths.get("positions"),
             masked_sites_path=paths.get("masked_sites"),
             signature_path=paths.get("signatures"),
-            settings={"qc_mode": values["qc_mode"], "date_window_days": date_window},
+            annotation_path=paths.get("annotation"),
+            settings={"qc_mode": values["qc_mode"], "date_window_days": date_window,
+                      "date_order": values["pooled_date_order"],
+                      "overdispersion_rhos": parse_rho_values(values["overdispersion_rho_values"]),
+                      "grouping_mode": parse_grouping_mode(values["grouping_mode"]),
+                      "grouping_minimum_shared": parse_minimum_shared(values["grouping_minimum_shared"])},
             input_labels=names,
             relationship=relationship_tables(relationship, thresholds) if completed else None,
             input_notes=page.get("input_notes"),
             pooled_overrides=outcome.get("pooled_overrides"),
+            import_details=page.get("import_details"),
         )
     except (ValueError, RuntimeError) as problem:
         page["integrated_error"] = str(problem).replace(str(temporary_folder), "[temporary upload]")
@@ -970,7 +1065,7 @@ def run_genomic_analyses(paths, names, values, thresholds, date_window, temporar
         page["skipped_downloads"] = skipped
         return page
     if relationship_files:
-        files = {name: (content, "text/csv") for name, content in relationship_files.items()}
+        files = {name: (escape_csv_bytes(content), "text/csv") for name, content in relationship_files.items()}
         page["download_id"] = store_result_files(files)
         page["downloads"] = sorted(files)
     return page
@@ -996,7 +1091,11 @@ def shared_page_values():
     if not EXAMPLE_FACTS:
         EXAMPLE_FACTS.update(integrated_example_facts())
     return {"glossary": GLOSSARY, "modes": MODES, "example_facts": EXAMPLE_FACTS or None,
-            "upload_fields": UPLOAD_FIELDS}
+            "upload_fields": UPLOAD_FIELDS,
+            # Phase 4A review controls.
+            "wide_layout": WIDE_LAYOUT, "base_count_layout": BASE_COUNT_LAYOUT,
+            "frequency_scales": FREQUENCY_SCALES, "position_bases": POSITION_BASES,
+            "depth_definitions": DEPTH_DEFINITIONS, "resolutions": RESOLUTIONS}
 
 
 def integrated_example_facts():
@@ -1261,9 +1360,18 @@ def apply_sheet_choices(item, form):
     changed = False
     for index, info in enumerate(item["inspections"]):
         chosen = form.get(f"sheet_{index}", "")
-        if chosen and chosen in info.get("sheets", []) and (chosen != info.get("sheet")
-                                                            or info.get("sheet_choice_needed")):
-            fresh = inspect_file(item["files"][index], info["name"], chosen)
+        sheet_changed = bool(chosen and chosen in info.get("sheets", []) and (
+            chosen != info.get("sheet") or info.get("sheet_choice_needed")))
+        options = read_file_options(form, index)
+        header = options.get("header_row")
+        by_name = bool(options.get("sample_from_filename"))
+        reading_changed = (header != info.get("header_row_choice")
+                           or by_name != bool(info.get("sample_from_filename")))
+        has_reading_fields = any(key.startswith(f"opt_{index}_") for key in form)
+        if sheet_changed or (has_reading_fields and reading_changed):
+            fresh = inspect_file(item["files"][index], info["name"], chosen if sheet_changed else info.get("sheet"),
+                                 header if has_reading_fields else info.get("header_row_choice"),
+                                 by_name if has_reading_fields else info.get("sample_from_filename"))
             fresh["declared_role"] = info.get("declared_role")
             item["inspections"][index] = fresh
             changed = True
@@ -1290,7 +1398,15 @@ def review_choices(form, inspections):
             choices[index] = picks
     options = {"declared_pathogen": form.get("declared_pathogen", "").strip()[:120],
                "complete_genomes": form.get("genomic_region_mode") == "complete_genomes",
-               "intended_mode": intended_mode(form)}
+               "intended_mode": intended_mode(form),
+               "date_order": (form.get("pooled_date_order") if form.get("pooled_date_order") in DATE_ORDERS
+                              else "auto"),
+               # Phase 4A: how to read each table, and how to handle metadata conflicts.
+               "files": {index: read_file_options(form, index) for index in range(len(inspections))},
+               "conflict_resolution": (form.get("conflict_resolution")
+                                       if form.get("conflict_resolution") in RESOLUTIONS else ""),
+               "allow_unmatched_metadata": form.get("allow_unmatched_metadata") == "on",
+               "grouping_mode": form.get("grouping_mode", "profiles")}
     return roles, choices, options
 
 
@@ -1300,6 +1416,50 @@ def staged_item(token):
         if item is None or monotonic() - item["created"] > STAGED_SECONDS:
             return None
         return item
+
+
+def use_profile(item, upload, roles, choices, options):
+    """Apply a saved mapping profile to the files it fits; return updated choices and a report."""
+
+    try:
+        profile = read_profile(upload.read(64 * 1024 + 1))
+    except ValueError as problem:
+        return roles, choices, options, [str(problem)]
+    # A profile's worksheet is selected first, so its columns can be compared.
+    for entry in profile.get("files", []):
+        sheet = entry.get("sheet")
+        for index, info in enumerate(item["inspections"]):
+            if sheet and sheet in info.get("sheets", []) and info.get("sheet") != sheet:
+                fresh = inspect_file(item["files"][index], info["name"], sheet)
+                fresh["declared_role"] = info.get("declared_role")
+                item["inspections"][index] = fresh
+    profile_roles, profile_choices, file_options, global_options, report = apply_profile(
+        profile, item["inspections"])
+    for index, values in file_options.items():
+        info = item["inspections"][index]
+        if (values.get("header_row") != info.get("header_row_choice")
+                or bool(values.get("sample_from_filename")) != bool(info.get("sample_from_filename"))):
+            fresh = inspect_file(item["files"][index], info["name"], info.get("sheet"), values.get("header_row"),
+                                 values.get("sample_from_filename", False))
+            fresh["declared_role"] = info.get("declared_role")
+            item["inspections"][index] = fresh
+    roles = {**roles, **profile_roles}
+    choices = {**choices, **profile_choices}
+    options = {**options, **global_options, "files": {**options.get("files", {}), **file_options}}
+    return roles, choices, options, report
+
+
+@app.route("/review/profile", methods=["POST"])
+def download_mapping_profile():
+    """Download the current review's mapping as a JSON profile (no records, no sample values)."""
+
+    item = staged_item(request.form.get("token"))
+    if item is None:
+        abort(404)
+    roles, choices, options = review_choices(request.form, item["inspections"])
+    review = review_dataset(item["files"], item["inspections"], roles, choices, options)
+    return send_file(BytesIO(profile_json(review, options)), mimetype="application/json", as_attachment=True,
+                     download_name="mapping_profile.json")
 
 
 @app.route("/review", methods=["POST"])
@@ -1325,9 +1485,14 @@ def review_upload():
             item["publication_ids"] = request.form.get("publication_ids", "")[:500]
         apply_sheet_choices(item, request.form)
         roles, choices, options = review_choices(request.form, item["inspections"])
+        profile = request.files.get("mapping_profile")
+        if profile is not None and profile.filename and not uploads:
+            roles, choices, options, page["profile_report"] = use_profile(item, profile, roles, choices, options)
         page["review"] = review_dataset(item["files"], item["inspections"], roles, choices, options)
         page["mode_check"] = mode_check(page["review"], page["intended_mode"])
         page["token"] = token
+        page["conflict_resolution"] = options.get("conflict_resolution", "")
+        page["allow_unmatched_metadata"] = options.get("allow_unmatched_metadata")
         page["declared_pathogen"] = options["declared_pathogen"]
         page["enrich"], page["publication_ids"] = item["enrich"], item["publication_ids"]
         if item["enrich"] and page["review"]["ready"]:
@@ -1387,7 +1552,8 @@ def start_enrichment(item, token, form, values, options, review, example=None):
         paths, names = prepare_inputs(item["files"], review, folder, options)
         session = preview_session(paths, parse_identifiers(item["publication_ids"]),
                                   synthetic=bool(item.get("synthetic")),
-                                  label=", ".join(str(name) for key, name in names.items() if key != "_notes"))
+                                  label=", ".join(str(name) for key, name in names.items()
+                                                  if not key.startswith("_")))
     session.update(staged_token=token, form=form, example=example)
     if item.get("synthetic") == "integrated":
         session.update(corpus=INTEGRATED_CORPUS, mock=INTEGRATED_MOCK)
@@ -1489,6 +1655,7 @@ def enrich_run():
                 error = str(problem).replace(str(temporary_folder), "[temporary upload]")
             else:
                 page["input_notes"] = names.pop("_notes", [])
+                page["import_details"] = import_details(review, names)
                 run_analyses(paths, names, values, thresholds, date_window, temporary_folder, page,
                              pooled_overrides=overrides, outcome=outcome)
     if error is not None:
@@ -1515,9 +1682,9 @@ def enrichment_report(session, derived, log, outcome, thresholds, page):
     comparison, screening = before_after(session, derived, run_samples, pairs, thresholds)
     sections = sections_using(derived)
     files = enrichment_downloads(session)
-    files["literature_enriched_metadata.csv"] = (derived.to_csv(index=False).encode("utf-8"), "text/csv")
+    files["literature_enriched_metadata.csv"] = (safe_csv(derived), "text/csv")
     if comparison is not None:
-        files["literature_before_after_pairs.csv"] = (comparison.to_csv(index=False).encode("utf-8"), "text/csv")
+        files["literature_before_after_pairs.csv"] = (safe_csv(comparison), "text/csv")
     download_id = page.get("download_id")
     with RESULT_LOCK:
         if download_id in RESULT_DOWNLOADS:
@@ -1603,6 +1770,9 @@ def run_reviewed():
     roles, choices, options = review_choices(request.form, item["inspections"])
     try:
         review = review_dataset(item["files"], item["inspections"], roles, choices, options)
+    except ServerBusy as busy:
+        page.update(error=str(busy), token=token, step=1)
+        return render_page(values, page)
     except Exception:
         app.logger.exception("Reviewing the uploaded files failed")
         page["error"] = "The uploaded files could not be reviewed. Please upload them again."
@@ -1627,9 +1797,19 @@ def run_reviewed():
             page["error"] = "The uploaded files could not be prepared for analysis."
         else:
             page["input_notes"] = names.pop("_notes", [])
+            page["import_details"] = import_details(review, names)
             run_analyses(paths, names, values, thresholds, date_window, temporary_folder, page)
     if page.get("server_busy"):  # nothing ran, so the staged files are kept for another try
         page.update(review=review, token=token, step=2, declared_pathogen=options["declared_pathogen"])
+        return render_page(values, page)
+    failure = page.get("integrated_error") or page.get("error")
+    if failure and not page.get("dashboard") and not page.get("analysis_complete"):
+        # Nothing was produced, so the uploads are kept and the review is shown again with the
+        # reason (audit P1-3); the visitor can change a choice instead of uploading everything again.
+        page.pop("integrated_error", None)
+        page.update(error=f"The analysis could not be completed: {failure} Your files are still on the server "
+                          "for up to 30 minutes; change the choices below or upload corrected files.",
+                    review=review, token=token, step=2, declared_pathogen=options["declared_pathogen"])
         return render_page(values, page)
     # The analysis has read the files; the uploads are deleted now (only the
     # results stay, in memory, for the download links).

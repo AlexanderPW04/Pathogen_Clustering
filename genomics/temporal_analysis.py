@@ -4,26 +4,80 @@ Every pooled sample and every analyzed variant gets one row in a long
 "observation matrix". A reported frequency is used as given. An unreported
 variant is described by the per-position depth table when one was supplied
 (adequate depth, low coverage, or not covered); otherwise it stays "Coverage
-unknown". Unreported variants never receive a 0% frequency.
+unknown".
 
-Trends here summarize the sample-level observations that exist. They are
-descriptive and are not estimates of community prevalence.
+Callable observations (audit S3-02). Trends use every observation whose
+frequency is actually known, not only detections:
+
+- a reported frequency (a detection);
+- an unreported variant at adequate depth whose A/C/G/T counts show the
+  alternative base: 0 alternative reads gives a frequency of 0 (an observed
+  non-detection), and some reads give alternative reads / depth.
+
+An unreported variant at adequate depth *without* base counts is not set to
+0: the caller may have a reporting threshold, so the frequency is unknown
+(below the caller's report). Low, absent, or unknown coverage and QC-excluded
+calls are missing. Trends are descriptive, not estimates of community
+prevalence and not tests of change.
 """
 
 import numpy as np
 import pandas as pd
 
-from genomics.pooled_observations import pooled_position_status
-from genomics.unified_schema import EXCLUDED_BY_QC, VARIANT_OBSERVED
+from genomics.pooled_observations import COUNT_COLUMNS, pooled_position_status
+from genomics.unified_schema import COVERED_NOT_DETECTED, EXCLUDED_BY_QC, NUCLEOTIDES, VARIANT_OBSERVED
 
 
 MATRIX_COLUMNS = [
     "Variant_Key", "Reference_ID", "Position", "Ref", "Alt", "Sample_ID",
     "Collection_Date", "Location_Name", "Status", "Alt_Frequency", "Depth",
 ]
+EVIDENCE_COLUMNS = ["Alt_Read_Count", "Callable_Frequency", "Callable_Evidence"]
+
+REPORTED_EVIDENCE = "Reported frequency"
+ZERO_ALT_READS = "Observed non-detection: 0 alternative reads at adequate depth (base counts)"
+ALT_READS_NOT_CALLED = "Not reported; alternative reads in base counts (count-derived frequency)"
+VALUE_UNKNOWN = "Not reported at adequate depth; alternative reads not supplied (value unknown, not 0)"
 
 
-def observation_matrix(variants, samples, depth_lookup, minimum_depth):
+def add_callable_evidence(matrix, position_table=None):
+    """Add Alt_Read_Count, Callable_Frequency, and Callable_Evidence to a matrix.
+
+    Only explicit evidence gives a value: a reported frequency, or A/C/G/T
+    counts at an adequately covered unreported position. Everything else is
+    missing (NaN) with the reason in Callable_Evidence.
+    """
+
+    status = matrix["Status"].astype(str)
+    observed = status.eq(VARIANT_OBSERVED)
+    adequate = status.eq(COVERED_NOT_DETECTED)
+    frequency = matrix["Alt_Frequency"].where(observed).astype(float)
+    alt_count = pd.Series(np.nan, index=matrix.index)
+    evidence = status.where(~observed, REPORTED_EVIDENCE).where(~adequate, VALUE_UNKNOWN)
+    has_counts = (position_table is not None and position_table.attrs.get("has_base_counts", False)
+                  and adequate.any())
+    if has_counts:
+        cells = matrix.loc[adequate, ["Sample_ID", "Reference_ID", "Position", "Alt"]]
+        counts = cells.reset_index().merge(
+            position_table[["Sample_ID", "Reference_ID", "Position", "Depth"] + COUNT_COLUMNS],
+            on=["Sample_ID", "Reference_ID", "Position"], how="left").set_index("index")
+        column_for = dict(zip(NUCLEOTIDES, COUNT_COLUMNS))
+        reads = pd.Series([row[column_for[row["Alt"]]] for row in counts.to_dict("records")],
+                          index=counts.index, dtype=float)
+        depth = counts["Depth"].astype(float)
+        usable = reads.notna() & depth.gt(0)
+        alt_count.loc[usable.index[usable]] = reads[usable]
+        frequency.loc[usable.index[usable]] = (reads / depth)[usable]
+        zero = usable & reads.eq(0)
+        evidence.loc[zero.index[zero]] = ZERO_ALT_READS
+        evidence.loc[usable.index[usable & ~zero]] = ALT_READS_NOT_CALLED
+    matrix["Alt_Read_Count"] = pd.array(alt_count.round(), dtype="Int64")
+    matrix["Callable_Frequency"] = frequency
+    matrix["Callable_Evidence"] = pd.Categorical(evidence)
+    return matrix
+
+
+def observation_matrix(variants, samples, depth_lookup, minimum_depth, position_table=None):
     """Describe every included pooled sample at every included variant.
 
     The table has one row per variant and sample (295,000 rows for the
@@ -33,7 +87,7 @@ def observation_matrix(variants, samples, depth_lookup, minimum_depth):
 
     included = variants[variants["Analysis_Included"]]
     if included.empty:
-        return pd.DataFrame(columns=MATRIX_COLUMNS)
+        return pd.DataFrame(columns=MATRIX_COLUMNS + EVIDENCE_COLUMNS)
     # A call that exists but failed QC is neither a measurement nor a non-detection.
     excluded = set(zip(variants.loc[~variants["Analysis_Included"], "Sample_ID"],
                        variants.loc[~variants["Analysis_Included"], "Variant_Key"]))
@@ -81,7 +135,7 @@ def observation_matrix(variants, samples, depth_lookup, minimum_depth):
     matrix = pd.DataFrame({name: pd.Series(columns.pop(name), dtype=object).infer_objects()
                            for name in MATRIX_COLUMNS})
     matrix["Alt_Frequency"] = pd.to_numeric(matrix["Alt_Frequency"], errors="coerce")
-    return matrix
+    return add_callable_evidence(matrix, position_table)
 
 
 def weekly_slope(dates, frequencies):
@@ -96,51 +150,127 @@ def weekly_slope(dates, frequencies):
     return slope_per_day * 7
 
 
-def frequency_trends(matrix):
-    """Summarize each variant within each sampling location over time."""
+TREND_COLUMNS = [
+    "Variant_Key", "Location_Name", "Samples", "Reported", "Adequate_Depth_Not_Reported",
+    "Zero_Alt_Reads", "Alt_Reads_Not_Called", "Not_Reported_Value_Unknown", "Low_Or_No_Coverage",
+    "Coverage_Unknown", "Excluded_By_QC", "Callable_Observations", "Callable_Dated",
+    "First_Reported_Date", "Last_Reported_Date", "First_Callable_Date", "Last_Callable_Date",
+    "First_Callable_Frequency", "Last_Callable_Frequency", "Change_In_Callable_Frequency",
+    "Slope_Per_Week", "Complete_Series", "Trend_Basis",
+]
 
-    columns = [
-        "Variant_Key", "Location_Name", "Samples", "Reported", "Adequate_Depth_Not_Reported",
-        "Low_Or_No_Coverage", "Coverage_Unknown", "Excluded_By_QC", "First_Reported_Date",
-        "Last_Reported_Date",
-        "First_Reported_Frequency", "Last_Reported_Frequency", "Change_In_Reported_Frequency",
-        "Slope_Per_Week",
-    ]
+
+def callable_frequencies(matrix):
+    """The known frequency of each matrix row (NaN when it is missing)."""
+
+    if "Callable_Frequency" in matrix:
+        return matrix["Callable_Frequency"].astype(float)
+    return matrix["Alt_Frequency"].where(matrix["Status"].astype(str).eq(VARIANT_OBSERVED)).astype(float)
+
+
+def trend_basis(row):
+    """Explain which observations a series' change and slope use."""
+
+    if row["Callable_Dated"] < 2:
+        return "Fewer than two dated callable observations: no change or trend is calculated."
+    missing = int(row["Samples"] - row["Callable_Observations"])
+    text = f"Uses {int(row['Callable_Dated'])} dated callable observation(s)"
+    zeros = int(row["Zero_Alt_Reads"])
+    if zeros:
+        text += f", including {zeros} observed non-detection(s) (0 alternative reads)"
+    text += "."
+    if missing:
+        text += (f" {missing} sample(s) without a known frequency (unknown, low, or no coverage, a "
+                 "QC-excluded call, or no alternative-read counts) are left out, so the series may "
+                 "over-represent samples where the variant was detected.")
+    if row["Callable_Observations"] > row["Callable_Dated"]:
+        text += f" {int(row['Callable_Observations'] - row['Callable_Dated'])} callable observation(s) have no usable date."
+    if row["Callable_Dated"] == 2:
+        text += " Two points give a change, not a trend."
+    return text
+
+
+def frequency_trends(matrix, keep_unknown_series=False):
+    """Summarize each variant within each sampling location over time.
+
+    Change and slope use callable observations (see the module docstring):
+    reported frequencies plus base-count values at adequately covered
+    unreported positions. Missing observations are counted, never filled in.
+
+    A variant-site series without any known frequency (the variant was never
+    reported there and no base counts exist) carries no frequency information;
+    it is left out unless `keep_unknown_series` is True, and the number left
+    out is in `table.attrs["series_without_known_frequency"]`. Its statuses
+    stay in the observation matrix.
+    """
+
     if matrix.empty:
-        return pd.DataFrame(columns=columns)
+        table = pd.DataFrame(columns=TREND_COLUMNS)
+        table.attrs["series_without_known_frequency"] = 0
+        return table
 
     # Count each status per variant and site with one grouped sum (a Python
     # loop over every variant/site pair is far too slow for the paper's table).
     keys = ["Variant_Key", "Location_Name"]
     status = matrix["Status"].astype(str)
-    flags = matrix[keys].copy()
-    flags["Samples"] = 1
-    flags["Reported"] = status.eq(VARIANT_OBSERVED).astype(int)
-    flags["Adequate_Depth_Not_Reported"] = status.str.startswith("Adequate").astype(int)
-    flags["Low_Or_No_Coverage"] = (status.str.startswith("Low")
-                                   | status.str.startswith("Not covered")).astype(int)
-    flags["Coverage_Unknown"] = status.eq("Coverage unknown").astype(int)
-    flags["Excluded_By_QC"] = status.eq(EXCLUDED_BY_QC).astype(int)
+    value = callable_frequencies(matrix)
+    # Compared as a categorical column: converting 300,000 rows to text costs ~100 MB.
+    evidence = (matrix["Callable_Evidence"] if "Callable_Evidence" in matrix
+                else pd.Series("", index=matrix.index))
+    # One-byte indicators: the matrix can have hundreds of thousands of rows.
+    starts_adequate = status.str.startswith("Adequate").to_numpy(dtype=bool)
+    known = value.notna().to_numpy()
+    indicators = {
+        "Samples": np.ones(len(matrix), dtype=bool),
+        "Reported": status.eq(VARIANT_OBSERVED).to_numpy(dtype=bool),
+        "Adequate_Depth_Not_Reported": starts_adequate,
+        "Zero_Alt_Reads": evidence.eq(ZERO_ALT_READS).to_numpy(dtype=bool),
+        "Alt_Reads_Not_Called": evidence.eq(ALT_READS_NOT_CALLED).to_numpy(dtype=bool),
+        "Not_Reported_Value_Unknown": starts_adequate & ~known,
+        "Low_Or_No_Coverage": (status.str.startswith("Low") | status.str.startswith("Not covered")).to_numpy(dtype=bool),
+        "Coverage_Unknown": status.eq("Coverage unknown").to_numpy(dtype=bool),
+        "Excluded_By_QC": status.eq(EXCLUDED_BY_QC).to_numpy(dtype=bool),
+        "Callable_Observations": known,
+        "Callable_Dated": known & matrix["Collection_Date"].notna().to_numpy(),
+    }
+    flags = pd.DataFrame({key: matrix[key].to_numpy() for key in keys})
+    for name, values in indicators.items():
+        flags[name] = values.astype(np.uint8)
+    del indicators
     table = flags.groupby(keys, sort=True).sum()
 
-    # First/last reported values in date order (ties broken by sample ID).
     reported = matrix[status.eq(VARIANT_OBSERVED) & matrix["Collection_Date"].notna()]
-    order = keys + ["Collection_Date"] + (["Sample_ID"] if "Sample_ID" in reported else [])
-    reported = reported.sort_values(order, kind="mergesort")
-    groups = reported.groupby(keys, sort=True)
+    reported_groups = reported.sort_values(keys + ["Collection_Date"], kind="mergesort").groupby(keys)
+    table["First_Reported_Date"] = reported_groups["Collection_Date"].first()
+    table["Last_Reported_Date"] = reported_groups["Collection_Date"].last()
+
+    # First/last callable values in date order (ties broken by sample ID).
+    known = matrix.loc[value.notna() & matrix["Collection_Date"].notna(),
+                       keys + ["Collection_Date"] + (["Sample_ID"] if "Sample_ID" in matrix else [])]
+    known = known.assign(Value=value[known.index])
+    known = known.sort_values(list(known.columns[:-1]), kind="mergesort")
+    groups = known.groupby(keys, sort=True)
     counts = groups.size()
-    table["First_Reported_Date"] = groups["Collection_Date"].first()
-    table["Last_Reported_Date"] = groups["Collection_Date"].last()
-    table["First_Reported_Frequency"] = groups["Alt_Frequency"].first()
-    table["Last_Reported_Frequency"] = groups["Alt_Frequency"].last()
-    change = table["Last_Reported_Frequency"] - table["First_Reported_Frequency"]
-    table["Change_In_Reported_Frequency"] = change.where(counts.reindex(table.index).ge(2))
+    table["First_Callable_Date"] = groups["Collection_Date"].first()
+    table["Last_Callable_Date"] = groups["Collection_Date"].last()
+    table["First_Callable_Frequency"] = groups["Value"].first()
+    table["Last_Callable_Frequency"] = groups["Value"].last()
+    change = table["Last_Callable_Frequency"] - table["First_Callable_Frequency"]
+    table["Change_In_Callable_Frequency"] = change.where(counts.reindex(table.index).ge(2))
     table["Slope_Per_Week"] = np.nan
     for group_key in counts[counts >= 3].index:
         group = groups.get_group(group_key)
         table.loc[group_key, "Slope_Per_Week"] = weekly_slope(
-            list(group["Collection_Date"]), list(group["Alt_Frequency"]))
-    return table.reset_index()[columns]
+            list(group["Collection_Date"]), list(group["Value"]))
+    table["Complete_Series"] = table["Callable_Observations"].eq(table["Samples"])
+    table = table.reset_index()
+    without = table["Callable_Observations"].eq(0)
+    if not keep_unknown_series:
+        table = table[~without].reset_index(drop=True)
+    table["Trend_Basis"] = [trend_basis(row) for row in table.to_dict("records")]
+    table = table[TREND_COLUMNS]
+    table.attrs["series_without_known_frequency"] = int(without.sum())
+    return table
 
 
 def location_date_summary(variants, samples):
@@ -154,6 +284,8 @@ def location_date_summary(variants, samples):
     ):
         sample_ids = set(group["Sample_ID"])
         records = included_variants[included_variants["Sample_ID"].isin(sample_ids)]
+        # One value per sample and variant in the median (repeated rows are one observation).
+        once = records.drop_duplicates(["Sample_ID", "Variant_Key"])
         rows.append({
             "Location_Name": location,
             "Collection_Date": date,
@@ -161,7 +293,7 @@ def location_date_summary(variants, samples):
             "Variant_Records": len(records),
             "Distinct_Variants": records["Variant_Key"].nunique(),
             "Median_Reported_Frequency": (
-                float(records["Alt_Frequency"].median()) if not records.empty else np.nan
+                float(once["Alt_Frequency"].median()) if not once.empty else np.nan
             ),
         })
     return pd.DataFrame(rows, columns=[

@@ -62,9 +62,13 @@ INDIVIDUAL_FIELDS = [
 ]
 VARIANT_FIELDS = [("Sample_ID", "Pooled sample identifier"), ("Reference_Genome", "Reference genome label"),
                   ("Position", "Reference position"), ("Ref", "Reference base"), ("Alt", "Alternative base"),
-                  ("Alt_Frequency", "Variant frequency"), ("Read_Depth", "Read depth")]
+                  ("Alt_Frequency", "Variant frequency")]
+# Phase 4A: depth is recommended, not required. Without it reported frequencies are
+# still summarized; depth QC, count-based VAF, and uncertainty are unavailable.
 POOLED_FIELDS = [spec(key, label, REQUIRED, "Pooled variant QC and frequencies")
                  for key, label in VARIANT_FIELDS] + [
+    spec("Read_Depth", "Read depth", RECOMMENDED,
+         "Depth QC, count-based frequencies, and uncertainty intervals"),
     spec("Collection_Date", "Collection date", RECOMMENDED, "Temporal frequency trends"),
     spec("Location_Name", "Sampling site", RECOMMENDED, "Site grouping and geographic context"),
     spec("Genome_Coverage_Percent", "Genome coverage (%)", RECOMMENDED,
@@ -254,7 +258,7 @@ def pooled_rows(review):
     rows = []
     for item in POOLED_FIELDS:
         key = item["key"]
-        if item["level"] == REQUIRED:
+        if item["level"] == REQUIRED or key == "Read_Depth":
             status, detail = variant_field(entries, key)
         elif key in {"Collection_Date", "Location_Name"}:
             count = counts.get("With_Collection_Date" if key == "Collection_Date" else "With_Location", 0)
@@ -301,7 +305,10 @@ def variant_field(entries, key):
             found.append(f"read from the {entry['info']['format']} format")
             continue
         match = match_for(entry, key)
-        if match and match["status"] == "matched":
+        if key == "Reference_Genome" and entry.get("declared_reference") and not (
+                match and match["status"] == "matched"):
+            found.append(f"stated by you: '{entry['declared_reference']}'")
+        elif match and match["status"] == "matched":
             found.append(f"column '{match['column']}'")
         elif match and match["status"] == "ambiguous":
             return CHOOSE, f"{name}: {match['evidence']}"

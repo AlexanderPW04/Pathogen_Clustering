@@ -164,7 +164,7 @@ class TemporalAnalysisTest(unittest.TestCase):
         trend = frequency_trends(matrix).iloc[0]
         self.assertEqual(trend["Reported"], 3)
         self.assertEqual(trend["Coverage_Unknown"], 1)
-        self.assertAlmostEqual(trend["Change_In_Reported_Frequency"], 0.4)
+        self.assertAlmostEqual(trend["Change_In_Callable_Frequency"], 0.4)
         self.assertAlmostEqual(trend["Slope_Per_Week"], 0.2)
         self.assertEqual(trend["Last_Reported_Date"], pd.Timestamp("2026-01-15"))
 

@@ -133,7 +133,7 @@ class IntegratedExampleTest(unittest.TestCase):
         trends = self.result["tables"]["temporal_trends.csv"].set_index(["Variant_Key", "Location_Name"])
         north = trends.loc[("SYNREF.1:15:T>C", "North Synthetic Sewershed")]
         self.assertEqual(north["Reported"], 4)
-        self.assertAlmostEqual(north["Change_In_Reported_Frequency"], 0.60)
+        self.assertAlmostEqual(north["Change_In_Callable_Frequency"], 0.60)
         self.assertAlmostEqual(north["Slope_Per_Week"], 0.20)
 
     def test_paper_pcoa_is_available_and_other_reference_left_out(self):

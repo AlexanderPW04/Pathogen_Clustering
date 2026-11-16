@@ -64,7 +64,8 @@ class LiteratureWebTest(unittest.TestCase):
     def test_example_button_and_section_appear_without_any_model_call(self):
         home = self.client.get("/").get_data(as_text=True)
         self.assertIn("Run Literature Enrichment Example", home)
-        self.assertIn("3 · Metadata enrichment (Sprint 4, optional)", home)
+        # Phase 4A renumbered the steps (3 is now "Review available analyses").
+        self.assertIn("4 · Run · Metadata enrichment (Sprint 4, optional)", home)
         with patch("literature.providers.MockProvider.run") as mock_run, \
                 patch("literature.providers.ClaudeProvider.run") as claude_run:
             page, token = self.run_example()

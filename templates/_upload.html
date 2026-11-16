@@ -128,7 +128,7 @@
       <p class="help">The site does not process raw reads or call variants, and MAFFT is not used for pooled reads. An optional offline template for read processing is in <code>offline_workflow/</code>.</p>
       <ul class="notes">
         <li><strong>Required:</strong> a processed SNV table with sample, reference position, reference and alternative base, frequency, and depth (<a href="{{ url_for('example_file', name='synthetic_pooled_snvs.csv') }}">example</a>). Also accepted: iVar tables, SNV VCF files, and the Fontenele et al. (2021) supplementary workbook.</li>
-        <li><strong>Optional:</strong> pooled-sample metadata (dates, sites, coverage), per-position depth or A/C/G/T counts (<a href="{{ url_for('example_file', name='synthetic_pooled_base_counts.csv') }}">example</a>), a reference FASTA, a masked-site list, and documented variant profiles (<a href="{{ url_for('example_file', name='synthetic_variant_signatures.csv') }}">example</a>).</li>
+        <li><strong>Optional:</strong> pooled-sample metadata (dates, sites, coverage), per-position depth or A/C/G/T counts (<a href="{{ url_for('example_file', name='synthetic_pooled_base_counts.csv') }}">example</a>), a reference FASTA, a masked-site list, documented variant profiles (<a href="{{ url_for('example_file', name='synthetic_variant_signatures.csv') }}">example</a>), and a genome annotation (GenBank or GFF3) of the same reference for predicted amino-acid changes (<a href="{{ url_for('example_file', name='NC_045512.2.gb') }}">NCBI NC_045512.2</a>).</li>
       </ul>
     </details>
     <details>
@@ -161,6 +161,7 @@
         <li><strong>Sequences:</strong> FASTA (.fasta, .fa, .fna), optionally gzip-compressed (.gz). One sequence = possible reference genome; several = individual sequences.</li>
         <li><strong>Tables:</strong> CSV, TSV/TXT (tab-separated), XLSX (first sheet); CSV/TSV may be .gz. Column names are matched flexibly (for example Sample / Sample_ID / SampleName, Date / Collection_Date, Lat / Latitude, AF / Frequency, DP / Depth).</li>
         <li><strong>Pooled variant calls:</strong> standardized SNV tables, combined iVar variant tables, the Fontenele et al. (2021) supplementary SNV workbook, and SNV VCF files (.vcf, .vcf.gz) with allele depths or frequencies.</li>
+        <li><strong>Genome annotation (optional):</strong> a GenBank flat file (.gb, .gbk) or GFF3 (.gff3) for the same reference accession.version, for example NCBI NC_045512.2 for SARS-CoV-2 (<a href="{{ url_for('example_file', name='NC_045512.2.gb') }}">official NCBI file</a>). It adds predicted coding consequences; without it every other analysis still runs.</li>
         <li><strong>Not accepted as results:</strong> raw reads (FASTQ) and read alignments (SAM/BAM/CRAM). Process them first with the optional offline workflow; then upload the variant table or VCF.</li>
       </ul>
     </details>

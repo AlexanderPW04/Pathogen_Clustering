@@ -223,6 +223,26 @@ one shared variant. Sprint 4 was narrowed to sample-collection metadata (the
 surveillance-context statements were removed). See the top section of
 `PROJECT_HANDOFF.md`.
 
+### Comprehensive audit P1 repairs (November 15, 2026)
+
+`docs/SPRINT3_SPRINT5_COMPREHENSIVE_AUDIT.md` found four P1 problems; each was
+repaired without changing any scientific calculation and has a regression test
+in `tests/test_audit_p1_repairs.py`:
+
+1. Reading uploads is bounded: a cell and column check before a CSV/TSV is
+   parsed (`genomics/file_formats.check_table_size`), worksheet rows are counted
+   with their header rows, the Docker image lowers `MAX_WORKSHEET_CELLS` to
+   1,500,000, and inspection/review/preparation run one at a time
+   (`genomics/input_inspection.one_at_a_time`).
+2. Downloads escape formula-like text (`genomics/spreadsheet_safety.py`).
+3. Review runs the analysis's own pooled-table validation
+   (`input_inspection.pooled_validation_review` calls `load_processed_snvs`),
+   so what Run would refuse is shown in Step 2 with Run disabled; a run that
+   produces nothing returns to Step 2 and keeps the uploads. Validation rules
+   are unchanged; the metadata-date message now shows an example value.
+4. Segment, chromosome, and seqid columns are reference columns, and one
+   stated reference is refused when another column names several sequences.
+
 ## Remaining limitations
 
 - Exact PCoA needs genome-wide A/C/G/T counts, which `mmc2.xlsx` does not

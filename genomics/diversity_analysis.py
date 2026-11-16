@@ -11,6 +11,14 @@ Paper method (Fontenele et al. 2021, Section 2.6), reproduced here:
 4. Sum the per-position values to get the pairwise distance, then run a
    principal coordinates analysis (PCoA; Gower 1966).
 
+Guard added here (audit S3-03): a pair with fewer than
+`minimum_shared_positions` positions covered in both samples has no defined
+distance. A sum over zero positions is 0, which would make two samples with
+no common coverage look identical, so such a distance is left undefined
+(NaN) instead. Samples with no covered position are left out of the PCoA; if
+an undefined pair remains, the PCoA is skipped with the reason. Undefined
+distances are never replaced by 0.
+
 The paper does not print the Yue-Clayton formula. This module uses the
 standard definition (Yue & Clayton 2005):
 
@@ -66,8 +74,13 @@ def frequency_arrays(position_table, sample_ids, reference_id):
     return frequencies
 
 
-def paper_distance_matrix(frequencies):
-    """Sum per-position Yue-Clayton dissimilarities; uncomputable positions = 0."""
+def paper_distance_matrix(frequencies, minimum_shared_positions=1):
+    """Sum per-position Yue-Clayton dissimilarities; uncomputable positions = 0.
+
+    Returns (distances, compared_positions). A pair compared at fewer than
+    `minimum_shared_positions` positions gets NaN: its distance is undefined,
+    not 0.
+    """
 
     sample_count = frequencies.shape[0]
     usable = ~np.isnan(frequencies[:, :, 0])
@@ -81,14 +94,14 @@ def paper_distance_matrix(frequencies):
             shared = np.sum(frequencies[first, both] * frequencies[second, both], axis=1)
             denominator = squares[first, both] + squares[second, both] - shared
             per_position = 1.0 - shared / denominator
-            total = float(np.sum(per_position))
+            total = float(np.sum(per_position)) if both.sum() >= minimum_shared_positions else np.nan
             distances[first, second] = distances[second, first] = total
             compared_positions[first, second] = compared_positions[second, first] = int(both.sum())
     return distances, compared_positions
 
 
 def jaccard_distance_matrix(variant_sets):
-    """1 - |shared| / |either| between reported variant sets."""
+    """1 - |shared| / |either| between reported variant sets (NaN when both are empty)."""
 
     sample_count = len(variant_sets)
     distances = np.zeros((sample_count, sample_count))
@@ -96,7 +109,7 @@ def jaccard_distance_matrix(variant_sets):
         for second in range(first + 1, sample_count):
             either = variant_sets[first] | variant_sets[second]
             shared = variant_sets[first] & variant_sets[second]
-            value = 1.0 - len(shared) / len(either) if either else 0.0
+            value = 1.0 - len(shared) / len(either) if either else np.nan
             distances[first, second] = distances[second, first] = value
     return distances
 
@@ -156,12 +169,49 @@ def coordinates_table(sample_info, pcoa):
     return table
 
 
-def population_structure(samples, variants, position_table=None, minimum_samples=3):
-    """Run the paper's PCoA when possible, else a labeled exploratory ordination."""
+def pair_table(sample_ids, distances, compared, positions):
+    """One row per sample pair: shared callable positions and whether a distance exists."""
+
+    rows = []
+    for first in range(len(sample_ids)):
+        for second in range(first + 1, len(sample_ids)):
+            shared = int(compared[first, second])
+            value = distances[first, second]
+            rows.append({
+                "Sample_ID_1": sample_ids[first], "Sample_ID_2": sample_ids[second],
+                "Positions_With_Reads_1": int(positions[first]), "Positions_With_Reads_2": int(positions[second]),
+                "Shared_Callable_Positions": shared,
+                "Yue_Clayton_Sum": value,
+                "Mean_Per_Shared_Position": value / shared if shared and not np.isnan(value) else np.nan,
+                "Supported": not np.isnan(value),
+                "Reason": "" if not np.isnan(value) else (
+                    "No reference position has reads in both samples" if shared == 0 else
+                    f"Only {shared} shared position(s), below the minimum"),
+            })
+    return pd.DataFrame(rows, columns=[
+        "Sample_ID_1", "Sample_ID_2", "Positions_With_Reads_1", "Positions_With_Reads_2",
+        "Shared_Callable_Positions", "Yue_Clayton_Sum", "Mean_Per_Shared_Position", "Supported", "Reason"])
+
+
+def unsupported_pairs_text(sample_ids, distances, limit=5):
+    pairs = [f"{sample_ids[a]}/{sample_ids[b]}" for a in range(len(sample_ids))
+             for b in range(a + 1, len(sample_ids)) if np.isnan(distances[a, b])]
+    more = f" and {len(pairs) - limit} more" if len(pairs) > limit else ""
+    return f"{len(pairs)} pair(s) ({', '.join(pairs[:limit])}{more})"
+
+
+def population_structure(samples, variants, position_table=None, minimum_samples=3,
+                         minimum_shared_positions=1):
+    """Run the paper's PCoA when possible, else a labeled exploratory ordination.
+
+    The result also holds `pairs` (paper method: shared callable positions per
+    pair) and `left_out_no_data` (samples with no usable data for the method).
+    """
 
     included = samples[samples["Analysis_Included"]].sort_values(["Collection_Date", "Sample_ID"])
     result = {"method": None, "available": False, "message": "", "pcoa": None,
-              "coordinates": None, "distances": None, "diversity": None}
+              "coordinates": None, "distances": None, "diversity": None, "pairs": None,
+              "left_out_no_data": []}
 
     # Positions from different references cannot share one matrix, so only the
     # reference used by the most samples is analyzed; the others are named.
@@ -193,18 +243,30 @@ def population_structure(samples, variants, position_table=None, minimum_samples
 
     if has_counts and set(sample_ids) <= counted:
         frequencies = frequency_arrays(position_table, sample_ids, reference_id)
-        distances, compared = paper_distance_matrix(frequencies)
+        distances, compared = paper_distance_matrix(frequencies, minimum_shared_positions)
+        positions = (~np.isnan(frequencies[:, :, 0])).sum(axis=1)
         result["method"] = PAPER_PCOA
         result["diversity"] = pd.DataFrame({
             "Sample_ID": sample_ids,
             "Mean_Nucleotide_Diversity": nucleotide_diversity(frequencies),
-            "Positions_With_Reads": (~np.isnan(frequencies[:, :, 0])).sum(axis=1),
+            "Positions_With_Reads": positions,
         })
+        result["pairs"] = pair_table(sample_ids, distances, compared, positions)
+        result["compared_positions"] = compared
         result["message"] = (
             "Computed with the paper's method from supplied A/C/G/T counts. Positions "
-            "without reads in either sample contribute 0, as stated in the paper."
+            "without reads in either sample contribute 0, as stated in the paper; a pair "
+            f"needs at least {minimum_shared_positions} position(s) with reads in both samples, "
+            "otherwise its distance is undefined (never 0)."
         )
-        result["compared_positions"] = compared
+        shared = compared[np.triu_indices(len(sample_ids), 1)]
+        if len(shared) and shared.min() < 0.9 * shared.max():
+            result["message"] += (
+                f" Shared callable positions range from {int(shared.min())} to {int(shared.max())} "
+                "across pairs; because the paper sums per-position values, pairs that share more "
+                "covered positions can look more different. Per-position means are in "
+                "yue_clayton_pairs.csv for comparison (the PCoA uses the paper's sum).")
+        keep = positions > 0
     else:
         included_variants = variants[variants["Analysis_Included"] & variants["Sample_ID"].isin(sample_ids)]
         variant_sets = [
@@ -212,6 +274,7 @@ def population_structure(samples, variants, position_table=None, minimum_samples
             for sample_id in sample_ids
         ]
         distances = jaccard_distance_matrix(variant_sets)
+        keep = np.array([bool(found) for found in variant_sets])
         result["method"] = EXPLORATORY_ORDINATION
         missing = "no per-position A/C/G/T counts were supplied"
         if has_counts:
@@ -228,6 +291,24 @@ def population_structure(samples, variants, position_table=None, minimum_samples
             f" Left out because they use a different reference than {reference_id}: "
             + ", ".join(left_out) + "."
         )
+    if not keep.all():
+        result["left_out_no_data"] = [sample_id for sample_id, flag in zip(sample_ids, keep) if not flag]
+        result["message"] += (" Left out because they have no usable data for this method "
+                              "(no position with reads, or no retained SNV): "
+                              + ", ".join(result["left_out_no_data"]) + ".")
+        distances = distances[np.ix_(keep, keep)]
+        sample_ids = [sample_id for sample_id, flag in zip(sample_ids, keep) if flag]
+        included = included[included["Sample_ID"].isin(sample_ids)]
+    if len(sample_ids) < minimum_samples:
+        result["message"] += (f" Population structure needs at least {minimum_samples} samples with "
+                              f"usable data; {len(sample_ids)} remain, so no PCoA was calculated.")
+        return result
+    if np.isnan(distances[np.triu_indices(len(sample_ids), 1)]).any():
+        result["message"] += (
+            " The PCoA was not calculated: " + unsupported_pairs_text(sample_ids, distances)
+            + " have no defined distance because they share too few covered positions. A PCoA needs "
+            "every pairwise distance, and undefined distances are not replaced by 0.")
+        return result
     pcoa = principal_coordinates(distances)
     result["available"] = True
     result["pcoa"] = pcoa

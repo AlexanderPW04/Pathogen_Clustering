@@ -66,6 +66,16 @@ def find_header_row(rows):
     return best_index
 
 
+def locate_header(head, chosen=None):
+    """The user's header row (0-based) when given and present, else the detected one."""
+
+    if chosen is not None:
+        if chosen >= len(head):
+            raise ValueError(f"The worksheet has only {len(head)} rows, so row {chosen + 1} cannot be the header.")
+        return chosen
+    return find_header_row([[cell.strip() for cell in row] for row in head])
+
+
 def open_workbook(path):
     return openpyxl.load_workbook(path, read_only=True, data_only=True)
 
@@ -116,10 +126,12 @@ def unique_headers(cells):
     return names
 
 
-def read_sheet(path, sheet=None, nrows=None):
+def read_sheet(path, sheet=None, nrows=None, header_row=None):
     """One worksheet as a text DataFrame; attrs say which sheet and header row were used.
 
-    Fully blank rows are skipped: they are spacing, not records.
+    Fully blank rows are skipped: they are spacing, not records. `header_row`
+    (0-based) is the user's choice of header row; without it the row with the
+    most recognized column names in the first rows is used.
     """
 
     workbook = open_workbook(path)
@@ -129,21 +141,25 @@ def read_sheet(path, sheet=None, nrows=None):
         if sheet not in workbook.sheetnames:
             raise ValueError(f"The workbook has no worksheet named '{sheet}'.")
         limit = max_cells()
-        head, records, width, header_row = [], [], 0, None
+        chosen, header_row = header_row, None
+        scan = HEADER_SCAN_ROWS if chosen is None else max(HEADER_SCAN_ROWS, chosen + 1)
+        head, records, width = [], [], 0
         preamble = []
         for values in workbook[sheet].iter_rows(values_only=True):
             cells = [cell_text(value) for value in values]
-            if header_row is None and len(head) < HEADER_SCAN_ROWS:
+            if header_row is None and len(head) < scan:
                 head.append(cells)
                 continue
             if header_row is None:
-                header_row = find_header_row([[cell.strip() for cell in row] for row in head])
+                header_row = locate_header(head, chosen)
                 preamble = head[:header_row]
                 width = len(head[header_row])
                 records = [row for row in head[header_row + 1:] if any(row)]
             if any(cells):
-                records.append(cells)
-            if len(records) * max(width, 1) > limit:
+                # Cells beyond the header are never used (rows are cut to the header width
+                # below), so they are not stored either; the cell limit then counts what is kept.
+                records.append(cells[:width])
+            if (len(records) + header_row + 1) * max(width, 1) > limit:
                 raise WorkbookTooLarge(
                     f"Worksheet '{sheet}' is larger than this server can process safely (more than "
                     f"{limit:,} cells). Split it into smaller files, or run the analysis locally.")
@@ -152,7 +168,7 @@ def read_sheet(path, sheet=None, nrows=None):
         if header_row is None:  # the sheet is shorter than the scanned rows
             if not head:
                 raise ValueError(f"Worksheet '{sheet}' is empty.")
-            header_row = find_header_row([[cell.strip() for cell in row] for row in head])
+            header_row = locate_header(head, chosen)
             preamble = head[:header_row]
             width = len(head[header_row])
             records = [row for row in head[header_row + 1:] if any(row)]

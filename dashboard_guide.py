@@ -69,8 +69,8 @@ FIGURE_GUIDE = {
         "limitation": "Gaps are missing reports, not zeros; lines are not estimates of community prevalence.",
     },
     "frequency_changes": {
-        "measures": "Change between the first and last reported frequency of each variant at each site.",
-        "axes": "Horizontal axis: reported frequency; open marker = first report, filled marker = last report.",
+        "measures": "Change between the first and last known frequency of each variant at each site (reports, plus base-count non-detections when supplied).",
+        "axes": "Horizontal axis: frequency; open marker = first known value, filled marker = last known value.",
         "colors": "Color shows whether the frequency was higher or lower at the last report.",
         "origin": "Project addition",
         "limitation": "Uses only two reports per series; descriptive, not a trend test.",
@@ -137,6 +137,79 @@ FIGURE_GUIDE = {
         "colors": "Points = samples; line = least-squares fit with a bootstrap 95% band.",
         "origin": f"Partial reproduction of {PAPER} Fig 2B (model details not stated in the paper)",
         "limitation": "Descriptive only with fewer than 10 samples.",
+    },
+    "vaf_time_series": {
+        "measures": "How the frequency of a mutation changes over time at one site, with how precisely each value is measured.",
+        "axes": "Horizontal axis: collection date. Vertical axis: variant allele frequency (VAF). One panel per mutation and site.",
+        "colors": "Filled = detected; open = supported non-detection or uncalled reads from base counts; bars = 95% Wilson intervals (dashed when counts were reconstructed); gray crosses = samples with no known value.",
+        "origin": "Sprint 5 (project addition)",
+        "limitation": "Intervals cover read sampling only. Unknown samples are left out, not set to 0; lines are descriptive, not tests of change.",
+    },
+    "vaf_depth": {
+        "measures": "How the uncertainty of a measured frequency depends on sequencing depth.",
+        "axes": "Left: depth (log) against interval width, with theoretical curves. Right: depth (log) against observed VAF.",
+        "colors": "Left: gray = observations, colored lines = theory for three VAFs. Right: darker = narrower interval.",
+        "origin": "Sprint 5 (project addition; binomial Wilson interval)",
+        "limitation": "Depth reflects precision, not correctness; sequencing and amplification errors are not modeled.",
+    },
+    "depth_dependence": {
+        "measures": "The same frequency (0.20) measured with 20 to 1,000 reads.",
+        "axes": "Each row: a count such as 4 of 20 reads; the bar is its 95% interval.",
+        "colors": "Dot = VAF; bar = interval.",
+        "origin": "Sprint 5 illustration (exact counts, not uploaded data)",
+        "limitation": "Illustrates read-sampling uncertainty only.",
+    },
+    "uncertainty_models": {
+        "measures": "How much wider frequency uncertainty becomes when sequencing libraries vary more than read sampling alone (beta-binomial overdispersion rho).",
+        "axes": "Left: depth (log) against the 95% interval width at VAF 0.20 for each model. Right: each observation's binomial width against its overdispersion-aware width.",
+        "colors": "Black = binomial (Wilson). Solid colors = rho calibrated from technical replicates; dashed = hypothetical rho values. Right: blue = calibrated, gray = hypothetical scenario.",
+        "origin": "Sprint 5 Phase 2 (project addition; beta-binomial model as in Tonkin-Hill et al. 2021)",
+        "limitation": "Hypothetical curves are scenarios, not estimates. Even calibrated rho covers library-to-library variation only, not primer, mapping, or contamination errors.",
+    },
+    "replicate_concordance": {
+        "measures": "Agreement between two separately prepared libraries of the same specimen, used to estimate overdispersion.",
+        "axes": "Replicate 1 VAF against replicate 2 VAF for each informative allele.",
+        "colors": "One color and marker per specimen; the legend gives its rho estimate and bootstrap range.",
+        "origin": "Sprint 5 Phase 2 (site criteria from Tonkin-Hill et al. 2021)",
+        "limitation": "One rho per library assumes every site varies alike; sites in one amplicon may be correlated.",
+    },
+    "mutation_profile_heatmap": {
+        "measures": "Each mutation's known frequency in every observation unit, without grouping.",
+        "axes": "Rows: mutations in genome order (those with the most known values). Columns: observation units by date.",
+        "colors": "Darker blue = higher frequency. Hatched gray = unknown (no coverage information), never 0.",
+        "origin": "Sprint 5 Phase 3 (mutation-frequency profiles)",
+        "limitation": "Similar-looking rows are not evidence of a shared genome or lineage.",
+    },
+    "mutation_annotation_overview": {
+        "measures": "Where each distinct observed SNV lies on the reference and its predicted coding consequence.",
+        "axes": "Top: reference position (1-based), one row per predicted category, over the annotated coding "
+                "regions. Bottom: number of SNVs in each coding region, split by predicted consequence.",
+        "colors": "One fixed color per category (blue synonymous, orange missense, others for stop and start "
+                  "changes, gray noncoding); hatched boxes are coding regions that could not be interpreted.",
+        "origin": "Sprint 5 Phase 4 (reference annotation; Sequence Ontology consequence terms)",
+        "limitation": "A predicted amino-acid change is not a demonstrated biological effect, and pooled data do not "
+                      "show which SNVs occur on the same genome.",
+    },
+    "mutation_group_heatmap": {
+        "measures": "Frequencies of mutations placed in experimental groups, followed by ungrouped ones.",
+        "axes": "Rows: mutations, labeled with their group (dash = not grouped). Columns: observation units by date.",
+        "colors": "Darker blue = higher frequency; hatched gray = unknown, never 0; black lines separate groups.",
+        "origin": "Sprint 5 Phase 3 (experimental; MAGOS-inspired grouping)",
+        "limitation": "The grouping did not meet its validation criteria; a group is similar frequencies, not a lineage.",
+    },
+    "mutation_group_trajectories": {
+        "measures": "How the mean frequency of each experimental group's mutations changes over time.",
+        "axes": "Collection date against the mean frequency of the group's known members; bars span the lowest to highest member.",
+        "colors": "One color and marker per group; line style = sampling site.",
+        "origin": "Sprint 5 Phase 3 (experimental)",
+        "limitation": "Descriptive only; unknown members are left out, so a point may rest on few mutations.",
+    },
+    "grouping_comparison": {
+        "measures": "How the depth-aware groups and the ordinary (depth-blind) groups overlap.",
+        "axes": "Rows: depth-aware groups; columns: ordinary groups; each cell counts shared mutations.",
+        "colors": "Darker blue = more shared mutations; '—' = not grouped by that method.",
+        "origin": "Sprint 5 Phase 3 (experimental comparison)",
+        "limitation": "Agreement between two methods is not accuracy; ordinary clustering grouped unrelated mutations often in simulation.",
     },
     "pcoa": {
         "measures": "Whether pooled samples group by place or time, from differences in their nucleotide frequencies.",
@@ -205,12 +278,13 @@ def interpretation(result, name):
                 f"{count(top['Individual_Carriers'])} individual sequences).")
     if name == "trajectories" and "temporal_trends.csv" in tables:
         trends = tables["temporal_trends.csv"]
-        changes = trends["Change_In_Reported_Frequency"].dropna()
+        changes = trends["Change_In_Callable_Frequency"].dropna()
         if changes.empty:
             return ""
         row = trends.loc[changes.abs().idxmax()]
-        return (f"The largest change between first and last report is {row['Change_In_Reported_Frequency']:+.2f} "
-                f"for {row['Variant_Key']} at {row['Location_Name']}.")
+        return (f"The largest change between the first and last known frequency is "
+                f"{row['Change_In_Callable_Frequency']:+.2f} for {row['Variant_Key']} at {row['Location_Name']}"
+                + ("." if row["Complete_Series"] else "; some samples in that series have no known frequency."))
     if name in {"quality", "qc_outcomes"} and "pooled_samples_included" in summary:
         return (f"{summary['pooled_samples_included']} of {summary['pooled_samples']} pooled samples and "
                 f"{summary.get('pooled_records_included', '—')} of {summary.get('pooled_records', '—')} "
@@ -242,4 +316,10 @@ def interpretation(result, name):
                 status.get("Adequate depth; variant not reported", 0))
             return (f"Of {total} sample-variant cells, {int(status.get('Variant observed', 0))} have a reported "
                     f"frequency and {unknown} are low, unknown, or excluded coverage (not zeros).")
+    annotation = result.get("annotation") or {}
+    if name == "mutation_annotation_overview" and annotation.get("available"):
+        return (f"Of {annotation['evaluated']} distinct SNVs, {annotation['missense']} are predicted missense, "
+                f"{annotation['synonymous']} synonymous, {annotation['other_coding']} other coding changes, and "
+                f"{annotation['noncoding']} noncoding; {annotation['evaluated'] - annotation['annotated']} could not "
+                "be fully annotated.")
     return ""
