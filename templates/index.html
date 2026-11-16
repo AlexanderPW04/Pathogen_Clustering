@@ -71,6 +71,19 @@
     details.about { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; margin-bottom: 1rem; padding: 0.75rem 1.25rem; }
     nav.sections { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; display: flex; flex-wrap: wrap; gap: 0.25rem 1rem; margin-bottom: 1rem; padding: 0.6rem 1rem; position: sticky; top: 0; z-index: 2; }
     nav.sections a { color: var(--accent); font-weight: bold; text-decoration: none; }
+    nav.sections a.sub { font-weight: normal; }
+    nav.sections a.sub::before { color: var(--ink-muted); content: "› "; }
+    nav.sections a.na { color: var(--ink-muted); font-weight: normal; }
+    @media (min-width: 900px) { .upload-grid { grid-template-columns: minmax(0, 1.8fr) minmax(0, 1fr); } .upload-grid .mode-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+    @supports selector(:has(*)) { .upload-grid .mode .help { display: none; } .upload-grid .mode:has(input:checked) .help { display: block; } }
+    .quick-guide { background: var(--accent-soft); border-radius: 8px; margin-bottom: 1rem; padding: 0.6rem 0.9rem; }
+    .quick-guide p { margin: 0.2rem 0; }
+    .quick-guide .file-types { margin: 0.3rem 0; padding-left: 1.1rem; }
+    .quick-guide .file-types li { margin: 0.15rem 0; }
+    .review-status { border-left: 6px solid var(--good-ink); border-radius: 8px; margin: 0.5rem 0 1rem; padding: 0.5rem 0.9rem; }
+    .review-status.ready { background: var(--good-bg); }
+    .review-status.needs { background: var(--error-bg); border-left-color: var(--error-border); }
+    .review-status p, .review-status h3 { margin: 0.25rem 0; }
     figure { margin: 1rem 0; }
     figure img { border: 1px solid var(--border); border-radius: 8px; height: auto; max-width: 100%; }
     .wide-figure img { max-width: none; }
@@ -204,7 +217,7 @@
     .advanced-inputs[open] { display: grid; gap: 0.6rem; }
     .field-help summary { color: var(--ink-muted); font-size: 0.88rem; font-weight: normal; }
     section[id], .story { scroll-margin-top: 6.5rem; }
-    @media (max-width: 600px) { main { padding: 0 0.75rem; } section, .card { padding: 0.9rem; } nav.sections { position: static; } .box { font-size: 0.82rem; } .mode-grid { grid-template-columns: 1fr; } }
+    @media (max-width: 600px) { main { padding: 0 0.75rem; } section, .card { padding: 0.9rem; } nav.sections { flex-wrap: nowrap; overflow-x: auto; padding: 0.45rem 0.75rem; white-space: nowrap; } .box { font-size: 0.82rem; } .mode-grid { grid-template-columns: 1fr; } }
   </style>
 </head>
 <body>
@@ -317,11 +330,21 @@
             {% if mode_check.missing %}<p>For that choice these files were not found: {{ mode_check.missing|join(', ') }}. The analyses below will run with the files that were found; add the missing files with <em>Back to upload</em> if you need them.</p>{% endif %}
           </div>
         {% endif %}
+        <div class="review-status {{ 'ready' if r.ready else 'needs' }}" id="review-status">
+          {% if r.problems %}
+            <h3>Required information to fix before running</h3>
+            <ul class="problems">{% for item in r.problems %}<li>{{ item }}</li>{% endfor %}</ul>
+            <p class="help">Change the roles or choices below and press <em>Update review</em>, or go <em>Back to upload</em> to add or replace files.</p>
+          {% elif r.ready %}
+            <p><strong>Ready to run.</strong> {{ r.files|length }} file{{ 's' if r.files|length != 1 }} recognized.{% if r.warnings %} {{ r.warnings|length }} note{{ 's' if r.warnings|length != 1 }} about optional information {{ 'is' if r.warnings|length == 1 else 'are' }} <a href="#review-notes">listed below</a>; each limits only the analyses it names.{% endif %} <a href="#run-analysis">Go to Run analysis ↓</a></p>
+          {% endif %}
+          <p class="help">On this page: 1. Files recognized · 2. Fields and sample metadata · 3. <a href="#analysis-readiness">Analyses these data support</a> · 4. <a href="#run-analysis">Run analysis</a></p>
+        </div>
         <p class="note">Check what each file was recognized as. Change a role or choose a column wherever the evidence was not decisive; nothing is guessed silently. Press <em>Update review</em> after changes, check <a href="#analysis-readiness">Step 3</a>, then <em>Run analysis</em>.</p>
         <form method="post" action="{{ url_for('review_upload') }}" enctype="multipart/form-data">
           <input type="hidden" name="token" value="{{ token }}">
           <input type="hidden" name="intended_mode" value="{{ intended_mode }}">
-          <h3>Recognized files</h3>
+          <h3>1. Files recognized</h3>
           <div class="scroll"><table>
             <thead><tr><th>File</th><th>Detected content</th><th>Records</th><th>Role</th><th>Evidence and notes</th></tr></thead>
             <tbody>
@@ -436,8 +459,8 @@
             {% if rd.enrichable and not enrich %}<p class="help">Optional Sprint 4 enrichment (below) could look in linked publications for: {{ rd.enrichable|join(', ') }}.</p>{% endif %}
           {% endif %}
 
-          {% if r.warnings %}<h3>Missing optional information</h3><ul class="warnings">{% for item in r.warnings %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
-          {% if r.problems %}<h3>Required information to fix before running</h3><ul class="problems">{% for item in r.problems %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
+          {% if r.warnings %}<h3 id="review-notes">Missing optional information</h3><ul class="warnings">{% for item in r.warnings %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
+          {% if r.problems %}<p class="problems"><strong>{{ r.problems|length }} item{{ 's' if r.problems|length != 1 }} must be fixed before running</strong> (listed at the <a href="#review-status">top of this step</a>).</p>{% endif %}
 
           {% include "_readiness_step.html" %}
           <details class="more" {% if not r.analysis_readiness %}open{% endif %}><summary>Analyses available with these files (step-by-step plan by input file)</summary>
@@ -467,7 +490,7 @@
             {% endif %}
           {% else %}<p class="help">Off: the analysis runs with your metadata as uploaded. Tick the box and press <em>Update review</em> to add the enrichment step.</p>{% endif %}
 
-          <h3>Step 4 · Run analysis</h3>
+          <h3 id="run-analysis">Step 4 · Run analysis</h3>
           {{ settings_fields(values) }}
           <div class="button-row action-bar">
             <button type="submit" class="secondary">Update review</button>
@@ -824,12 +847,14 @@
       {% if dashboard %}
         <nav class="sections" aria-label="Dashboard sections">
           <span class="nav-label">Jump to:</span>
-          {% for s in dashboard.sections %}<a href="#{{ s.id }}">{{ s.number }}. {{ s.title }}</a>{% endfor %}
+          {% if dashboard.report_downloads or dashboard.export_notes %}<a href="#downloads">Downloads</a>{% endif %}
+          {% for s in dashboard.sections %}<a href="#{{ s.id }}"{% if s.unavailable and not s.figures and not s.stats %} class="na" title="Not available for these files"{% endif %}>{{ s.number }}. {{ s.title }}{% if s.unavailable and not s.figures and not s.stats %} (n/a){% endif %}</a>
+            {% if s.id == 'depth-aware' %}{% if s.uncertainty %}<a class="sub" href="#sequencing-uncertainty">Uncertainty</a>{% endif %}{% if s.annotation %}<a class="sub" href="#mutation-annotation">Mutation annotations</a>{% endif %}{% if s.grouping %}<a class="sub" href="#mutation-frequency-groups">Experimental grouping</a>{% endif %}{% endif %}{% endfor %}
           {% if enrichment_report %}<a href="#enrichment-report">Sprint 4 report</a>{% elif enrichment and is_literature_example %}<a href="#literature">Sprint 4 enrichment</a>{% endif %}
           <a href="#provenance">Provenance &amp; downloads</a>
         </nav>
         {% if dashboard.report_downloads or dashboard.export_notes %}
-          <section class="downloads-bar" aria-label="Download results">
+          <section class="downloads-bar" id="downloads" aria-label="Download results">
             <p><strong>Download these results:</strong>
               {% for name in dashboard.report_downloads %}<a class="button-link report-link" href="{{ url_for('result_download', download_id=download_id, filename=name) }}" data-filename="{{ name }}" data-label="{{ 'Excel workbook' if name.endswith('.xlsx') else 'PDF report' }}">{{ 'Results workbook (XLSX)' if name.endswith('.xlsx') else 'Analysis report (PDF)' }}</a> {% endfor %}
               <a href="#provenance">All CSV tables and PNG figures</a></p>

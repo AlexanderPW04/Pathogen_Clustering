@@ -5,9 +5,18 @@
     {% if previous_files %}<p><strong>Files you used before (select them again):</strong> {{ previous_files|join(', ') }}</p>{% endif %}
   </section>
 {% endif %}
-<div class="grid-2">
+<div class="grid-2 upload-grid">
   <section class="card" id="upload">
     <h2>Step 1 · Choose your files</h2>
+    <div class="quick-guide">
+      <p><strong>Which files do I need?</strong> Only those for the analysis you want; you never need every type. Files are recognized from their content.</p>
+      <ul class="file-types">
+        <li><span class="dot s2"></span><strong>Individual sequences</strong> (Sprint 2): FASTA + metadata table</li>
+        <li><span class="dot s3"></span><strong>Pooled SNV data</strong> (Sprint 3): SNV, iVar, VCF, or wide table</li>
+        <li><strong>Optional:</strong> complete A/C/G/T nucleotide counts · reference genome FASTA · gene annotation (GenBank/GFF3) · supplementary sample metadata</li>
+      </ul>
+      <p class="help"><a href="#file-details">More detail on file types and formats ↓</a></p>
+    </div>
     {% set mode = intended_mode or 'auto' %}
     {% macro upload_field(field) %}
       <div class="upload-field" data-modes="{{ field.modes|join(' ') }}" data-status="{{ field.modes|tojson|forceescape }}" {% if mode not in field.modes %}hidden{% endif %}>
@@ -31,6 +40,23 @@
         </div>
       </fieldset>
 
+
+      <div class="upload-fields">
+        <div class="upload-field" data-modes="auto" {% if mode != 'auto' %}hidden{% endif %}>
+          <label for="files"><span><strong>Files</strong> <span class="badge needs" data-badge>Required</span></span></label>
+          <input id="files" type="file" name="files" multiple {% if mode == 'auto' %}required{% endif %} accept=".fasta,.fa,.fna,.csv,.tsv,.txt,.xlsx,.vcf,.gz">
+          <p class="help">Select all files at once (up to 20 files, 10 MB in total). Each file's role is proposed from its content; you can correct it in the review.</p>
+        </div>
+        {% for field in upload_fields if not field.advanced %}{{ upload_field(field) }}{% endfor %}
+        <details class="advanced-inputs" data-modes="pooled combined" {% if mode not in ['pooled', 'combined'] %}hidden{% endif %}>
+          <summary>Advanced inputs (optional)</summary>
+          {% for field in upload_fields if field.advanced %}{{ upload_field(field) }}{% endfor %}
+        </details>
+        <p class="note" data-modes="pooled combined" {% if mode not in ['pooled', 'combined'] %}hidden{% endif %}>Pooled results are uploaded <em>after</em> sequencing reads were aligned to a reference and variants were called elsewhere. This website analyzes those processed results; it does not accept raw FASTQ reads or call variants.</p>
+        <p class="note" data-modes="combined" {% if mode != 'combined' %}hidden{% endif %}>Cross-source matching needs both sources on the <strong>same verified reference</strong>: the pooled table must name the uploaded reference (same ID and bases). Otherwise each source is still analyzed, but their variants are marked incomparable.</p>
+        <p class="warnings" id="other-mode-files" role="status" hidden></p>
+      </div>
+      <noscript><style>.upload-fields [hidden] { display: block !important; }</style><p class="help">JavaScript is off, so every upload field is shown; leave the ones you do not need empty.</p></noscript>
       <fieldset class="enrich-toggle">
         <legend>Sprint 4 · optional</legend>
         <label><span><input type="checkbox" name="enrich" id="enrich" {% if enrich %}checked{% endif %}> <strong>Use PubTator + Claude AI to find missing or more precise sample information</strong></span></label>
@@ -49,23 +75,6 @@
             <span class="help">Only needed when your files do not already contain them. Accessions in FASTA names and metadata, and BioSample, BioProject, SRA, PMID, or DOI columns, are used automatically.</span></label>
         </div>
       </fieldset>
-
-      <div class="upload-fields">
-        <div class="upload-field" data-modes="auto" {% if mode != 'auto' %}hidden{% endif %}>
-          <label for="files"><span><strong>Files</strong> <span class="badge needs" data-badge>Required</span></span></label>
-          <input id="files" type="file" name="files" multiple {% if mode == 'auto' %}required{% endif %} accept=".fasta,.fa,.fna,.csv,.tsv,.txt,.xlsx,.vcf,.gz">
-          <p class="help">Select all files at once (up to 20 files, 10 MB in total). Each file's role is proposed from its content; you can correct it in the review.</p>
-        </div>
-        {% for field in upload_fields if not field.advanced %}{{ upload_field(field) }}{% endfor %}
-        <details class="advanced-inputs" data-modes="pooled combined" {% if mode not in ['pooled', 'combined'] %}hidden{% endif %}>
-          <summary>Advanced inputs (optional)</summary>
-          {% for field in upload_fields if field.advanced %}{{ upload_field(field) }}{% endfor %}
-        </details>
-        <p class="note" data-modes="pooled combined" {% if mode not in ['pooled', 'combined'] %}hidden{% endif %}>Pooled results are uploaded <em>after</em> sequencing reads were aligned to a reference and variants were called elsewhere. This website analyzes those processed results; it does not accept raw FASTQ reads or call variants.</p>
-        <p class="note" data-modes="combined" {% if mode != 'combined' %}hidden{% endif %}>Cross-source matching needs both sources on the <strong>same verified reference</strong>: the pooled table must name the uploaded reference (same ID and bases). Otherwise each source is still analyzed, but their variants are marked incomparable.</p>
-        <p class="warnings" id="other-mode-files" role="status" hidden></p>
-      </div>
-      <noscript><style>.upload-fields [hidden] { display: block !important; }</style><p class="help">JavaScript is off, so every upload field is shown; leave the ones you do not need empty.</p></noscript>
       <button type="submit" class="big">Review files</button>
     </form>
     <script>
@@ -106,7 +115,7 @@
       })();
     </script>
 
-    <h3>Which files do I need?</h3>
+    <h3 id="file-details">More detail on which files to use</h3>
     <details>
       <summary><span class="dot s2"></span>Individual sequence analysis (Sprint 2)</summary>
       <ul class="notes">

@@ -143,3 +143,57 @@ explanation; the page has the feedback markup.
 
 No background-job system was added: the request architecture finished every hosted run, so it was
 not needed.
+
+## Milestone 3: website organisation and navigation — Done (2026-11-16)
+
+Every result and figure is kept; no page was redesigned.
+
+**3A: homepage** (`templates/_upload.html`, `_how_it_works.html`, `index.html` CSS).
+- "How this works" starts collapsed.
+- A compact **"Which files do I need?"** box leads Step 1. It says you never need every type, and
+  names individual FASTA + metadata, pooled SNV data, complete A/C/G/T counts, a reference FASTA, a
+  gene annotation, and supplementary metadata.
+- The file fields now come before the optional Sprint 4 opt-in.
+- The detailed help ("More detail on which files to use") follows the Review button.
+- The upload card takes about two-thirds of the width; the mode choices are in two columns and show
+  only the selected mode's description (`:has`, with a fallback that shows all of them).
+- Automatic recognition is unchanged.
+
+**3B: review page.** A status box at the top shows "Ready to run …" with a link to Run, or
+**"Required information to fix before running"** with the problems. The problems are now listed once,
+at the top; before, they were at the bottom. Sections are numbered (1. Files recognized … 4. Run
+analysis), and the Run bar stays sticky.
+
+**3C: results page.**
+- The jump bar adds **Downloads** and the Sprint 5 parts: Uncertainty, Mutation annotations, and
+  Experimental grouping.
+- Sections with nothing to show are marked "(n/a)".
+- On phones the bar is a sticky, sideways-scrolling single line.
+- The downloads bar has `id="downloads"`.
+
+**3D: Sprint 4.** Already states, in order: publications found, location information, whether it
+applies, possible improvement, whether Claude ran, and whether anything changed. This was verified on
+staging (hosted report §7). No change was needed.
+
+**Browser measurements** (built-in browser, local server; scripted, not a human test):
+
+| Element | Before (hosted, 1024×768) | After |
+|---|---|---|
+| File picker | 1,778 px | **956 px** |
+| Review button | 1,939 px | **1,332 px** |
+| File guide | after the button (2,010 px) | **374 px**, first screen |
+| Homepage height | 2,737 px | 2,130 px |
+
+- **Phone (375×812):** guide at 595 px, file picker at 1,490 px, examples after the form, no sideways
+  scrolling.
+- **Review page (1280×800):** the status box is at 504 px (first screen), and the sticky Run button is
+  visible at the bottom of the window.
+- **Results page:** Downloads at 696 px and Major findings at 1,165 px. Every jump link works, and on a
+  phone the bar stays at the top (40 px tall).
+
+**Remaining for a human test:**
+- At 1024×768 the file picker is still one scroll down, because the mode chooser comes first.
+- The review and results pages are still long (6.7k px and 15.8k px), though navigable.
+
+**Tests.** `tests/test_final_polish_navigation.py` (3). The UI, web, literature, and Sprint 5 web
+modules all pass (77 tests).
