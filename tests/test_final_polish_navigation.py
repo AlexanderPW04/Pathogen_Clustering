@@ -66,6 +66,9 @@ class NavigationTest(unittest.TestCase):
                        "#mutation-frequency-groups", "#provenance"]:
             self.assertIn(f'href="{target}"', nav)
         self.assertIn('id="downloads"', page)
+        # Jump targets inside Sprint 5 are panels, not sections: they need the same offset below the
+        # sticky bar, or their heading lands under it (found on staging, 2026-11-16).
+        self.assertIn(".uncertainty-panel[id] { scroll-margin-top", page)
         self.assertLess(page.index("Major findings"), page.index("3. Genomic variation</h2>"))
 
 
