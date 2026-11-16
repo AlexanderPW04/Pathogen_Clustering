@@ -103,7 +103,7 @@ class Phase4AWebTest(unittest.TestCase):
         self.assertIn("Summary", workbook)
         report = self.client.get(links["analysis_report.pdf"]).data
         self.assertTrue(report.startswith(b"%PDF"))
-        self.assertIn("How each uploaded file was read (import provenance)", text(page))
+        self.assertIn("How each uploaded file was read (input mapping and import provenance)", text(page))
         self.assertIn("Analyses the data supported", text(page))
 
     def test_two_uploads_keep_their_own_choices(self):

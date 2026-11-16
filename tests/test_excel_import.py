@@ -148,7 +148,7 @@ class UploadTest(unittest.TestCase):
         _, token = self.review(csv, "calls.csv")
         from_csv = self.run_review(token)
         for page in (from_excel, from_csv):
-            self.assertIn("Pooled samples:</strong> 2", page)
+            self.assertIn("2 pooled samples analyzed", page)
             self.assertNotIn("Analysis could not be completed", page)
 
     def test_unsupported_workbook_says_which_values_are_missing(self):
@@ -196,7 +196,7 @@ class UploadTest(unittest.TestCase):
         columns = HEADERS[:7]
         page, token = self.review(workbook_bytes({"Calls": [columns] + [row[:7] for row in ROWS]}))
         self.assertNotIn("disabled>Run analysis", page)
-        self.assertIn("Pooled samples:</strong> 2", self.run_review(token))
+        self.assertIn("2 pooled samples analyzed", self.run_review(token))
 
     def test_a_dataset_too_large_for_this_server_is_refused_clearly_and_not_trimmed(self):
         content = workbook_bytes({"Calls": [HEADERS] + ROWS})
@@ -237,7 +237,7 @@ class UploadTest(unittest.TestCase):
         finally:
             application.ANALYSIS_SLOT.release()
         self.assertIn("Another analysis is running on this server", text(page))
-        self.assertIn("Pooled samples:</strong> 2", self.run_review(token))  # same upload, no re-upload
+        self.assertIn("2 pooled samples analyzed", self.run_review(token))  # same upload, no re-upload
 
     def test_failure_pages_are_readable_and_offer_a_way_back(self):
         with patch.dict(app.config, {"MAX_CONTENT_LENGTH": 10}):

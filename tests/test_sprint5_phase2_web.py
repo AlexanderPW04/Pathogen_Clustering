@@ -174,7 +174,7 @@ class Phase2WebTest(unittest.TestCase):
              self.example("synthetic_reference.fasta"), self.example("synthetic_pooled_snvs.csv"),
              self.example("synthetic_pooled_base_counts.csv")], mode="combined")
         self.assertIn("Sequencing Uncertainty and Variant Frequency", page)
-        self.assertIn("Individual sequence relationships", page)
+        self.assertIn("Individual Sequence Relationships", page)
         self.download(download_id, "cross_source_comparison.csv")
         self.download(download_id, "sprint5_uncertainty_models.csv")
 

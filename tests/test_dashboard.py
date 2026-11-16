@@ -43,15 +43,15 @@ class DashboardTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn("SYNTHETIC integrated example", page)
         self.assertNotIn("Synthetic example analysis", page)
-        # Integrated (both-source) sections come before source-specific ones.
-        headings = ["1. Overview", "2. Cross-source evidence", "3. Genomic variation",
-                    "4. Temporal patterns", "5. Geographic context", "6. Sequencing quality",
-                    "7. Population structure", "8. Individual sequence relationships"]
-        positions = [page.index(f"<h2>{heading}</h2>") for heading in headings]
+        # The cross-source evidence comes first after the overview (results dashboard layout).
+        headings = ["Combined Analysis — Sprint 2 + 3 + 5", "Cross-Source Variant Evidence",
+                    "Individual Sequence Relationships", "Genomic Variation", "Temporal and Geographic Patterns",
+                    "Sequencing Quality and Uncertainty", "Advanced Analysis", "Downloads and Provenance"]
+        positions = [page.index(heading + "</h2>" if index else heading) for index, heading in enumerate(headings)]
         self.assertEqual(positions, sorted(positions))
         self.assertIn("Shared: observed in both sources", page)
         self.assertIn("Incomparable: reference not verified as the same", page)
-        self.assertIn("Variants observed in both sources:</strong> 2", page)
+        self.assertIn("2 variants observed in both sources", page)
         self.assertIn("Paper method: Yue-Clayton PCoA", page)
         self.assertIn("Which Fontenele et al. (2021) methods were reproduced", page)
         self.assertIn("Profile overlap only; not a lineage assignment", page)
@@ -75,11 +75,11 @@ class DashboardTest(unittest.TestCase):
         _, page, _, _ = post({"snv_file": upload("synthetic_pooled_snvs.csv"), "qc_mode": "paper"},
                              multipart=True)
         self.assertNotIn("Analysis could not be completed", page)
-        self.assertIn("Pooled samples:</strong> 9", page)
+        self.assertIn("9 pooled samples analyzed", page)
         self.assertIn("EXPLORATORY", page.upper())  # no base counts: not the paper's PCoA
         self.assertIn("cannot be computed", page)
-        self.assertIn("Cross-source comparison needs individual sequences", page)
-        self.assertIn("Upload individual FASTA sequences and metadata", page)
+        self.assertIn("Individual-sequence and cross-source analyses (Sprint 2)", page)
+        self.assertIn("No individual sequences were uploaded.", page)
         self.assertNotIn("Potential clusters:</strong>", page)
 
     def test_individual_sequences_with_reference_get_variant_profiles(self):
@@ -88,10 +88,9 @@ class DashboardTest(unittest.TestCase):
             "metadata_file": upload("synthetic_individual_metadata.csv"),
             "reference_file": upload("synthetic_reference.fasta"),
         }, multipart=True)
-        self.assertIn("Individual sequences:</strong> 5 <span", page)
-        self.assertIn("(4 mapped to the reference)", page)
+        self.assertIn("5 individual sequences analyzed; 4 placed on the reference genome", page)
         self.assertIn("Reference mapping not established", page)
-        self.assertIn("Cross-source comparison needs individual sequences", page)
+        self.assertIn("Pooled-sequencing and cross-source analyses (Sprint 3 + 5)", page)
         self.assertTrue(any(link.endswith("individual_variants.csv") for link in links))
 
     def test_pooled_side_files_need_an_snv_table_and_bad_reference_is_reported(self):

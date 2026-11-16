@@ -39,6 +39,7 @@ import openpyxl  # noqa: E402
 import pandas as pd  # noqa: E402
 from matplotlib.backends.backend_pdf import PdfPages  # noqa: E402
 
+from genomics.result_availability import analysis_availability, distinct_findings  # noqa: E402
 from genomics.spreadsheet_safety import escape_text  # noqa: E402
 from openpyxl.cell import WriteOnlyCell  # noqa: E402
 from openpyxl.styles import Font  # noqa: E402
@@ -128,6 +129,9 @@ def report_summary(result, findings):
         "analyses": result.get("analyses", []),
         "figures": {name: {"title": figure["title"], "caption": figure.get("caption", "")}
                     for name, figure in result["figures"].items()},
+        # The same availability record the results page uses: title, headline counts, limitations,
+        # and which figures are shown first, so the report and the website agree.
+        "availability": analysis_availability(result),
     }
 
 
@@ -304,24 +308,59 @@ def methods_lines(summary):
     return lines
 
 
-def build_pdf_report(tables, figures, summary):
-    """The concise report as bytes (text pages, then up to eight main figures)."""
+def report_figure_names(figures, summary):
+    """The figures the results page shows first, in report order (older summaries: the fixed list)."""
 
+    availability = summary.get("availability")
+    if availability:
+        return [name for name in availability["report_figures"] if name in figures]
+    return REPORT_FIGURES + [name for name in figures if name not in REPORT_FIGURES]
+
+
+def build_pdf_report(tables, figures, summary):
+    """The concise report as bytes: an executive summary, methods and limitations, then the main figures.
+
+    Long tables are never printed; they are in the CSV downloads and the workbook.
+    """
+
+    availability = summary.get("availability") or {}
     buffer = BytesIO()
     with PdfPages(buffer) as pdf:
         page = Page(pdf, "Genomic surveillance analysis report")
+        if availability:
+            page.write(f"{availability['title']} · {availability['status']}", size=11, bold=True, gap=0.006)
         page.write(f"Created {date.today().isoformat()}.", size=8)
         page.write(DISCLAIMER, size=8.5, gap=0.012)
+        if availability:
+            page.write("Executive summary", size=11, bold=True)
+            for text in availability["key_metrics"]:
+                page.write("• " + text, indent=0.02)
+            page.y -= 0.01
+        page.write("Main findings", size=11, bold=True)
+        for text in (distinct_findings(summary["findings"]) if availability else summary["findings"]):
+            page.write("• " + text, indent=0.02)
+        page.y -= 0.01
+        if availability:
+            page.write("Important limitations", size=11, bold=True)
+            for text in availability["limitations"]:
+                page.write("• " + text, indent=0.02, size=8.5)
+            page.y -= 0.01
+            if availability["unavailable"]:
+                page.write("Unavailable or limited analyses", size=11, bold=True)
+                for row in availability["unavailable"]:
+                    page.write(f"{row['Analysis']} ({row['Status']}): {row['Reason']}", indent=0.02, size=8)
+                page.y -= 0.01
+            if availability["denominators"]:
+                page.write("What each count means", size=11, bold=True)
+                for row in availability["denominators"]:
+                    page.write(f"{row['label']}: {row['value']:,}. {row['definition']}", indent=0.02, size=8)
+                page.y -= 0.01
         page.write("Dataset", size=11, bold=True)
         for line in dataset_lines(tables, summary):
             page.write(line, indent=0.02)
         page.y -= 0.01
-        page.write("Main findings", size=11, bold=True)
-        for text in summary["findings"]:
-            page.write("• " + text, indent=0.02)
-        page.y -= 0.01
         rows = summary.get("readiness") or []
-        if rows:
+        if rows and not availability:
             page.write("Analyses these data support (decided before the run)", size=11, bold=True)
             for row in rows:
                 page.write(f"{row['Status']} — {row['Analysis']}: {row['Reason']}", indent=0.02, size=8.5)
@@ -342,13 +381,16 @@ def build_pdf_report(tables, figures, summary):
                                   and row["Transformation"] else ""),
                                indent=0.02, size=8)
                 page.y -= 0.01
-        page.write("Limitations", size=11, bold=True)
+        page.write("Detailed limitations by analysis", size=11, bold=True)
         for section in NOTE_SECTIONS:
-            for text in summary["notes"].get(section, [])[:6]:
+            for text in summary["notes"].get(section, [])[:4 if availability else 6]:
                 page.write("• " + text, indent=0.02, size=8)
+        page.y -= 0.01
+        page.write("Full tables are not printed here: every table is in the CSV downloads, and the key tables are "
+                   "also in analysis_results.xlsx (very long detail tables are CSV only).", size=8)
         page.finish()
         shown = 0
-        for name in REPORT_FIGURES + [name for name in figures if name not in REPORT_FIGURES]:
+        for name in report_figure_names(figures, summary):
             figure = figures.get(name)
             if figure is None or shown >= MAX_REPORT_FIGURES:
                 continue

@@ -262,6 +262,44 @@
     .field-help summary { color: var(--ink-muted); font-size: 0.88rem; font-weight: normal; }
     section[id], .story, .uncertainty-panel[id] { scroll-margin-top: calc(var(--jump-bar-height, 6rem) + 0.5rem); }
     @media (max-width: 600px) { main { padding: 0 0.75rem; } section, .card { padding: 0.9rem; } nav.sections { flex-wrap: nowrap; overflow-x: auto; padding: 0.45rem 0.75rem; white-space: nowrap; } .box { font-size: 0.82rem; } }
+    /* Results dashboard: categories that fit what ran, one downloads area, and a print layout. */
+    .overview h2 .badge { font-size: 0.8rem; vertical-align: middle; }
+    .key-metrics { display: grid; gap: 0.3rem 1.75rem; grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr)); margin: 0.6rem 0 0.5rem; padding-left: 1.1rem; }
+    .key-metrics li { font-weight: 600; }
+    .limits { background: var(--surface-alt); border-left: 4px solid var(--warn-border); border-radius: 8px; margin: 0.75rem 0; padding: 0.1rem 0.9rem 0.2rem; }
+    .limits h3 { margin-top: 0.5rem; }
+    .limits ul { margin: 0.3rem 0 0.4rem; }
+    .unavailable-list { margin: 0.4rem 0; padding-left: 1.1rem; }
+    .unavailable-list li { margin: 0.25rem 0; }
+    .statement { background: var(--surface-alt); border-left: 4px solid var(--ink-muted); border-radius: 6px; margin: 0.5rem 0 0.75rem; padding: 0.5rem 0.75rem; }
+    .where { line-height: 1.9; }
+    .where a { white-space: nowrap; }
+    details.experimental-panel { background: var(--surface); border: 1px dashed var(--border); border-radius: 8px; margin: 1rem 0; padding: 0.5rem 0.9rem; }
+    details.experimental-panel > summary { color: var(--ink-muted); }
+    .download-actions .button-link { font-size: 1rem; margin: 0.2rem 0.3rem 0.2rem 0; }
+    .inline-help { display: inline; }
+    .print-only { display: none; }
+    .badge.not-part-of-this-analysis, .badge.chart-not-shown { background: #eef0f2; color: var(--ink-muted); }
+    @media print {
+      body { background: #fff; color: #000; font-size: 10pt; }
+      main { margin: 0; max-width: none; padding: 0; }
+      .steps, .lead-note, .toolbar, nav.sections, .action-bar, #working, #status, details.legacy, .how, .no-print, details.guide, button, form { display: none !important; }
+      section, .card { border: 0; border-radius: 0; margin: 0 0 0.8rem; padding: 0; }
+      .result-section { border-top: 1px solid #888; padding-top: 0.4rem; }
+      h2 { break-after: avoid; font-size: 14pt; }
+      h3, .figure-title { break-after: avoid; font-size: 11pt; }
+      figure, .summary-grid p, tr, .story, .conclusion, .limits, .statement { break-inside: avoid; }
+      figure img { max-height: 14cm; max-width: 100%; object-fit: contain; }
+      .scroll, .wide-figure { overflow: visible; }
+      .wide-figure img { max-width: 100%; }
+      details:not([open]) { display: none; }
+      details > summary { list-style: none; }
+      details > summary::-webkit-details-marker { display: none; }
+      table { font-size: 8pt; }
+      a { color: inherit; text-decoration: none; }
+      .summary-grid { grid-template-columns: repeat(3, 1fr); }
+      .print-only { display: block; }
+    }
   </style>
 </head>
 <body>
@@ -360,7 +398,7 @@
       </section>
     {% endif %}
 
-    {% if step != 1 %}{% include "_how_it_works.html" %}{% endif %}
+    {% if step not in [1, 3] %}{% include "_how_it_works.html" %}{% endif %}
 
     {% if step == 1 %}{% include "_upload.html" %}{% include "_how_it_works.html" %}{% endif %}
 
@@ -570,23 +608,22 @@
       <figure>
         <p class="figure-title"><strong>{{ item.title }}</strong>{% if item.guide %} <span class="badge origin">{{ item.guide.origin }}</span>{% endif %}</p>
         {% if item.wide %}<div class="scroll wide-figure"><img src="{{ item.data_uri }}" alt="{{ item.title }}. {{ item.caption }}"></div>
-        <p class="help">Wide figure: scroll sideways, or download the PNG.</p>
+        <p class="help no-print">Wide figure: scroll sideways, or download the PNG.</p>
         {% else %}<img src="{{ item.data_uri }}" alt="{{ item.title }}. {{ item.caption }}">{% endif %}
         <figcaption>
           {% if item.interpretation %}<p class="finding"><strong>In these results:</strong> {{ item.interpretation }}</p>{% endif %}
           <p>{{ item.caption }}</p>
           {% if item.guide %}
             <details class="guide">
-              <summary>How to read this chart</summary>
+              <summary>About this chart</summary>
               <dl class="facts">
-                <dt>What it measures</dt><dd>{{ item.guide.measures }}</dd>
-                <dt>Axes</dt><dd>{{ item.guide.axes }}</dd>
-                <dt>Colors and symbols</dt><dd>{{ item.guide.colors }}</dd>
-                <dt>Limitation</dt><dd>{{ item.guide.limitation }}</dd>
+                <dt>What this shows</dt><dd>{{ item.guide.measures }}</dd>
+                <dt>How to interpret it</dt><dd>{{ item.guide.axes }} {{ item.guide.colors }}</dd>
+                <dt>Important limitation</dt><dd>{{ item.guide.limitation }}</dd>
               </dl>
             </details>
           {% endif %}
-          <a href="{{ url_for('result_download', download_id=item.download_id, filename=item.filename) }}">Download PNG</a>
+          <a class="no-print" href="{{ url_for('result_download', download_id=item.download_id, filename=item.filename) }}">Download PNG</a>
         </figcaption>
       </figure>
     {% endmacro %}
@@ -689,35 +726,38 @@
       </div>
     {% endmacro %}
 
+    {% macro stat_grid(stats) %}
+      {% if stats %}<div class="summary-grid">{% for item in stats %}<p class="stat{% if not item.available %} na{% endif %}"><strong>{{ item.label }}:</strong> {{ item.value }}{% if item.detail %} <span class="detail">({{ item.detail }})</span>{% endif %}</p>{% endfor %}</div>{% endif %}
+    {% endmacro %}
+
     {% macro uncertainty_panel(u) %}
       <div class="uncertainty-panel" id="sequencing-uncertainty">
         <h3>Sequencing Uncertainty and Variant Frequency</h3>
         <p>{{ u.explanation }}</p>
         <p class="conclusion"><span class="badge {{ 'completed' if u.calibrated else 'limited' }}">{{ 'Empirically calibrated' if u.calibrated else 'Not calibrated' }}</span> {{ u.headline }}</p>
-        <div class="scroll"><table><caption>Uncertainty models compared (median over observations)</caption>
-          <thead><tr>{% for name in u.comparison.columns %}<th>{{ name }}</th>{% endfor %}</tr></thead>
-          <tbody>{{ table_rows(u.comparison.rows) }}</tbody></table></div>
-        {% if u.examples %}
-          <div class="scroll"><table><caption>Example observations: frequency, depth, and both intervals</caption>
-            <thead><tr>{% for name in u.examples[0].keys() %}<th>{{ name }}</th>{% endfor %}</tr></thead>
-            <tbody>{% for row in u.examples %}<tr>{% for value in row.values() %}<td>{{ value }}</td>{% endfor %}</tr>{% endfor %}</tbody></table></div>
-        {% endif %}
-        {% if u.reasons %}
-          <details class="more"><summary>Why some uncertainty results are unavailable ({{ u.reasons|length }})</summary>
-            <ul class="notes">{% for reason in u.reasons %}<li>{{ reason }}</li>{% endfor %}</ul></details>
-        {% endif %}
+        <details class="more">
+          <summary>Model comparison and {{ 'calibrated and hypothetical' if u.calibrated else 'hypothetical' }} overdispersion scenarios</summary>
+          <p class="help">Rows marked "Not calibrated (sensitivity scenario)" use an assumed rho to show how the interval would widen; they are not estimates from this upload.{% if u.calibrated %} Calibrated rows use rho estimated from technical replicates.{% endif %}</p>
+          <div class="scroll"><table><caption>Uncertainty models compared (median over observations)</caption>
+            <thead><tr>{% for name in u.comparison.columns %}<th>{{ name }}</th>{% endfor %}</tr></thead>
+            <tbody>{{ table_rows(u.comparison.rows) }}</tbody></table></div>
+          {% if u.examples %}
+            <div class="scroll"><table><caption>Example observations: frequency, depth, and both intervals</caption>
+              <thead><tr>{% for name in u.examples[0].keys() %}<th>{{ name }}</th>{% endfor %}</tr></thead>
+              <tbody>{% for row in u.examples %}<tr>{% for value in row.values() %}<td>{{ value }}</td>{% endfor %}</tr>{% endfor %}</tbody></table></div>
+          {% endif %}
+          {% if u.reasons %}<h4>Why some uncertainty results are unavailable</h4><ul class="notes">{% for reason in u.reasons %}<li>{{ reason }}</li>{% endfor %}</ul>{% endif %}
+        </details>
       </div>
     {% endmacro %}
 
     {% macro grouping_panel(g) %}
-      <div class="uncertainty-panel grouping-panel" id="mutation-frequency-groups">
-        <h3>{{ g.title }}</h3>
+      <details class="experimental-panel" id="mutation-frequency-groups">
+        <summary>{{ g.title }} <span class="badge experimental">{{ g.badge }}</span></summary>
         <p>{{ g.explanation }}</p>
         <p class="conclusion"><span class="badge {{ 'limited' if g.experimental else 'skipped' }}">{{ g.badge }}</span>
           {% for reason in g.reasons %}{{ reason }} {% endfor %}</p>
-        {% if g.stats %}
-          <div class="summary-grid">{% for item in g.stats %}<p class="stat{% if not item.available %} na{% endif %}"><strong>{{ item.label }}:</strong> {{ item.value }}{% if item.detail %} <span class="detail">({{ item.detail }})</span>{% endif %}</p>{% endfor %}</div>
-        {% endif %}
+        {{ stat_grid(g.stats) }}
         {% if g.validation %}<p class="help"><strong>Validation:</strong> {{ g.validation }}</p>{% endif %}
         {% if g.figures %}{{ show_figure(g.figures[0]) }}{% endif %}
         {% if g.methods %}
@@ -739,8 +779,7 @@
         {% endif %}
         <details class="more"><summary>Limitations of exploratory grouping ({{ g.limitations|length }})</summary>
           <ul class="notes">{% for item in g.limitations %}<li>{{ item }}</li>{% endfor %}</ul></details>
-        {% if g.downloads and download_id %}<p class="section-downloads"><strong>Grouping downloads:</strong> {% for name in g.downloads %}<a href="{{ url_for('result_download', download_id=download_id, filename=name) }}">{{ name }}</a>{% if not loop.last %} · {% endif %}{% endfor %}</p>{% endif %}
-      </div>
+      </details>
     {% endmacro %}
 
     {% macro annotation_panel(a) %}
@@ -751,109 +790,190 @@
           <p class="conclusion"><span class="badge skipped">Annotation not supplied</span> {{ a.message }}</p>
         {% else %}
           <p class="conclusion"><span class="badge completed">Predicted from the reference annotation</span> {{ a.source }}</p>
-          <div class="summary-grid">{% for item in a.stats %}<p class="stat{% if not item.available %} na{% endif %}"><strong>{{ item.label }}:</strong> {{ item.value }}{% if item.detail %} <span class="detail">({{ item.detail }})</span>{% endif %}</p>{% endfor %}</div>
+          {{ stat_grid(a.stats) }}
           <p class="help"><strong>Reading these results:</strong> a predicted amino-acid change describes the sequence only. It does not show an effect on transmissibility, severity, immune escape, drug resistance, or outbreak risk. Each mutation is predicted on its own; pooled reads do not show which mutations share a viral genome.</p>
-          {% if a.agreement %}<p class="help">{{ a.agreement }}</p>{% endif %}
-          {% if a.notes %}<ul class="notes">{% for item in a.notes %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
           {% if a.figures %}{{ show_figure(a.figures[0]) }}{% endif %}
-          {% if a.table %}{{ show_table(a.table) }}{% endif %}
-          <details class="more"><summary>Technical details: codons, coding positions, and annotated coding regions</summary>
+          {% if a.table %}
+            <details class="more"><summary>Detailed mutation table (first {{ a.table.rows|length }} of {{ a.table.total }} mutations; the CSV has every row)</summary>
+              {{ show_table(a.table) }}</details>
+          {% endif %}
+          <details class="more"><summary>Technical details: codons, coding positions, annotated coding regions, and checks</summary>
+            {% if a.agreement %}<p class="help">{{ a.agreement }}</p>{% endif %}
+            {% if a.notes %}<ul class="notes">{% for item in a.notes %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
             {% if a.details %}{{ show_table(a.details) }}{% endif %}
             {% if a.sources %}{{ show_table(a.sources) }}{% endif %}
           </details>
         {% endif %}
         <details class="more"><summary>Limitations of mutation annotation ({{ a.limitations|length }})</summary>
           <ul class="notes">{% for item in a.limitations %}<li>{{ item }}</li>{% endfor %}</ul></details>
-        {% if a.downloads and download_id %}<p class="section-downloads"><strong>Annotation downloads:</strong> {% for name in a.downloads %}<a href="{{ url_for('result_download', download_id=download_id, filename=name) }}">{{ name }}</a>{% if not loop.last %} · {% endif %}{% endfor %}</p>{% endif %}
       </div>
     {% endmacro %}
 
-    {% macro render_section(s) %}
-      <section id="{{ s.id }}" class="result-section">
-        {% if s.sprint %}<p class="sprint-tag">{{ s.sprint }}</p>{% endif %}
-        <h2>{{ s.number }}. {{ s.title }}</h2>
-        <p class="purpose">{{ s.purpose }}</p>
-        {% if s.unavailable %}<p class="unavailable">{{ s.unavailable }}</p>{% endif %}
-        {% if s.id == 'depth-aware' and s.uncertainty %}{{ uncertainty_panel(s.uncertainty) }}{% endif %}
-        {% if s.id == 'depth-aware' and s.annotation %}{{ annotation_panel(s.annotation) }}{% endif %}
-        {% if s.id == 'depth-aware' and s.grouping %}{{ grouping_panel(s.grouping) }}{% endif %}
-        {% if s.messages %}<ul class="notes availability">{% for message in s.messages %}<li>{{ message }}</li>{% endfor %}</ul>{% endif %}
-        {% if s.stats %}
-          <div class="summary-grid">{% for item in s.stats %}<p class="stat{% if not item.available %} na{% endif %}"><strong>{{ item.label }}:</strong> {{ item.value }}{% if item.detail %} <span class="detail">({{ item.detail }})</span>{% endif %}</p>{% endfor %}</div>
+    {% macro category_tail(c) %}
+      {% if c.tables %}
+        <details class="more">
+          <summary>Detailed tables ({{ c.tables|length }})</summary>
+          {% for table in c.tables %}{{ show_table(table) }}{% endfor %}
+        </details>
+      {% endif %}
+      {% if c.limitations %}
+        <details class="more">
+          <summary>Uncertainty and limitations ({{ c.limitations|length }})</summary>
+          {{ show_notes(c.limitations) }}
+        </details>
+      {% endif %}
+      <p class="back-top no-print"><a href="#overview">↑ Back to results overview</a></p>
+    {% endmacro %}
+
+    {% macro overview_category(c, av) %}
+      <section id="overview" class="result-section overview" aria-labelledby="overview-title">
+        <p class="sprint-tag">Results overview</p>
+        <h2 id="overview-title">{{ av.title }} <span class="badge {{ 'completed' if av.status == 'Completed' else 'limited' }}">{{ av.status }}</span></h2>
+        <ul class="key-metrics">{% for text in av.key_metrics %}<li>{{ text }}</li>{% endfor %}</ul>
+        {% set s = dashboard.overview %}
+        <h3>Main findings</h3>
+        <ul class="findings">
+          {% for item in s.findings %}<li>{{ item }}</li>{% endfor %}
+          {% if analysis_complete and summary %}<li>Sprint 2 screening: {{ related_pair_count }} related pair(s) meet all three cutoffs, forming {{ clusters|length }} potential cluster(s); {{ candidates|length }} more pair(s) pass the genetic and date cutoffs but have unresolved geography.</li>{% endif %}
+          {% if enrichment_note %}<li>Sprint 4: {{ enrichment_note }}</li>{% endif %}
+          {% if enrichment_report %}<li>Sprint 4 metadata enrichment was enabled: {{ enrichment_report.summary['Approved'] }} of {{ enrichment_report.summary['Proposed metadata improvements'] }} proposed improvement(s) approved; {{ enrichment_report.summary['Values changed'] }} value(s) used in this analysis (<a href="#enrichment-report">report</a>).</li>{% endif %}
+        </ul>
+        {% if dashboard.cross_source.story %}<p><a href="#shared-variant-example">Follow one shared variant step by step →</a></p>{% endif %}
+        <div class="limits">
+          <h3>Important limitations</h3>
+          <ul class="notes">{% for text in av.limitations %}<li>{{ text }}</li>{% endfor %}</ul>
+        </div>
+        {% if av.unavailable %}
+          <details class="more" open id="unavailable-analyses">
+            <summary>Unavailable or limited analyses ({{ av.unavailable|length }})</summary>
+            <ul class="unavailable-list">{% for row in av.unavailable %}<li><strong>{{ row.Analysis }}</strong> <span class="badge {{ row.Status|lower|replace(' ', '-') }}">{{ row.Status }}</span> {{ row.Reason }}</li>{% endfor %}</ul>
+          </details>
         {% endif %}
-        {% if s.id == 'overview' %}
-          <p><strong>Analysis mode:</strong> {{ s.mode }}</p>
-          {% if s.findings or (analysis_complete and summary) or enrichment_report or enrichment_note %}
-            <h3>Major findings</h3>
-            <ul class="findings">
-              {% for item in s.findings %}<li>{{ item }}</li>{% endfor %}
-              {% if enrichment_note %}<li>Sprint 4: {{ enrichment_note }}</li>{% endif %}
-              {% if enrichment_report %}<li>Sprint 4 metadata enrichment was enabled: {{ enrichment_report.summary['Approved'] }} of {{ enrichment_report.summary['Proposed metadata improvements'] }} proposed improvement(s) approved; {{ enrichment_report.summary['Values changed'] }} value(s) used in this analysis (<a href="#enrichment-report">report</a>).</li>{% endif %}
-              {% if analysis_complete and summary %}<li>Sprint 2 screening: {{ related_pair_count }} related pair(s) meet all three cutoffs, forming {{ clusters|length }} potential cluster(s); {{ candidates|length }} more pair(s) pass the genetic and date cutoffs but have unresolved geography.</li>{% endif %}
-            </ul>
+        <p class="where no-print"><strong>Details:</strong>
+          {% for item in dashboard.categories if item.id not in ['overview', 'downloads'] %}<a href="#{{ item.id }}">{{ item.title }}</a> · {% endfor %}
+          <a class="button-link" href="#downloads">Download results</a></p>
+        {% if av.denominators %}
+          <details class="more">
+            <summary>What each count means</summary>
+            <p class="help">The counts come from different processing stages, so they differ on purpose.</p>
+            <div class="scroll"><table class="counts"><thead><tr><th>Count</th><th>Value</th><th>What it counts</th></tr></thead>
+              <tbody>{% for row in av.denominators %}<tr><td>{{ row.label }}</td><td>{{ '{:,}'.format(row.value) }}</td><td>{{ row.definition }}</td></tr>{% endfor %}</tbody></table></div>
+          </details>
+        {% endif %}
+        <details class="more">
+          <summary>Files, connection details, and analyses that ran</summary>
+          {% if input_names %}
+            <h3>Files analyzed</h3>
+            <p>{% for key, name in input_names.items() %}<strong>{{ input_labels.get(key, key) }}:</strong> {{ name }}<br>{% endfor %}</p>
           {% endif %}
-          {% if dashboard.cross_source.story %}<p><a href="#shared-variant-example">Follow one shared variant step by step →</a></p>{% endif %}
+          {% if s.integration %}
+            <h3>How the two sources were connected</h3>
+            <dl class="facts">{% for label, text in s.integration %}<dt>{{ label }}</dt><dd>{{ text }}</dd>{% endfor %}</dl>
+          {% endif %}
+          {% if s.analyses %}
+            <h3>Analyses in this run</h3>
+            <div class="scroll"><table><thead><tr><th>Analysis</th><th>Status</th><th>Detail</th></tr></thead>
+              <tbody>{% for row in s.analyses %}<tr><td>{{ row.Analysis }}</td><td><span class="badge {{ row.Status|lower|replace(' ', '-') }}">{{ row.Status }}</span></td><td>{{ row.Detail }}</td></tr>{% endfor %}</tbody></table></div>
+          {% endif %}
+        </details>
+        {% if c.secondary or c.tables %}
           <details class="more">
-            <summary>Files, connection details, and analyses that ran</summary>
-            {% if input_names %}
-              <h3>Files analyzed</h3>
-              <p>{% for key, name in input_names.items() %}<strong>{{ input_labels.get(key, key) }}:</strong> {{ name }}<br>{% endfor %}</p>
-            {% endif %}
-            {% if s.integration %}
-              <h3>How the two sources were connected</h3>
-              <dl class="facts">{% for label, text in s.integration %}<dt>{{ label }}</dt><dd>{{ text }}</dd>{% endfor %}</dl>
-            {% endif %}
-            {% if s.analyses %}
-              <h3>Analyses in this run</h3>
-              <div class="scroll"><table><thead><tr><th>Analysis</th><th>Status</th><th>Detail</th></tr></thead>
-                <tbody>{% for row in s.analyses %}<tr><td>{{ row.Analysis }}</td><td><span class="badge {{ row.Status|lower|replace(' ', '-') }}">{{ row.Status }}</span></td><td>{{ row.Detail }}</td></tr>{% endfor %}</tbody></table></div>
-            {% endif %}
-          </details>
-          <details class="more">
-            <summary>Important limitations</summary>
-            <ul class="notes">
-              <li>Results are screening signals: they do not confirm transmission, an outbreak, or a lineage.</li>
-              <li>Individual base calls and pooled allele frequencies are different measurements; they are compared only by reference position and nucleotide change.</li>
-              <li>Missing information is shown as "Not available" or "unknown", never as zero.</li>
-              <li>Each section lists its own limitations under "Uncertainty and limitations".</li>
-            </ul>
+            <summary>Input completeness</summary>
+            {% for item in c.secondary %}{{ show_figure(item) }}{% endfor %}
+            {% for table in c.tables %}{{ show_table(table) }}{% endfor %}
           </details>
         {% endif %}
-        {% if s.id == 'population' and s.method %}
-          <p><strong>Method:</strong> {{ s.method }}{% if s.exploratory %} <span class="badge limited">Exploratory — not the paper's method</span>{% else %} <span class="badge completed">Paper method</span>{% endif %}</p>
+      </section>
+    {% endmacro %}
+
+    {% macro downloads_category(c) %}
+      <section id="downloads" class="result-section downloads-bar" aria-labelledby="downloads-title">
+        <h2 id="downloads-title">Downloads and Provenance</h2>
+        <span id="provenance"></span>
+        {% if dashboard.report_downloads %}
+          <p class="download-actions no-print"><strong>Download Results:</strong>
+            {% for name in dashboard.report_downloads %}<a class="button-link report-link" href="{{ url_for('result_download', download_id=download_id, filename=name) }}" data-filename="{{ name }}" data-label="{{ 'Excel workbook' if name.endswith('.xlsx') else 'PDF report' }}">{{ 'Results workbook (XLSX)' if name.endswith('.xlsx') else 'Analysis report (PDF)' }}</a> {% endfor %}</p>
+          <p class="report-status no-print" id="report-status" role="status" aria-live="polite"></p>
+          <p class="help">The workbook and the report use the same tables and figures as this page, so their numbers match. They are prepared on the first click (a minute or more for a large analysis); the CSV tables and PNG figures below are ready now.</p>
         {% endif %}
-        {% if s.figures %}{{ show_figure(s.figures[0]) }}{% endif %}
-        {% if s.id == 'cross-source' and s.story %}{{ shared_story(s.story) }}{% endif %}
-        {% if s.figures|length > 1 %}
-          <details class="more">
-            <summary>More figures in this section ({{ s.figures|length - 1 }})</summary>
-            {% for item in s.figures[1:] %}{{ show_figure(item) }}{% endfor %}
+        {% if dashboard.export_notes or skipped_downloads %}
+          <ul class="warnings">
+            {% for name in skipped_downloads %}<li>Not available here: <code>{{ name }}</code> is too large for the hosted download, so it is in neither the file list nor the workbook. Run <code>run_integrated_analysis.py</code> locally to create it.</li>{% endfor %}
+            {% for item in dashboard.export_notes if not skipped_downloads %}<li>{{ item }}</li>{% endfor %}
+          </ul>
+        {% endif %}
+        {% if dashboard.download_groups %}
+          <div class="download-groups no-print">
+            {% for title, names in dashboard.download_groups %}
+              <details class="more"{% if loop.first %} open{% endif %}>
+                <summary>{{ title }} ({{ names|length }} file{{ '' if names|length == 1 else 's' }})</summary>
+                <ul class="downloads">{% for name in names %}<li><a href="{{ url_for('result_download', download_id=download_id, filename=name) }}">{{ name }}</a>{% if name[:-4] in dashboard.availability.suppressed_figures %} <span class="help inline-help">(chart not shown on this page: data not supplied)</span>{% endif %}</li>{% endfor %}</ul>
+              </details>
+            {% endfor %}
+          </div>
+          <p class="print-only">CSV tables, PNG figures, the XLSX workbook, and the PDF report can be downloaded from the results page.</p>
+        {% endif %}
+        <h3>Provenance</h3>
+        {% if analysis_plan %}
+          <details class="more"><summary>Analyses predicted in Step 2</summary>
+            <div class="scroll"><table><thead><tr><th>Analysis</th><th>Prediction</th><th>Reason</th></tr></thead>
+              <tbody>{% for row in analysis_plan %}<tr><td>{{ row.Analysis }}</td><td>{{ row.Status }}</td><td>{{ row.Reason }}</td></tr>{% endfor %}</tbody></table></div>
           </details>
         {% endif %}
-        {% if s.id == 'quality' and s.regression %}
-          <p class="note">Depth regression: n = {{ s.regression.n }}, slope = {{ '%.4f'|format(s.regression.slope) }}, R² = {{ '%.3f'|format(s.regression.r_squared) }}, permutation p = {{ '%.3f'|format(s.regression.permutation_p) }}.{% if s.regression.small_sample %} Fewer than 10 samples: descriptive only.{% endif %}</p>
+        {% if dashboard.readiness %}
+          <details class="more"><summary>Analyses the data supported (decided in Step 3, before the run)</summary>
+            <div class="scroll"><table><thead><tr><th>Analysis</th><th>Status</th><th>Why</th></tr></thead>
+              <tbody>{% for row in dashboard.readiness %}<tr><td>{{ row.Analysis }}</td><td><span class="badge {{ row.Status|lower|replace(' ', '-') }}">{{ row.Status }}</span></td><td>{{ row.Reason }}</td></tr>{% endfor %}</tbody></table></div>
+          </details>
         {% endif %}
-        {% if s.id == 'relationships' %}
+        {% if dashboard.provenance %}<details class="more"><summary>Show the provenance record</summary>{{ show_table(dashboard.provenance) }}</details>{% endif %}
+        {% if dashboard.import_provenance %}<details class="more"><summary>How each uploaded file was read (input mapping and import provenance)</summary>{{ show_table(dashboard.import_provenance) }}</details>{% endif %}
+        {% if dashboard.matching %}<details class="more"><summary>Sample metadata matching</summary>{{ show_table(dashboard.matching) }}</details>{% endif %}
+        {% if enrichment and not is_literature_example %}
+          <p class="revisit-line no-print" id="revisit-enrichment"><strong>Optional (Sprint 4):</strong> look for publications that could improve missing or broad collection details for these samples; only date and distance results would be recomputed.
+            <a class="button-link" href="{{ url_for('literature_status', token=enrichment.token) }}">{% if enrichment_report %}Revisit metadata enrichment{% else %}Open metadata enrichment for these results{% endif %}</a></p>
+        {% endif %}
+        <p class="note">Result files are kept in this server's memory for up to 10 minutes (sooner if several newer analyses run); uploaded files were deleted after the analysis.</p>
+        <p class="back-top no-print"><a href="#overview">↑ Back to results overview</a> · <a href="{{ url_for('index') }}">Start a new analysis</a></p>
+      </section>
+    {% endmacro %}
+
+    {% macro render_category(c) %}
+      <section id="{{ c.id }}" class="result-section" aria-labelledby="{{ c.id }}-title">
+        <h2 id="{{ c.id }}-title">{{ c.title }}</h2>
+        {% if c.purpose %}<p class="purpose">{{ c.purpose }}</p>{% endif %}
+        {% for text in c.statements %}<p class="statement">{{ text }}</p>{% endfor %}
+        {% if c.id == 'relationships' %}
           {% if analysis_complete %}{{ sprint2_results() }}
-          {% elif input_names and input_names.fasta %}<p class="unavailable">The sequence comparison could not be completed for the uploaded sequences; see the message at the top of the page.</p>
-          {% else %}<p class="unavailable">Upload individual FASTA sequences and metadata to compare sequences with MAFFT, p-distance, dates, and locations.</p>{% endif %}
+          {% elif input_names and input_names.fasta %}<p class="unavailable">The sequence comparison could not be completed for the uploaded sequences; see the message at the top of the page.</p>{% endif %}
         {% endif %}
-        {% if s.tables %}
+        {% if c.id == 'advanced' and c.method %}
+          <h3>Population structure</h3>
+          <p><strong>Method:</strong> {{ c.method }}{% if c.exploratory %} <span class="badge limited">Exploratory — not the paper's method</span>{% else %} <span class="badge completed">Paper method</span>{% endif %}</p>
+        {% endif %}
+        {{ stat_grid(c.stats) }}
+        {% if c.id == 'quality' and c.regression %}
+          <p class="note">Depth regression: n = {{ c.regression.n }}, slope = {{ '%.4f'|format(c.regression.slope) }}, R² = {{ '%.3f'|format(c.regression.r_squared) }}, permutation p = {{ '%.3f'|format(c.regression.permutation_p) }}.{% if c.regression.small_sample %} Fewer than 10 samples: descriptive only.{% endif %}</p>
+        {% endif %}
+        {% for item in c.primary %}{{ show_figure(item) }}{% endfor %}
+        {% if c.id == 'cross-source' and c.story %}{{ shared_story(c.story) }}{% endif %}
+        {% if c.id == 'variation' and c.annotation %}{{ annotation_panel(c.annotation) }}{% endif %}
+        {% if c.id == 'quality' and c.uncertainty %}{{ uncertainty_panel(c.uncertainty) }}{% endif %}
+        {% if c.id == 'quality' and (c.depth_messages or c.depth_stats) %}
           <details class="more">
-            <summary>Detailed tables ({{ s.tables|length }})</summary>
-            {% for table in s.tables %}{{ show_table(table) }}{% endfor %}
+            <summary>Read counts and uncertainty: every count</summary>
+            {% if c.depth_messages %}<ul class="notes">{% for message in c.depth_messages %}<li>{{ message }}</li>{% endfor %}</ul>{% endif %}
+            {{ stat_grid(c.depth_stats) }}
           </details>
         {% endif %}
-        {% if s.limitations %}
+        {% if c.id == 'advanced' and c.grouping %}{{ grouping_panel(c.grouping) }}{% endif %}
+        {% if c.secondary %}
           <details class="more">
-            <summary>Uncertainty and limitations</summary>
-            {{ show_notes(s.limitations) }}
+            <summary>Additional figures ({{ c.secondary|length }})</summary>
+            {% for item in c.secondary %}{{ show_figure(item) }}{% endfor %}
           </details>
         {% endif %}
-        {% if s.downloads and download_id %}
-          <p class="section-downloads"><strong>Downloads:</strong> {% for name in s.downloads %}<a href="{{ url_for('result_download', download_id=download_id, filename=name) }}">{{ name }}</a>{% if not loop.last %} · {% endif %}{% endfor %}</p>
-        {% endif %}
-        {% if s.id != 'overview' %}<p class="back-top"><a href="#overview">↑ Back to results overview</a></p>{% endif %}
+        {{ category_tail(c) }}
       </section>
     {% endmacro %}
 
@@ -870,7 +990,7 @@
           <p>Every reference base, sequence, pooled sample, site, date, read count, and frequency below is invented to demonstrate the integrated workflow. None of it is real surveillance data.</p>
           {% if dashboard %}
             <p><strong>The invented inputs:</strong> {{ dashboard.summary.individual_samples }} individual sequence records (Sprint 2), {{ dashboard.summary.pooled_samples }} pooled sample records (Sprint 3), and reference {{ dashboard.summary.reference }}, which both sources share.</p>
-            <p><strong>Read the results in this order:</strong> the <a href="#overview">overview</a> (what was found), the <a href="#cross-source">cross-source evidence</a> with its step-by-step <a href="#shared-variant-example">shared-variant example</a> (how Sprint 2 and Sprint 3 connect), then the <a href="#population">population structure</a> of the pooled samples.</p>
+            <p><strong>Read the results in this order:</strong> the <a href="#overview">overview</a> (what was found), the <a href="#cross-source">cross-source variant evidence</a> with its step-by-step <a href="#shared-variant-example">shared-variant example</a> (how Sprint 2 and Sprint 3 connect), then the population structure of the pooled samples under <a href="#advanced">Advanced Analysis</a>.</p>
           {% endif %}
         </section>
       {% endif %}
@@ -881,79 +1001,44 @@
         </section>
       {% endif %}
 
-      {% if analysis_plan %}
-        <details class="about">
-          <summary>Analyses predicted in Step 2</summary>
-          <div class="scroll"><table><thead><tr><th>Analysis</th><th>Prediction</th><th>Reason</th></tr></thead>
-            <tbody>{% for row in analysis_plan %}<tr><td>{{ row.Analysis }}</td><td>{{ row.Status }}</td><td>{{ row.Reason }}</td></tr>{% endfor %}</tbody></table></div>
-        </details>
-      {% endif %}
-
       {% if dashboard %}
-        <nav class="sections" aria-label="Dashboard sections">
-          <span class="nav-label">Jump to:</span>
-          {% if dashboard.report_downloads or dashboard.export_notes %}<a href="#downloads">Downloads</a>{% endif %}
-          {% for s in dashboard.sections %}<a href="#{{ s.id }}"{% if s.unavailable and not s.figures and not s.stats %} class="na" title="Not available for these files"{% endif %}>{{ s.number }}. {{ s.title }}{% if s.unavailable and not s.figures and not s.stats %} (n/a){% endif %}</a>
-            {% if s.id == 'depth-aware' %}{% if s.uncertainty %}<a class="sub" href="#sequencing-uncertainty">Uncertainty</a>{% endif %}{% if s.annotation %}<a class="sub" href="#mutation-annotation">Mutation annotations</a>{% endif %}{% if s.grouping %}<a class="sub" href="#mutation-frequency-groups">Experimental grouping</a>{% endif %}{% endif %}{% endfor %}
-          {% if enrichment_report %}<a href="#enrichment-report">Sprint 4 report</a>{% elif enrichment and is_literature_example %}<a href="#literature">Sprint 4 enrichment</a>{% endif %}
-          <a href="#provenance">Provenance &amp; downloads</a>
+        <nav class="sections" aria-label="Result categories">
+          <span class="nav-label">Results:</span>
+          {% for c in dashboard.categories %}
+            {% if c.id == 'downloads' and (enrichment_report or (enrichment and is_literature_example)) %}<a href="#{{ 'enrichment-report' if enrichment_report else 'literature' }}">Metadata Enrichment (Sprint 4)</a>{% endif %}
+            <a href="#{{ c.id }}">{{ c.nav }}</a>
+          {% endfor %}
         </nav>
-        {% if dashboard.report_downloads or dashboard.export_notes %}
-          <section class="downloads-bar" id="downloads" aria-label="Download results">
-            <p><strong>Download these results:</strong>
-              {% for name in dashboard.report_downloads %}<a class="button-link report-link" href="{{ url_for('result_download', download_id=download_id, filename=name) }}" data-filename="{{ name }}" data-label="{{ 'Excel workbook' if name.endswith('.xlsx') else 'PDF report' }}">{{ 'Results workbook (XLSX)' if name.endswith('.xlsx') else 'Analysis report (PDF)' }}</a> {% endfor %}
-              <a href="#provenance">All CSV tables and PNG figures</a></p>
-            <p class="report-status" id="report-status" role="status" aria-live="polite"></p>
-            <p class="help">The workbook and the report are built from the same tables and figures as this page, so their numbers match. They are prepared when you first click them, which can take a minute or more for a large analysis; the CSV files and figures are ready now.</p>
-            {% if dashboard.export_notes %}<ul class="warnings">{% for item in dashboard.export_notes %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
-          </section>
-        {% endif %}
-        {% for s in dashboard.sections %}{{ render_section(s) }}{% endfor %}
+        {% for c in dashboard.categories %}
+          {% if c.id == 'overview' %}{{ overview_category(c, dashboard.availability) }}
+          {% elif c.id == 'downloads' %}
+            {% if enrichment_report %}{% include "_enrichment_report.html" %}{% endif %}
+            {% if enrichment and is_literature_example %}{% include "_literature.html" %}{% endif %}
+            {{ downloads_category(c) }}
+          {% else %}{{ render_category(c) }}{% endif %}
+        {% endfor %}
       {% else %}
         <section id="relationships">
-          <h2>8. Individual sequence relationships</h2>
+          <h2>Individual Sequence Relationships</h2>
           {{ sprint2_results() }}
         </section>
-      {% endif %}
-
-      {% if enrichment_report %}{% include "_enrichment_report.html" %}{% endif %}
-      {% if enrichment and is_literature_example %}{% include "_literature.html" %}
-      {% elif enrichment %}
-        <section id="revisit-enrichment" class="revisit">
-          <p><strong>Sprint 4 (optional):</strong> look for publications that could improve missing or broad collection details for these samples. Only date and distance results would be recomputed.</p>
-          <a class="button-link" href="{{ url_for('literature_status', token=enrichment.token) }}">{% if enrichment_report %}Revisit metadata enrichment{% else %}Open metadata enrichment for these results{% endif %}</a>
+        {% if enrichment_report %}{% include "_enrichment_report.html" %}{% endif %}
+        {% if enrichment and is_literature_example %}{% include "_literature.html" %}
+        {% elif enrichment %}
+          <section id="revisit-enrichment" class="revisit">
+            <p><strong>Sprint 4 (optional):</strong> look for publications that could improve missing or broad collection details for these samples. Only date and distance results would be recomputed.</p>
+            <a class="button-link" href="{{ url_for('literature_status', token=enrichment.token) }}">{% if enrichment_report %}Revisit metadata enrichment{% else %}Open metadata enrichment for these results{% endif %}</a>
+          </section>
+        {% endif %}
+        <section id="provenance">
+          <h2>Downloads</h2>
+          {% if downloads %}
+            <p class="note">Result files are kept in this server's memory for up to 10 minutes (sooner if several newer analyses run); uploaded files were deleted after the analysis.</p>
+            <ul class="downloads">{% for name in downloads %}<li><a href="{{ url_for('result_download', download_id=download_id, filename=name) }}">{{ name }}</a></li>{% endfor %}</ul>
+          {% endif %}
+          <p class="back-top"><a href="{{ url_for('index') }}">Start a new analysis</a></p>
         </section>
       {% endif %}
-
-      <section id="provenance">
-        <h2>Provenance and downloads</h2>
-        {% if dashboard and dashboard.provenance %}
-          <details><summary>Show the provenance record</summary>{{ show_table(dashboard.provenance) }}</details>
-        {% endif %}
-        {% if dashboard and dashboard.readiness %}
-          <details><summary>Analyses the data supported (decided in Step 3, before the run)</summary>
-            <div class="scroll"><table><thead><tr><th>Analysis</th><th>Status</th><th>Why</th></tr></thead>
-              <tbody>{% for row in dashboard.readiness %}<tr><td>{{ row.Analysis }}</td><td><span class="badge {{ row.Status|lower|replace(' ', '-') }}">{{ row.Status }}</span></td><td>{{ row.Reason }}</td></tr>{% endfor %}</tbody></table></div>
-          </details>
-        {% endif %}
-        {% if dashboard and dashboard.import_provenance %}
-          <details><summary>How each uploaded file was read (import provenance)</summary>{{ show_table(dashboard.import_provenance) }}</details>
-        {% endif %}
-        {% if dashboard and dashboard.matching %}
-          <details><summary>Sample metadata matching</summary>{{ show_table(dashboard.matching) }}</details>
-        {% endif %}
-        {% if downloads %}
-          <p class="note">Result files are kept in this server's memory for up to 10 minutes (sooner if several newer analyses run); uploaded files were deleted after the analysis.</p>
-          <details>
-            <summary>All result files ({{ downloads|length }})</summary>
-            <ul class="downloads">
-              {% for name in downloads %}<li><a href="{{ url_for('result_download', download_id=download_id, filename=name) }}">{{ name }}</a></li>{% endfor %}
-            </ul>
-          </details>
-          {% if skipped_downloads %}<p class="note">Too large for the hosted download: {{ skipped_downloads|join(', ') }}. Use run_integrated_analysis.py locally.</p>{% endif %}
-        {% endif %}
-        <p class="back-top"><a href="#overview">↑ Back to results overview</a> · <a href="{{ url_for('index') }}">Start a new analysis</a></p>
-      </section>
     {% endif %}
 
     {% if enrichment and not (analysis_complete or dashboard) %}
@@ -967,6 +1052,7 @@
       {% include "_literature.html" %}
     {% endif %}
 
+    {% if step == 3 %}{% include "_how_it_works.html" %}{% endif %}{# on results pages the explanation follows the results #}
     {% include "_status.html" %}
   </main>
   <div id="working" role="status" aria-live="polite" hidden>

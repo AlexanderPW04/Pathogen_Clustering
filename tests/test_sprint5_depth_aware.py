@@ -145,7 +145,8 @@ class AvailabilityTest(unittest.TestCase):
         section = view["depth_aware"]
         self.assertEqual(section["title"], "Sprint 5 — Depth-Aware Variant Analysis")
         labels = [item["label"] for item in section["stats"]]
-        for label in ["Samples evaluated", "SNV observations evaluated", "Observations with usable depth",
+        for label in ["Samples evaluated", "Unique mutation observations after duplicate handling",
+                      "Observations with usable depth",
                       "Observations with verified or reconstructed alternative read counts",
                       "Observations with calculated uncertainty", "Observations missing required information",
                       "Variants eligible for time-series analysis"]:
@@ -203,7 +204,7 @@ class WebWorkflowTest(unittest.TestCase):
         _, page, download_id = self.upload([self.example("synthetic_pooled_snvs.csv"),
                                             self.example("synthetic_pooled_base_counts.csv"),
                                             self.example("synthetic_reference.fasta")])
-        self.assertIn("Sprint 5 — Depth-Aware Variant Analysis", page)
+        self.assertIn("Sequencing Quality and Uncertainty", page)
         self.assertIn("Observations with calculated uncertainty", page)
         self.assertNotIn("could not be drawn", page)
         evidence = self.download(download_id, "sprint5_vaf_observations.csv")
@@ -226,8 +227,8 @@ class WebWorkflowTest(unittest.TestCase):
             [self.example("synthetic_individual_sequences.fasta"), self.example("synthetic_individual_metadata.csv"),
              self.example("synthetic_reference.fasta"), self.example("synthetic_pooled_snvs.csv"),
              self.example("synthetic_pooled_base_counts.csv")], mode="combined")
-        self.assertIn("Sprint 5 — Depth-Aware Variant Analysis", page)
-        self.assertIn("Individual sequence relationships", page)
+        self.assertIn("Sequencing Uncertainty and Variant Frequency", page)
+        self.assertIn("Individual Sequence Relationships", page)
         self.download(download_id, "cross_source_comparison.csv")
         self.download(download_id, "pairwise_distances.csv")
         self.download(download_id, "sprint5_vaf_observations.csv")

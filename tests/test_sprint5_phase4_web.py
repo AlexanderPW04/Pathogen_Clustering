@@ -104,7 +104,7 @@ class Phase4WebTest(unittest.TestCase):
         text = html_text(page)
         self.assertIn(SECTION_TITLE, text)
         self.assertIn("Predicted from the reference annotation", text)
-        self.assertIn("Distinct SNVs evaluated: 7", text)
+        self.assertIn("Distinct mutations evaluated for annotation: 7", text)
         self.assertIn("Successfully annotated: 7", text)
         self.assertIn("does not show an effect on transmissibility", text)
         self.assertNotIn("could not be drawn", page)
@@ -224,7 +224,7 @@ class Phase4WebTest(unittest.TestCase):
              self.file(EXAMPLES, "synthetic_individual_metadata.csv"), self.file(EXAMPLES, "synthetic_reference.fasta"),
              self.file(EXAMPLES, "synthetic_pooled_snvs.csv"), self.file(EXAMPLES, "synthetic_pooled_base_counts.csv"),
              ("synthetic_test_annotation.gff3", gff.encode())], mode="combined", genetic_code="1")
-        self.assertIn("Individual sequence relationships", page)
+        self.assertIn("Individual Sequence Relationships", page)
         self.download(download_id, "cross_source_comparison.csv")
         mutations = self.download(download_id, "sprint5_annotated_mutations.csv").set_index("Variant_Key")
         start = mutations.loc["SYNREF.1:75:G>A"]
@@ -279,7 +279,7 @@ class Phase4WebTest(unittest.TestCase):
         path = Path(os.environ["FONTENELE_MMC2"])
         _, page, download_id = self.upload([(path.name, path.read_bytes()), self.file(ANNOTATION, "NC_045512.2.gb")])
         text = html_text(page)
-        self.assertIn("Distinct SNVs evaluated: 5677", text)
+        self.assertIn("Distinct mutations evaluated for annotation: 5677", text)
         self.assertIn("Successfully annotated: 5677", text)
         comparison = self.download(download_id, "sprint5_annotation_comparison.csv")
         self.assertEqual(comparison["Agreement"].value_counts().to_dict(),

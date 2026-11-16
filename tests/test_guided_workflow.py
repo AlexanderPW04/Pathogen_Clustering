@@ -65,8 +65,8 @@ class GuidedWorkflowTest(unittest.TestCase):
             self.assertIn(text, page)
         self.assertNotIn("disabled>Run analysis", page)
         result = self.run_reviewed(token)
-        self.assertIn("<h2>2. Cross-source evidence</h2>", result)
-        self.assertIn("Variants observed in both sources:</strong> 2", result)
+        self.assertIn("Cross-Source Variant Evidence</h2>", result)
+        self.assertIn("2 variants observed in both sources", result)
         self.assertIn("How the two sources were connected", result)
         self.assertIn("Variant-overlap matrix across both sources", result)
         self.assertIn("Potential clusters:</strong>", result)  # Sprint 2 kept
@@ -115,10 +115,10 @@ class GuidedWorkflowTest(unittest.TestCase):
         page, token = self.review([example("v", vcf, "pooled.vcf")])
         self.assertIn("VCF files carry no collection dates", page)
         result = self.run_reviewed(token)
-        self.assertIn("Pooled samples:</strong> 3", result)
+        self.assertIn("3 pooled samples analyzed", result)
         self.assertIn("VCF (single-nucleotide entries converted", result)
-        self.assertIn("Cross-source comparison needs individual sequences", result)
-        self.assertIn("Upload individual FASTA sequences and metadata", result)
+        self.assertIn("Individual-sequence and cross-source analyses (Sprint 2)", result)
+        self.assertNotIn('id="relationships"', result)  # no empty Sprint 2 section
 
     def test_different_reference_label_is_never_forced_together(self):
         snvs = (EXAMPLE / "synthetic_pooled_snvs.csv").read_text(encoding="utf-8")
@@ -127,7 +127,7 @@ class GuidedWorkflowTest(unittest.TestCase):
         page, token = self.review(files)
         self.assertIn("OTHER.1 versus SYNREF.1", page)
         result = self.run_reviewed(token)
-        self.assertIn("Variants observed in both sources:</strong> 0", result)
+        self.assertIn("0 variants observed in both sources", result)
         self.assertIn("Incomparable: reference not verified as the same", result)
 
     def test_ambiguous_columns_must_be_chosen_before_running(self):
@@ -139,7 +139,7 @@ class GuidedWorkflowTest(unittest.TestCase):
         self.assertIn("Choose which column is Collection_Date", page)
         self.assertIn("Resolve the problems", self.run_reviewed(token))
         result = self.run_reviewed(token, map_0_Collection_Date="Collection_Date")
-        self.assertIn("Pooled samples:</strong> 2", result)
+        self.assertIn("2 pooled samples analyzed", result)
 
 
 class NewFigureTest(unittest.TestCase):

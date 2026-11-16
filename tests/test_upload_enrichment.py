@@ -180,7 +180,7 @@ class UploadEnrichmentTest(unittest.TestCase):
         page, token = self.enrichment_example()
         staged = literature_view.get_session(token)["staged_token"]
         result = self.post("/enrich/run", {"token": token, "skip": "1"})
-        self.assertIn("Variants observed in both sources:</strong> 2", result)
+        self.assertIn("2 variants observed in both sources", result)
         self.assertNotIn('id="enrichment-report"', result)
         self.assertIsNone(staged_item(staged))
         individual = self.download(result, "individual_samples.csv").set_index("Sample_ID")

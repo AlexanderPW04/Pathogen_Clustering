@@ -76,15 +76,20 @@ class NavigationTest(unittest.TestCase):
         with redirect_stdout(io.StringIO()):
             page = self.client.post("/run", data={"token": token}).get_data(as_text=True)
         nav = page[page.index('<nav class="sections"'):page.index("</nav>", page.index('<nav class="sections"'))]
-        for target in ["#downloads", "#overview", "#cross-source", "#depth-aware", "#sequencing-uncertainty",
-                       "#mutation-frequency-groups", "#provenance"]:
-            self.assertIn(f'href="{target}"', nav)
+        # One compact link per category that has content (results dashboard layout). MAFFT is not
+        # available in this test, so only the pooled categories have content; the overview says why.
+        categories = re.findall(r'<section id="([a-z-]+)" class="result-section', page)
+        self.assertEqual(re.findall(r'href="#([a-z-]+)"', nav), categories)
+        for target in ["overview", "variation", "temporal", "quality", "advanced", "downloads"]:
+            self.assertIn(target, categories)
+        self.assertIn("Individual sequences were uploaded, but the sequence comparison did not complete", page)
         self.assertIn('id="downloads"', page)
+        self.assertIn('id="provenance"', page)  # old links to the provenance anchor still land
         # Jump targets inside Sprint 5 are panels, not sections: they need the same offset below the
         # sticky bar, or their heading lands under it (found on staging, 2026-11-16).
         self.assertIn(".uncertainty-panel[id] { scroll-margin-top: calc(var(--jump-bar-height", page)
         self.assertIn('setProperty("--jump-bar-height"', page)
-        self.assertLess(page.index("Major findings"), page.index("3. Genomic variation</h2>"))
+        self.assertLess(page.index("Main findings"), page.index("Genomic Variation</h2>"))
 
 
 if __name__ == "__main__":

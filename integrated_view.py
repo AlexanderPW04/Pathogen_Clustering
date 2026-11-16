@@ -12,7 +12,9 @@ from base64 import b64encode
 import pandas as pd
 
 from dashboard_guide import FIGURE_GUIDE, interpretation
+from results_layout import build_categories, download_groups
 from genomics.report_exports import PDF_NAME, SUMMARY_NAME, XLSX_NAME, summary_json
+from genomics.result_availability import analysis_availability, distinct_findings
 from genomics.spreadsheet_safety import escape_csv_bytes, safe_csv
 
 
@@ -173,7 +175,8 @@ def grouping_view(grouping, figures, tables, available):
     stats = []
     if grouping.get("enabled", True) and "units" in grouping:
         stats = [
-            stat("Mutations evaluated", grouping["mutations"], f"across {grouping['units']} observation unit(s)"),
+            stat("Mutations evaluated", grouping["mutations"],
+                 f"distinct mutations after QC, across {grouping['units']} observation unit(s)"),
             stat("Eligible for grouping", grouping.get("eligible_ordinary", 0),
                  f"known in at least {grouping['minimum_shared']} units; {grouping['eligible']} with read counts "
                  "(needed by the depth-aware method)"),
@@ -247,7 +250,8 @@ def annotation_view(annotation, figures, tables, available, messages=()):
         return view
     other = ", ".join(f"{name.lower()} {count}" for name, count in annotation["other_detail"].items())
     view["stats"] = [
-        stat("Distinct SNVs evaluated", annotation["evaluated"]),
+        stat("Distinct mutations evaluated for annotation", annotation["evaluated"],
+             "every distinct reported change, including any seen only in records excluded by QC"),
         stat("Successfully annotated", annotation["annotated"],
              "reference identity and reference base verified; every overlapping coding region interpreted"),
         stat("Synonymous", annotation["synonymous"], "same amino acid; not necessarily without effect"),
@@ -456,7 +460,7 @@ def build_dashboard(result, download_id, available=None):
     overview["integration"] = result.get("integration", [])
     overview["analyses"] = result.get("analyses", [])
     overview["mode"] = analysis_mode(result)
-    overview["findings"] = major_findings(result)
+    overview["findings"] = distinct_findings(major_findings(result))  # counts and dates are in the headline
     finish(overview, ["completeness"], [
         table_view(pd.DataFrame(result.get("completeness", [])), title="Metadata completeness by source")
         if result.get("completeness") else None,
@@ -503,12 +507,17 @@ def build_dashboard(result, download_id, available=None):
         positions = positions.sort_values(["Pooled_Samples", "Individual_Carriers", "Position"],
                                           ascending=[False, False, True])
         variation["stats"] = [
-            stat("Distinct variants on the reference", len(positions)),
+            stat("Distinct mutations after QC", len(positions),
+                 "different position:Ref>Alt changes on the reference"
+                 + (" in pooled records that passed QC" if pooled is not None else "")
+                 + (" and in individual sequences" if individual is not None else "")),
             stat("Positions with several pooled alternative bases",
                  int(positions.loc[positions["Multiple_Alt_At_Position"], "Position"].nunique())),
-            stat("Variants carried by individual sequences",
-                 int(positions["Individual_Carriers"].gt(0).sum()) if individual is not None else None),
         ]
+        if individual is not None or pooled is None:
+            variation["stats"].append(stat("Variants carried by individual sequences",
+                                           int(positions["Individual_Carriers"].gt(0).sum())
+                                           if individual is not None else None))
     elif individual is None:
         variation["unavailable"] = "Reference-based variation needs a reference FASTA or a pooled SNV table."
     finish(variation, ["genome_positions"], [
@@ -568,8 +577,8 @@ def build_dashboard(result, download_id, available=None):
     if pooled is not None:
         variants = pooled["variants"]
         quality["stats"] = [
-            stat("Pooled records retained", int(variants["Analysis_Included"].sum()),
-                 f"of {len(variants)}"),
+            stat("Variant records after QC", int(variants["Analysis_Included"].sum()),
+                 f"of {len(variants):,} SNV observations in the upload"),
             stat("Pooled samples with known genome coverage",
                  int(pooled["samples"]["Genome_Coverage_Percent"].notna().sum()),
                  f"of {len(pooled['samples'])}"),
@@ -672,9 +681,11 @@ def build_dashboard(result, download_id, available=None):
                          f"{aware['reconstructed_counts']} reconstructed from frequency x depth")
         depth["stats"] = [
             stat("Samples evaluated", aware["samples"]),
-            stat("SNV observations evaluated", aware["observations_counted"],
-                 f"{aware['observations'] - aware['observations_counted']} repeated record(s) counted once"
-                 if aware["observations"] != aware["observations_counted"] else ""),
+            stat("Unique mutation observations after duplicate handling", aware["observations_counted"],
+                 f"of {aware['observations']:,} SNV observations; "
+                 f"{aware['observations'] - aware['observations_counted']} identical repeated record(s) counted once"
+                 if aware["observations"] != aware["observations_counted"] else
+                 f"of {aware['observations']:,} SNV observations; no repeated records"),
             stat("Observations with usable depth", aware["with_depth"]),
             stat("Observations with verified or reconstructed alternative read counts",
                  aware["supplied_counts"] + aware["reconstructed_counts"], counts_detail),
@@ -737,6 +748,22 @@ def build_dashboard(result, download_id, available=None):
                                    filename="metadata_matching.csv")
                         if "metadata_matching.csv" in tables else None)
     view["canonical"] = result.get("canonical")
+    # Sprint 4 UI work: what the run supports decides which categories, figures, and downloads are shown.
+    figure_views = {}
+    for item in view["sections"]:
+        for figure in item["figures"]:
+            figure_views[figure["name"]] = figure
+        for panel in (item.get("annotation"), item.get("grouping")):
+            for figure in (panel or {}).get("figures", []):
+                figure_views[figure["name"]] = figure
+    for name in result["figures"]:
+        if name not in figure_views:
+            figure_views[name] = figure_view(result, name, download_id)
+    view["figure_views"] = figure_views
+    view["availability"] = analysis_availability(result)
+    view["categories"] = build_categories(view, view["availability"])
+    stored = available if available is not None else set(view["downloads"])
+    view["download_groups"] = download_groups(view, view["availability"], stored)
     return view
 
 

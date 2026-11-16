@@ -158,29 +158,42 @@ def genome_position_figure(position_summary, genes):
     pooled = position_summary[position_summary["Pooled_Samples"] > 0]
     individual = position_summary[position_summary["Individual_Carriers"] > 0]
     crowded = len(position_summary) > 300  # thousands of SNVs need smaller marks
-    size, ring, star = (16, 55, 8) if crowded else (56, 150, 26)
+    size, ring, star = (10, 55, 8) if crowded else (56, 150, 26)
     axis.vlines(pooled["Position"], 0, pooled["Pooled_Samples"], color=GRID,
                 linewidth=0.6 if crowded else 1.2)
     for base, color in BASE_COLORS.items():
         rows = pooled[pooled["Alt"].eq(base)]
-        axis.scatter(rows["Position"], rows["Pooled_Samples"], s=size, color=color,
-                     edgecolor=SURFACE, linewidth=0.5 if crowded else 1.2, zorder=3)
+        axis.scatter(rows["Position"], rows["Pooled_Samples"], s=size, color=color, alpha=0.85 if crowded else 1,
+                     edgecolor=SURFACE, linewidth=0.3 if crowded else 1.2, zorder=3)
         carriers = individual[individual["Alt"].eq(base)]
         axis.scatter(carriers["Position"], carriers["Individual_Carriers"], s=70, marker="D",
                      facecolor="none", edgecolor=color, linewidth=1.8, zorder=4)
-    multiple = pooled[pooled["Multiple_Alt_At_Position"]]
-    if not multiple.empty:
-        axis.scatter(multiple["Position"], multiple["Pooled_Samples"], s=ring, facecolor="none",
-                     edgecolor=TEXT, linewidth=0.7 if crowded else 1.2, zorder=5)
     flagged = position_summary[position_summary["Published_Novelty"].astype(str).str.casefold().isin(
         ["yes", "true", "novel"])] if "Published_Novelty" in position_summary else pd.DataFrame()
-    if not flagged.empty:
+    multiple = pooled[pooled["Multiple_Alt_At_Position"]]
+    top = max(float(position_summary[["Pooled_Samples", "Individual_Carriers"]].max().max()), 1.0)
+    if not multiple.empty and crowded:
+        # Hundreds of rings would bury the points near zero: mark those positions with a tick below the axis.
+        tick = -0.07 * top
+        axis.scatter(multiple["Position"].drop_duplicates(), [tick] * multiple["Position"].nunique(), marker="|",
+                     s=45, color=TEXT, linewidth=0.8, zorder=5)
+        axis.axhline(0, color=GRID, linewidth=0.8, zorder=1)
+    elif not multiple.empty:
+        axis.scatter(multiple["Position"], multiple["Pooled_Samples"], s=ring, facecolor="none",
+                     edgecolor=TEXT, linewidth=1.2, zorder=5)
+    if not flagged.empty and crowded:
+        axis.scatter(flagged["Position"].drop_duplicates(), [-0.15 * top] * flagged["Position"].nunique(),
+                     marker="|", s=45, color=MUTED_TEXT, linewidth=0.8, zorder=5)
+        axis.axhline(0, color=GRID, linewidth=0.8, zorder=1)
+    elif not flagged.empty:
         axis.scatter(flagged["Position"], flagged["Pooled_Samples"], s=star, marker="*",
                      color=TEXT, linewidth=0, zorder=6)
     axis.set_ylabel("Samples with the variant")
     axis.set_title("Where variants occur along the reference genome", fontsize=10)
     axis.yaxis.get_major_locator().set_params(integer=True)
-    axis.set_ylim(bottom=0)
+    axis.set_ylim(bottom=-0.21 * top if crowded and not flagged.empty else
+                  -0.13 * top if crowded and not multiple.empty else 0)
+    axis.set_yticks([tick for tick in axis.get_yticks() if 0 <= tick <= axis.get_ylim()[1]])  # no negative counts
     handles = [Patch(color=color, label=f"Alternative base {base}") for base, color in BASE_COLORS.items()]
     handles += [
         Line2D([], [], marker="o", linestyle="", color=MUTED_TEXT, markersize=7,
@@ -188,10 +201,16 @@ def genome_position_figure(position_summary, genes):
         Line2D([], [], marker="D", linestyle="", markerfacecolor="none", color=MUTED_TEXT,
                markersize=7, label="Individual sequences carrying (open diamond)"),
     ]
-    if not multiple.empty:
+    if not multiple.empty and crowded:
+        handles.append(Line2D([], [], marker="|", linestyle="", color=TEXT, markersize=9,
+                              label="Position with more than one pooled alternative base (tick below 0)"))
+    elif not multiple.empty:
         handles.append(Line2D([], [], marker="o", linestyle="", markerfacecolor="none", color=TEXT,
                               markersize=10, label="Position with more than one pooled alternative base"))
-    if not flagged.empty:
+    if not flagged.empty and crowded:
+        handles.append(Line2D([], [], marker="|", linestyle="", color=MUTED_TEXT, markersize=9,
+                              label="Published novelty flag (gray tick, lowest row)"))
+    elif not flagged.empty:
         handles.append(Line2D([], [], marker="*", linestyle="", color=TEXT, markersize=7,
                               label="Published novelty flag (source annotation)"))
     axis.legend(handles=handles, fontsize=7, frameon=False, loc="upper left", bbox_to_anchor=(1.0, 1.0))
@@ -210,8 +229,9 @@ def genome_position_figure(position_summary, genes):
             gene_axis.text((start + end) / 2, 0.5, name, ha="center", va="center",
                            fontsize=7, color=TEXT, clip_on=True)
     gene_axis.set_ylim(0, 1)
-    gene_axis.set_xlabel("Reference position (1-based nucleotide coordinate)"
-                         + ("; narrow annotation bands are unlabeled" if genes else ""))
+    gene_axis.set_xlabel("Reference position (1-based)" + (". Gray bands: annotated regions (narrow ones "
+                                                            "unlabeled); gaps: unannotated." if genes else ""),
+                         fontsize=8)
     if not genes:
         gene_axis.text(0.5, 0.5, "No gene annotation supplied", transform=gene_axis.transAxes,
                        ha="center", va="center", fontsize=7, color=MUTED_TEXT)
@@ -719,14 +739,13 @@ def sampling_timeline_figure(samples):
     undated = len(samples) - len(dated)
     axis.set_title("Sampling dates and sites (points sit at the actual, irregular dates)"
                    + (f"; {undated} sample(s) without a date not shown" if undated else ""), fontsize=9)
-    axis.legend(handles=[
-        Line2D([], [], marker="^", linestyle="", color=SOURCE_COLORS["Individual sequences"], markersize=8,
-               label="Individual sequence"),
-        Line2D([], [], marker="o", linestyle="", color=SOURCE_COLORS["Pooled samples"], markersize=8,
-               label="Pooled sample"),
-        Line2D([], [], marker="o", linestyle="", markerfacecolor="none", color=MUTED_TEXT, markersize=8,
-               label="Open = excluded by QC"),
-    ], fontsize=7, frameon=False, loc="upper left", bbox_to_anchor=(1.0, 1.0))
+    present = set(dated["Sample_Type"])
+    handles = [Line2D([], [], marker=marker, linestyle="", color=SOURCE_COLORS[source], markersize=8, label=label)
+               for label, marker, source in [("Individual sequence", "^", "Individual sequences"),
+                                             ("Pooled sample", "o", "Pooled samples")] if label in present]
+    handles.append(Line2D([], [], marker="o", linestyle="", markerfacecolor="none", color=MUTED_TEXT, markersize=8,
+                          label="Open = excluded by QC"))
+    axis.legend(handles=handles, fontsize=7, frameon=False, loc="upper left", bbox_to_anchor=(1.0, 1.0))
     return to_png(figure)
 
 
@@ -1281,7 +1300,9 @@ def mutation_group_heatmap_figure(F, row_labels, row_groups, unit_labels):
     bar = figure.colorbar(image, ax=axis, shrink=0.6, pad=0.01)
     bar.set_label("Observed frequency (VAF)", fontsize=8)
     bar.ax.tick_params(labelsize=7)
-    axis.set_title("Mutation frequencies by exploratory group (hatched gray = unknown, not 0)", fontsize=9,
+    grouped = any(str(group) for group in row_groups)
+    axis.set_title(("Mutation frequencies by exploratory group" if grouped else
+                    "Mutation-frequency profiles, not grouped") + " (hatched gray = unknown, not 0)", fontsize=9,
                    color=TEXT)
     return to_png(figure)
 

@@ -145,9 +145,9 @@ class UiNavigationTest(unittest.TestCase):
     # Results -------------------------------------------------------------------
     def test_integrated_example_overview_story_and_progressive_sections(self):
         page = self.integrated_example()
-        self.assertIn("Combined analysis (Sprint 2 + Sprint 3) on one verified reference", page)
-        for finding in ["5 individual sequence records were analyzed; 4 could be placed on the reference genome.",
-                        "9 pooled sample records were analyzed; 8 were kept after quality control.",
+        self.assertIn("Combined Analysis — Sprint 2 + 3 + 5", page)
+        for finding in ["5 individual sequences analyzed; 4 placed on the reference genome",
+                        "9 pooled samples analyzed (8 kept after quality control)",
                         "2 variant(s) were observed in both sources",
                         "Population structure: Paper method: Yue-Clayton PCoA"]:
             self.assertIn(finding, page)
@@ -159,31 +159,31 @@ class UiNavigationTest(unittest.TestCase):
                      "0.05 to 0.7 (median 0.175)", "Shared: observed in both sources",
                      "pooled 1 day(s) earlier", "no kilometer distance can be computed"]:
             self.assertIn(text, story)
-        sections = re.findall(r'<section id="([a-z-]+)" class="result-section">', page)
-        # Sprint 5 added section 9, "Sprint 5 — Depth-Aware Variant Analysis".
-        self.assertEqual(sections, ["overview", "cross-source", "variation", "temporal", "geography",
-                                    "quality", "population", "relationships", "depth-aware"])
-        self.assertEqual(page.count('<p class="sprint-tag">'), 9)
-        self.assertEqual(page.count("↑ Back to results overview"), 9)  # 8 sections + provenance
+        sections = re.findall(r'<section id="([a-z-]+)" class="result-section[^"]*"', page)
+        # Results dashboard: categories that fit the run, cross-source evidence first.
+        self.assertEqual(sections, ["overview", "cross-source", "relationships", "variation", "temporal",
+                                    "quality", "advanced", "downloads"])
+        self.assertEqual(page.count('<p class="sprint-tag">'), 1)
+        self.assertEqual(page.count("↑ Back to results overview"), 7)  # every category after the overview
         figures = page.count('<figure>')
-        self.assertEqual(page.count("How to read this chart"), figures)
+        self.assertEqual(page.count("<summary>About this chart</summary>"), figures)
         self.assertIn("In these results:</strong> 2 of 8 variants were observed in both sources", page)
-        self.assertIn("More figures in this section", page)
+        self.assertIn("Additional figures", page)
         self.assertIn("Detailed tables", page)
         self.assertIn('<span class="badge origin">Faithful to Fontenele et al. (2021) Fig 2A</span>', page)
 
     def test_pooled_only_results_label_the_mode_and_exploratory_pcoa(self):
         page, token = self.review(["synthetic_pooled_snvs.csv"])
         result = self.run_reviewed(token)
-        self.assertIn("Pooled sequencing analysis (Sprint 3)", result)
+        self.assertIn("Pooled Pathogen Sequencing — Sprint 3 + 5", result)
         self.assertNotIn('id="shared-variant-example"', result)
-        self.assertIn("Cross-source comparison needs individual sequences", result)
+        self.assertIn("Individual-sequence and cross-source analyses (Sprint 2)", result)
         self.assertIn("Exploratory alternative (not the paper", result)
 
     def test_individual_only_results_label_the_mode(self):
         page, token = self.review(INDIVIDUAL)
         result = self.run_reviewed(token)
-        self.assertIn("Individual sequence analysis (Sprint 2)", result)
+        self.assertIn("Individual Pathogen Sequences — Sprint 2", result)
         self.assertIn("Sprint 2 screening:", result)
 
     def test_missing_optional_metadata_is_not_shown_as_zero(self):
@@ -191,7 +191,8 @@ class UiNavigationTest(unittest.TestCase):
         response = self.client.post("/review", data={"files": files(INDIVIDUAL[:1]) + [(io.BytesIO(metadata), "meta.csv")]},
                                     content_type="multipart/form-data")
         result = self.run_reviewed(token_of(response.get_data(as_text=True)))
-        self.assertIn("Collection dates:</strong> Not available", result)
+        self.assertNotIn("Collection dates 0", result)  # no dates: no date range is claimed
+        self.assertIn("Temporal screening of sequence pairs", result)  # listed as skipped
         self.assertIn("Pairwise comparisons:", result)
 
     def test_long_tables_show_a_few_rows_and_point_to_full_downloads(self):
@@ -233,7 +234,7 @@ class UiNavigationTest(unittest.TestCase):
         with patch("align_sequences.shutil.which", return_value=None):
             page, token = self.review(["synthetic_pooled_snvs.csv"])
             result = self.run_reviewed(token)
-        self.assertIn("Pooled samples:</strong> 9", result)
+        self.assertIn("9 pooled samples analyzed", result)
         self.assertNotIn("Analysis could not be completed", result)
 
     def tearDown(self):

@@ -362,8 +362,9 @@ def run_integrated_analysis(individual_data=None, mafft_path=None, reference_pat
                    "are checks that could not be verified, never counted as passes.",
                    lambda: figures.qc_outcome_figure(variants))
         add_figure(result, "depth_distribution", "Read-depth distribution",
-                   "Left: depth at each reported variant (dashed line: the paper's 20x minimum). "
-                   "Right, when a per-position table is supplied: depth at every listed position.",
+                   "Depth at each reported variant (dashed line: the paper's 20x minimum)."
+                   + (" Right: depth at every position listed in the per-position table."
+                      if pooled["position_table"] is not None else ""),
                    lambda: figures.depth_distribution_figure(
                        variants, settings["min_variant_depth"], pooled["position_table"]))
 

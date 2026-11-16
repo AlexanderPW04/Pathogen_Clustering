@@ -113,7 +113,7 @@ class ModeUploadTest(unittest.TestCase):
         self.assertNotIn("disabled>Run analysis", page)
         result = self.run_reviewed(token)
         self.assertIn("Pairwise comparisons:</strong> 6", result)
-        self.assertIn("Individual sequence analysis (Sprint 2)", result)
+        self.assertIn("Individual Pathogen Sequences — Sprint 2", result)
 
     def test_individual_with_the_optional_reference(self):
         page, token = self.review("individual", file_fasta=example("synthetic_individual_sequences.fasta"),
@@ -121,14 +121,14 @@ class ModeUploadTest(unittest.TestCase):
                                   file_reference=example("synthetic_reference.fasta"))
         self.assertEqual(page.count("Your choice"), 3)
         result = self.run_reviewed(token)
-        self.assertIn("(4 mapped to the reference)", result)
+        self.assertIn("4 placed on the reference genome", result)
 
     # Pooled (Sprint 3) ---------------------------------------------------------------
     def test_pooled_required_only_and_with_optional_files(self):
         page, token = self.review("pooled", file_snv=example("synthetic_pooled_snvs.csv"))
         self.assertIn("Detected analysis:</strong> Pooled sequencing results (Sprint 3 + 5)", page)
         result = self.run_reviewed(token)
-        self.assertIn("Pooled samples:</strong> 9", result)
+        self.assertIn("9 pooled samples analyzed", result)
         self.assertIn("Exploratory alternative", result)  # no A/C/G/T counts: not the paper's PCoA
         page, token = self.review("pooled", file_snv=example("synthetic_pooled_snvs.csv"),
                                   file_reference=example("synthetic_reference.fasta"),
@@ -152,7 +152,7 @@ class ModeUploadTest(unittest.TestCase):
                                   file_positions=example("synthetic_pooled_base_counts.csv"))
         self.assertIn("Detected analysis:</strong> Combined (Sprint 2 + 3 + 5)", page)
         result = self.run_reviewed(token)
-        self.assertIn("Variants observed in both sources:</strong> 2", result)
+        self.assertIn("2 variants observed in both sources", result)
         self.assertIn('id="shared-variant-example"', result)
 
     # Wrong or ambiguous roles ----------------------------------------------------------
