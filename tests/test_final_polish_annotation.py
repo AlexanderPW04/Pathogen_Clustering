@@ -184,6 +184,25 @@ class GeneTrackTest(unittest.TestCase):
         self.assertIn("coding regions (CDS) from the uploaded annotation", caption)
         self.assertEqual(annotation_file_bands(annotation, "OTHER.1"), [])
 
+    def test_the_caption_names_the_uploaded_file_not_the_server_copy(self):
+        # Found on staging: the caption said "annotation.txt" (the server's copy) instead of the upload.
+        import io as text_io
+        from contextlib import redirect_stdout
+        from genomics.integrated_analysis import run_integrated_analysis
+        folder = Path(tempfile.mkdtemp())
+        copy = folder / "annotation.txt"
+        copy.write_bytes((ANNOTATION / "NC_045512.2.gb").read_bytes())
+        snvs = folder / "snvs.csv"
+        snvs.write_text("Sample_ID,Reference_Genome,Position,Ref,Alt,Alt_Frequency,Read_Depth\n"
+                        "S1,NC_045512.2,23403,A,G,0.5,100\nS2,NC_045512.2,23403,A,G,0.6,100\n"
+                        "S3,NC_045512.2,14408,C,T,0.4,100\n", encoding="utf-8")
+        with redirect_stdout(text_io.StringIO()):
+            result = run_integrated_analysis(reference_path=ANNOTATION / "NC_045512.2.fasta", snv_path=snvs,
+                                             annotation_path=copy, input_labels={"annotation": "NC_045512.2.gb"})
+        caption = result["figures"]["genome_positions"]["caption"]
+        self.assertIn("(NC_045512.2.gb)", caption)
+        self.assertNotIn("annotation.txt", caption)
+
 
 class GeneNameTextTest(unittest.TestCase):
     """1B: 'NA' is a gene name, an empty cell is missing."""

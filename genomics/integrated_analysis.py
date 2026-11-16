@@ -275,6 +275,8 @@ def run_integrated_analysis(individual_data=None, mafft_path=None, reference_pat
     if annotation_path:
         try:
             annotation_model = load_annotation(annotation_path, reference, settings.get("genetic_code"))
+            if labels.get("annotation"):  # the uploaded file's name, not the server copy's
+                annotation_model["source_file"] = labels["annotation"]
         except Exception:  # noqa: BLE001 - run_mutation_annotation reads it again and reports the problem
             annotation_model = None
 
