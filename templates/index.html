@@ -100,7 +100,16 @@
     .stage-strip li.failed { background: var(--error-bg); color: var(--error-ink); }
     .stage-strip li.skipped, .stage-strip li.running { background: #eef0f2; color: var(--ink-muted); }
     .action-bar { align-items: center; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; bottom: 0.5rem; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.12); display: flex; flex-wrap: wrap; gap: 0.5rem; justify-content: flex-end; margin-top: 1rem; padding: 0.55rem 0.8rem; position: sticky; z-index: 5; }
-    #working { background: var(--heading); border-radius: 8px; bottom: 1rem; color: #fff; left: 50%; max-width: 92vw; padding: 0.6rem 1rem; position: fixed; transform: translateX(-50%); z-index: 20; }
+    #working { align-items: flex-start; background: var(--heading); border-radius: 8px; bottom: 1rem; box-shadow: 0 4px 18px rgba(0, 0, 0, 0.25); color: #fff; display: flex; gap: 0.75rem; left: 50%; max-width: min(40rem, 92vw); padding: 0.75rem 1rem; position: fixed; transform: translateX(-50%); z-index: 20; }
+    #working[hidden] { display: none; }
+    #working p { margin: 0.1rem 0; }
+    #working .working-help { font-size: 0.85rem; opacity: 0.9; }
+    .spinner { animation: spin 1s linear infinite; border: 3px solid rgba(255, 255, 255, 0.35); border-radius: 50%; border-top-color: #fff; flex: 0 0 auto; height: 1.3rem; margin-top: 0.15rem; width: 1.3rem; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) { .spinner { animation: none; border-top-color: rgba(255, 255, 255, 0.35); } }
+    .is-busy { cursor: progress; opacity: 0.55; }
+    .report-status { display: block; font-size: 0.9rem; margin-top: 0.3rem; }
+    .report-status.failed { color: var(--error-ink); }
     .action-bar .help { flex: 1 1 14rem; margin: 0; }
     .action-bar form { margin: 0; }
     @media (max-width: 640px) { .action-bar .help { display: none; } .action-bar button { padding: 0.4rem 0.6rem; } }
@@ -822,9 +831,10 @@
         {% if dashboard.report_downloads or dashboard.export_notes %}
           <section class="downloads-bar" aria-label="Download results">
             <p><strong>Download these results:</strong>
-              {% for name in dashboard.report_downloads %}<a class="button-link" href="{{ url_for('result_download', download_id=download_id, filename=name) }}">{{ 'Results workbook (XLSX)' if name.endswith('.xlsx') else 'Analysis report (PDF)' }}</a> {% endfor %}
+              {% for name in dashboard.report_downloads %}<a class="button-link report-link" href="{{ url_for('result_download', download_id=download_id, filename=name) }}" data-filename="{{ name }}" data-label="{{ 'Excel workbook' if name.endswith('.xlsx') else 'PDF report' }}">{{ 'Results workbook (XLSX)' if name.endswith('.xlsx') else 'Analysis report (PDF)' }}</a> {% endfor %}
               <a href="#provenance">All CSV tables and PNG figures</a></p>
-            <p class="help">The workbook and the report are built from the same tables and figures as this page, so their numbers match. The CSV files keep every row.</p>
+            <p class="report-status" id="report-status" role="status" aria-live="polite"></p>
+            <p class="help">The workbook and the report are built from the same tables and figures as this page, so their numbers match. They are prepared when you first click them, which can take a minute or more for a large analysis; the CSV files and figures are ready now.</p>
             {% if dashboard.export_notes %}<ul class="warnings">{% for item in dashboard.export_notes %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
           </section>
         {% endif %}
@@ -889,16 +899,108 @@
 
     {% include "_status.html" %}
   </main>
-  <div id="working" role="status" hidden>Working… this can take up to two minutes on the hosted server. Please keep this page open.</div>
+  <div id="working" role="status" aria-live="polite" hidden>
+    <span class="spinner" aria-hidden="true"></span>
+    <div>
+      <p><strong id="working-text">Working…</strong> <span id="working-clock"></span></p>
+      <p class="working-help">Keep this page open; the next page replaces this one when the server finishes. No progress percentage is shown because the server does not report one. If an error page appears instead, go back: uploaded files stay on the server for 30 minutes.</p>
+    </div>
+  </div>
   <script>
-    // Shows that a long step is running, and stops a second click from starting it twice.
-    document.addEventListener("submit", function (event) {
-      var button = event.submitter;
-      if (!button || !/Run|Find and check|Continue|Apply|Save decisions/.test(button.textContent)) { return; }
-      document.getElementById("working").hidden = false;
-      window.setTimeout(function () { button.disabled = true; }, 0);
-    });
-    window.addEventListener("pageshow", function () { document.getElementById("working").hidden = true; });
+    // Final polish 2A: an immediate, honest "working" state for every step that waits for the server,
+    // with the real elapsed time (no invented progress), and no second submission while one runs.
+    (function () {
+      var banner = document.getElementById("working");
+      var text = document.getElementById("working-text");
+      var clock = document.getElementById("working-clock");
+      var busy = false, started = 0, timer = null;
+      var messages = {
+        "/run": "Processing genomic data. Large sequencing datasets may take several minutes.",
+        "/enrich/run": "Processing genomic data. Large sequencing datasets may take several minutes.",
+        "/": "Running the example analysis. This can take a minute or more.",
+        "/review": "Reading and checking your files…",
+        "/enrich/start": "Searching free publication databases for your samples…",
+        "/literature/find": "Searching free publication databases for your samples…",
+        "/literature/analyze": "Reading the selected publication passages…",
+        "/literature/apply": "Applying your decisions and running the analysis…",
+        "/system-status": "Checking MAFFT, GeoNames, and PubTator…"
+      };
+      function pathOf(event) {
+        var button = event.submitter;
+        var url = (button && button.getAttribute("formaction")) || event.target.getAttribute("action") || "";
+        try { return new URL(url, window.location.href).pathname; } catch (error) { return url; }
+      }
+      function tick() {
+        var seconds = Math.round((Date.now() - started) / 1000);
+        clock.textContent = "(elapsed " + Math.floor(seconds / 60) + ":" + String(seconds % 60).padStart(2, "0") + ")";
+      }
+      document.addEventListener("submit", function (event) {
+        var button = event.submitter;
+        if (button && button.hasAttribute("data-no-busy")) { return; }  // a file download: the page stays
+        if (busy) { event.preventDefault(); return; }                   // a repeated click: ignored
+        busy = true;
+        started = Date.now();
+        text.textContent = (button && button.getAttribute("data-busy")) || messages[pathOf(event)] || "Working…";
+        tick();
+        timer = window.setInterval(tick, 1000);
+        banner.hidden = false;
+        // After the browser has collected this form's data, mark every button as unavailable.
+        window.setTimeout(function () {
+          document.querySelectorAll("button, input[type=submit]").forEach(function (item) {
+            item.classList.add("is-busy");
+            item.setAttribute("aria-disabled", "true");
+          });
+        }, 0);
+      });
+      window.addEventListener("pageshow", function () {  // also when coming back with the Back button
+        busy = false;
+        banner.hidden = true;
+        window.clearInterval(timer);
+        document.querySelectorAll(".is-busy").forEach(function (item) {
+          item.classList.remove("is-busy");
+          item.removeAttribute("aria-disabled");
+        });
+      });
+
+      // Final polish 2B: the workbook and PDF are prepared on the first click. Say so, ignore repeated
+      // clicks while one is being prepared, and show the server's message if preparing fails.
+      var status = document.getElementById("report-status");
+      document.addEventListener("click", function (event) {
+        var link = event.target.closest ? event.target.closest("a.report-link") : null;
+        if (!link || !status || !window.fetch || !window.URL || !URL.createObjectURL) { return; }
+        event.preventDefault();
+        if (link.dataset.state === "preparing") { return; }
+        link.dataset.state = "preparing";
+        link.classList.add("is-busy");
+        var label = link.dataset.label || "file";
+        status.className = "report-status";
+        status.textContent = "Preparing " + label + "… this can take a minute or more for a large analysis; the download starts by itself.";
+        fetch(link.href, {credentials: "same-origin"}).then(function (response) {
+          if (!response.ok) {
+            return response.text().then(function (html) {
+              var page = new DOMParser().parseFromString(html, "text/html");
+              var detail = page.querySelector("p");
+              throw new Error(detail ? detail.textContent : "The server answered " + response.status + ".");
+            });
+          }
+          return response.blob();
+        }).then(function (blob) {
+          var anchor = document.createElement("a");
+          anchor.href = URL.createObjectURL(blob);
+          anchor.download = link.dataset.filename || "";
+          document.body.appendChild(anchor);
+          anchor.click();
+          window.setTimeout(function () { URL.revokeObjectURL(anchor.href); anchor.remove(); }, 2000);
+          status.textContent = label.charAt(0).toUpperCase() + label.slice(1) + " ready: the download has started.";
+        }).catch(function (error) {
+          status.className = "report-status failed";
+          status.textContent = "The " + label + " could not be prepared: " + error.message + " You can try again; the CSV files hold the same values.";
+        }).then(function () {
+          link.dataset.state = "";
+          link.classList.remove("is-busy");
+        });
+      });
+    })();
   </script>
 </body>
 </html>

@@ -70,7 +70,7 @@
   <summary>Save or load a mapping profile</summary>
   <p class="help">A mapping profile is a small JSON file with this page's roles, column choices, and confirmed options. It contains no sequencing records or sample values. Loading one applies it only to files with the same layout and every mapped column; any other file keeps its detected mapping and is listed below.</p>
   <div class="button-row">
-    <button type="submit" class="secondary" formaction="{{ url_for('download_mapping_profile') }}">Download mapping profile (JSON)</button>
+    <button type="submit" class="secondary" formaction="{{ url_for('download_mapping_profile') }}" data-no-busy>Download mapping profile (JSON)</button>
     <label class="inline">Load a profile <input type="file" name="mapping_profile" accept=".json,application/json"></label>
     <button type="submit" class="secondary" formaction="{{ url_for('review_upload') }}">Apply profile</button>
   </div>

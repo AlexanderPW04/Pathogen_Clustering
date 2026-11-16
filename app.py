@@ -216,6 +216,11 @@ EXAMPLE_DOWNLOADS.update({name: EXAMPLE_FOLDER / name
 EXAMPLE_DOWNLOADS["NC_045512.2.gb"] = EXAMPLE_FOLDER / "annotation" / "NC_045512.2.gb"
 RESULT_DOWNLOADS = {}  # Short-lived integrated-result files; no database.
 ANALYSIS_SLOT = BoundedSemaphore(1)
+# Final polish 2B: one build per (results, file) at a time; repeated clicks wait for it.
+REPORT_BUILDS = {}
+REPORT_WAIT_SECONDS = 150
+RESULTS_GONE = ("These results are no longer on the server. Result files are kept in memory for 10 minutes "
+                "after an analysis (and are lost if the server restarts); run the analysis again to download them.")
 GENETIC_CODES = genetic_code_choices()  # NCBI translation tables for the settings menu
 OUT_OF_MEMORY = ("The uploaded dataset exceeds the available memory for this server, so the analysis "
                  "stopped. No results were changed or removed to make it fit. Run it on a local computer "
@@ -672,12 +677,37 @@ def build_report_download(download_id, filename):
 
     Runs only when someone asks for it, one at a time with the analyses, so a
     small server never builds a report and runs an analysis at the same moment.
+    Repeated clicks on the same file wait for the first build and then reuse it
+    (final polish 2B), instead of building it again or being told to wait.
     """
+
+    with RESULT_LOCK:
+        build_lock = REPORT_BUILDS.setdefault((download_id, filename), Lock())
+    if not build_lock.acquire(timeout=REPORT_WAIT_SECONDS):
+        return error_page("This file is still being prepared for an earlier click. Wait a minute, then click "
+                          "the link again; the CSV files are available now.", 503)
+    try:
+        with RESULT_LOCK:
+            item = RESULT_DOWNLOADS.get(download_id)
+            cached = item[1].get(filename) if item is not None else None
+        if cached is not None:  # an earlier click finished building it
+            return send_file(BytesIO(zlib.decompress(cached[0])), mimetype=cached[1], as_attachment=True,
+                             download_name=filename)
+        return build_report_once(download_id, filename)
+    finally:
+        build_lock.release()
+        with RESULT_LOCK:
+            if REPORT_BUILDS.get((download_id, filename)) is build_lock and not build_lock.locked():
+                del REPORT_BUILDS[(download_id, filename)]
+
+
+def build_report_once(download_id, filename):
+    """Build one report file from the stored downloads (see build_report_download)."""
 
     with RESULT_LOCK:
         item = RESULT_DOWNLOADS.get(download_id)
         if item is None or monotonic() - item[0] > RESULT_DOWNLOAD_SECONDS or SUMMARY_NAME not in item[1]:
-            abort(404)
+            return error_page(RESULTS_GONE, 404)
         stored = dict(item[1])
     if not ANALYSIS_SLOT.acquire(blocking=False):
         return error_page("Another analysis is running on this server. Wait a minute, then click the link "
@@ -717,7 +747,7 @@ def result_download(download_id, filename):
         item = RESULT_DOWNLOADS.get(download_id)
         if (item is None or monotonic() - item[0] > RESULT_DOWNLOAD_SECONDS
                 or filename not in item[1]):
-            abort(404)
+            return error_page(RESULTS_GONE, 404)
         content, mimetype = item[1][filename]
     return send_file(BytesIO(zlib.decompress(content)), mimetype=mimetype, as_attachment=True,
                      download_name=filename)

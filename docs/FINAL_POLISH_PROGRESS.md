@@ -107,3 +107,39 @@ NS versus a blank, and Sprint 2 "NA" segments.
 
 **Remaining (documented, not changed):** a start-codon change to another start codon (for example
 ATG>CTG, or GTG>ATG under table 11) is still reported as "Start lost".
+
+## Milestone 2: long-run and download feedback — Done (2026-11-16)
+
+**2A: processing feedback** (`templates/index.html`, one script). Any form that waits for the server
+immediately shows a fixed banner with:
+- a spinner (static when the visitor prefers reduced motion);
+- a message for the step, for example "Processing genomic data. Large sequencing datasets may take
+  several minutes.";
+- the **real elapsed time**. No percentage is shown, because the server reports none.
+
+Repeated submissions are ignored, and all buttons are marked busy only after the browser has
+collected the form, so button values are still sent. The state resets on Back (`pageshow`). The
+profile download (`data-no-busy`) leaves the page usable. The old "up to two minutes" text is gone.
+
+**2B: report downloads.**
+- The XLSX and PDF links show "Preparing Excel workbook / PDF report… the download starts by itself",
+  then "ready", or the server's error text.
+- Repeated clicks are ignored on the page.
+- On the server (`app.build_report_download`), a per-file lock makes repeated or concurrent requests
+  wait for the first build and reuse its cached copy. The lock gives up after 150 s with a clear 503;
+  the 8 MB cache rule and the one-at-a-time slot are unchanged.
+- Expired or unknown results now return a clear 404 page ("kept in memory for 10 minutes … lost if the
+  server restarts").
+
+**Browser check** (local server through the browser pane):
+- The banner appears at once with the message and an elapsed clock (0:01, then 0:02). All 5 buttons
+  are marked busy, the 2nd and 3rd clicks are blocked, and Back resets the state.
+- The XLSX and PDF links show "Preparing…", ignore repeated clicks, then show "ready".
+- An expired link shows "could not be prepared: …".
+
+**Tests.** `tests/test_final_polish_feedback.py` (4): three concurrent requests give one build and
+identical bytes; a failed build gives a clear 500 and can be retried; expired links give 404 with an
+explanation; the page has the feedback markup.
+
+No background-job system was added: the request architecture finished every hosted run, so it was
+not needed.
