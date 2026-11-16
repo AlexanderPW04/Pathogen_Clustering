@@ -25,16 +25,23 @@
   {% endif %}
 
   {% if not rv %}
-    <h3>Step 1 · Find and check publications</h3>
+    <h3>Step 1 · Find publications</h3>
     <p>One free search: NCBI record links find publications linked to your samples, PubTator retrieves their text, and each article is checked for evidence about your samples. Sample identifiers are sent to NCBI. No AI is used in this step.</p>
     <form method="post" action="{{ url_for('literature_find') }}">
       <input type="hidden" name="token" value="{{ lit.token }}">
-      <button type="submit" class="big">Find and check publications</button>
+      <button type="submit" class="big">Find and Check Publications</button>
     </form>
   {% else %}
     <h3>Step 2 · Review findings</h3>
-    <div class="conclusion" id="review-outcome">
+    <div class="conclusion" id="review-outcome" tabindex="-1">
+      <p class="scope">{{ rv.searched }}</p>
       <p><strong>{{ rv.headline }}</strong></p>
+      {% if rv.claude_line %}<p class="claude-line">{{ rv.claude_line }}</p>{% endif %}
+      {% if lit.plan and lit.provider_name and lit.stage == 'found' %}
+        <p><a class="button-link" href="#claude-step">Next: check the eligible passages with Claude (the cost is shown first)</a></p>
+      {% elif not lit.plan and not lit.facts and lit.stage == 'found' %}
+        <p class="help">No metadata changes are available. Continue to the genomic analysis{% if lit.pre_analysis %} with your original metadata{% endif %}.</p>
+      {% endif %}
       {% if rv.why %}<ul class="why">{% for line in rv.why %}<li>{{ line }}</li>{% endfor %}</ul>{% endif %}
     </div>
     <ul class="stage-strip" aria-label="What ran">
@@ -42,21 +49,34 @@
     </ul>
     {% if rv.failures %}<ul class="warnings">{% for item in rv.failures %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
     {% if rv.cards %}
-      <div class="scroll"><table class="answers">
-        <thead><tr><th>Article</th><th>Year</th><th>Location information found?</th><th>Applies to your samples?</th><th>Metadata improvement possible?</th><th>Claude reviewed?</th></tr></thead>
-        <tbody>{% for card in rv.cards %}<tr>
-          <td>{% if card.url %}<a href="{{ card.url }}" rel="noopener noreferrer" target="_blank">{{ card.article }}</a>{% else %}{{ card.article }}{% endif %}<br><span class="help">{{ card.plain }}</span></td>
-          <td>{{ card.year }}</td>
-          <td>{{ card.location }}{% if card.places %}<br><span class="help">mentions {{ card.places|join(', ') }}</span>{% endif %}</td>
-          <td>{{ card.applies }}</td><td>{{ card.improvement }}</td><td>{{ card.claude }}</td>
-        </tr>{% endfor %}</tbody>
-      </table></div>
-      <p class="help">"Location information found" only means a place is named somewhere in the article. "Applies to your samples" needs the article to tie that place to your sample.</p>
+      <h4 class="pub-heading">Publications found ({{ rv.cards|length }})</h4>
+      {% for card in rv.cards %}
+        <article class="pub-card">
+          <p class="pub-title">{% if card.url %}<a href="{{ card.url }}" rel="noopener noreferrer" target="_blank">{{ card.title }}</a>{% else %}{{ card.title }}{% endif %}
+            <span class="help">{{ card.year }} · {{ card.article }}</span></p>
+          <dl class="pub-status">
+            {% for label, value in [("Geographic information found?", card.location), ("Linked to uploaded samples?", card.applies), ("Metadata improvement supported?", card.improvement), ("Claude analysis performed?", card.claude), ("Changes applied?", card.changes)] %}
+              <div><dt>{{ label }}</dt><dd class="answer {{ 'yes' if value == 'Yes' else ('no' if value == 'No' else 'open') }}">{{ value }}{% if loop.first and value == 'Yes' and card.applies == 'No' %} <span class="help">(general mention only)</span>{% elif loop.first and value == 'Yes' and card.applies == 'Uncertain' %} <span class="help">(not yet tied to a sample)</span>{% endif %}</dd></div>
+            {% endfor %}
+          </dl>
+          <details class="pub-details"><summary>Details for this publication</summary>
+            <p>{{ card.plain }}</p>
+            <ul class="notes">
+              {% if card.places %}<li><strong>Places named in the article:</strong> {{ card.places|join(', ') }}. A place named in an article is not a collection location for a sample unless the article ties it to that sample.</li>{% endif %}
+              <li><strong>Published:</strong> {{ card.published or 'unknown' }}{% if card.epub %} (online {{ card.epub }}){% endif %}</li>
+              <li><strong>Retrieval:</strong> {{ card.retrieval }}</li>
+              <li><strong>Linked uploaded samples:</strong> {{ card.samples|length }} ({{ card.direct }} through the sample's own record, {{ card.study }} through a shared study only)</li>
+              <li><strong>Outcome:</strong> {{ card.outcome }}</li>
+            </ul>
+          </details>
+        </article>
+      {% endfor %}
+      <p class="help">"Geographic information found" only means a place is named somewhere in the article. "Linked to uploaded samples" needs the article to tie that place to a specific uploaded sample.</p>
     {% endif %}
     {% if rv.samples %}
       {% if rv.same_status %}<p><strong>All {{ rv.samples|length }} samples:</strong> {{ rv.samples[0].Status }}.</p>
       {% else %}
-        <details open><summary>Result for each sample ({{ rv.samples|length }})</summary>
+        <details><summary>Result for each sample ({{ rv.samples|length }})</summary>
           <div class="scroll"><table><thead><tr><th>Sample</th><th>Linked publications</th><th>Status</th></tr></thead>
             <tbody>{% for row in rv.samples %}<tr><td>{{ row.Sample_ID }}</td><td>{{ row.Publications }}</td><td>{{ row.Status }}</td></tr>{% endfor %}</tbody></table></div>
         </details>
@@ -266,13 +286,14 @@
   </details>
 
   <div class="action-bar">
-    <span class="help">Step 3: {% if lit.pre_analysis %}{% if lit.approvable_count %}approved values are used in a copy of the inputs; everything else stays as uploaded.{% else %}the analysis runs with your original metadata.{% endif %}{% elif lit.approvable_count %}save your decisions to update the results.{% else %}no changes to apply.{% endif %}</span>
+    {% if lit.pre_analysis %}<button type="submit" form="back-to-review" class="secondary">← Back to file review</button>{% endif %}
+    <span class="help">Step 3: {% if lit.pre_analysis %}{% if lit.approvable_count %}approved values are used in a copy of the inputs; everything else stays as uploaded.{% elif lit.plan and lit.stage == 'found' %}continue now with your original metadata, or run the optional Claude check above first.{% else %}no metadata changes are available, so the analysis uses your original metadata.{% endif %}{% elif lit.approvable_count %}save your decisions to update the results.{% else %}no changes to apply.{% endif %}</span>
     {% if lit.pre_analysis %}
       {% if lit.stage in ['analyzed', 'applied'] and lit.approvable_count %}
-        {{ skip_form(lit, "Continue with the original metadata (skip enrichment)") }}
-        <button type="submit" form="review-form" class="big">Apply approved changes and run the analysis</button>
+        {{ skip_form(lit, "Skip enrichment (use original metadata)") }}
+        <button type="submit" form="review-form" class="big">Continue to Genomic Analysis</button>
       {% else %}
-        {{ skip_form(lit, "Continue with the original metadata", true) }}
+        {{ skip_form(lit, "Continue to Genomic Analysis", true) }}
       {% endif %}
     {% elif lit.stage in ['analyzed', 'applied'] and lit.facts %}
       <button type="submit" form="review-form" class="big">Save decisions and apply approved changes</button>

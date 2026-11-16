@@ -68,8 +68,7 @@ class UiNavigationTest(unittest.TestCase):
         for text in ["How this works", "Sprint 2 · Individual sequences", "Sprint 3 · Pooled sequencing",
                      "Shared reference genome = the connection", "Sprint 4 · Optional AI metadata enrichment",
                      "done before upload, offline", "Processed SNV table <em>(you upload this)</em>",
-                     "Detect from my files", "Individual sequences (Sprint 2)",
-                     "Pooled sequencing results (Sprint 3)", "Combined (Sprint 2 + Sprint 3)",
+                     "Detect from my files", "Individual Sequences", "Pooled Sequencing", "Combined Analysis",
                      "What optional information unlocks", "Per-position A/C/G/T counts",
                      "MAFFT is not used for pooled reads", "Genetic p-distance", "Unresolved evidence"]:
             self.assertIn(text, page)
@@ -91,16 +90,16 @@ class UiNavigationTest(unittest.TestCase):
     def test_detected_mode_and_missing_files_for_the_chosen_mode(self):
         page, _ = self.review(INDIVIDUAL, "combined")
         self.assertIn("Detected analysis:</strong> Individual sequences (Sprint 2)", page)
-        self.assertIn("You chose:</strong> Combined (Sprint 2 + Sprint 3)", page)
+        self.assertIn("You chose:</strong> Combined (Sprint 2 + 3 + 5)", page)
         self.assertIn("reference genome FASTA, processed pooled SNV table", page)
         self.assertIn('name="intended_mode" value="combined"', page)  # kept for Update review / Run
 
     def test_combined_and_pooled_files_are_recognized_without_choosing_a_mode(self):
         page, _ = self.review(ALL_FILES)
-        self.assertIn("Detected analysis:</strong> Combined (Sprint 2 + Sprint 3)", page)
+        self.assertIn("Detected analysis:</strong> Combined (Sprint 2 + 3 + 5)", page)
         self.assertNotIn("You chose:", page)
         page, _ = self.review(["synthetic_pooled_snvs.csv"], "pooled")
-        self.assertIn("Detected analysis:</strong> Pooled sequencing results (Sprint 3)", page)
+        self.assertIn("Detected analysis:</strong> Pooled sequencing results (Sprint 3 + 5)", page)
         self.assertIn("the files support it", page)
         page, _ = self.review(INDIVIDUAL + ["synthetic_pooled_snvs.csv"])
         self.assertIn("add a shared reference FASTA to connect them", page)

@@ -33,6 +33,7 @@ FAILED = "Article retrieval incomplete due to API failure"
 NOT_RETRIEVED = "Not retrieved (article limit for one search)"
 PENDING = "Eligible evidence; Claude extraction not run yet"
 NO_PUBLICATION = "No associated publication found"
+NOT_CHECKED = "Not checked"
 REVIEWED = {PROPOSED, REVIEWED_NONE, STUDY_ONLY, PREDATES, UNAVAILABLE}
 NUMBER_WORDS = {1: "One", 2: "Two", 3: "Three", 4: "Four", 5: "Five", 6: "Six", 7: "Seven", 8: "Eight",
                 9: "Nine", 10: "Ten"}
@@ -129,9 +130,9 @@ def article_answers(session, article, outcome, usable):
 
     facts = len(approvable_facts(session, article["Article_ID"])) if article else 0
     if outcome in {FAILED, NOT_RETRIEVED}:
-        location, places = "Could not check", []
+        location, places = NOT_CHECKED, []
     elif not (article or {}).get("Passages"):
-        location, places = "Could not check", []
+        location, places = NOT_CHECKED, []
     else:
         places = article_places(article)
         location = "Yes" if places else "No"
@@ -140,11 +141,21 @@ def article_answers(session, article, outcome, usable):
     elif outcome == PENDING:
         applies, improvement = "Uncertain", "Needs Claude review"
     elif outcome in {FAILED, NOT_RETRIEVED}:
-        applies, improvement = "Uncertain", "Could not check"
+        applies, improvement = "Uncertain", NOT_CHECKED
     else:
         applies, improvement = "No", "No"
     return {"location": location, "places": places[:6], "applies": applies, "improvement": improvement,
             "plain": plain_explanation(outcome, usable, facts)}
+
+
+def applied_fact_ids(session):
+    """Proposals whose values were actually applied (after the analysis, or before it)."""
+
+    applied = set(session.get("applied_facts", []))
+    for item in (session.get("applied") or {}).get("log") or []:
+        if str(item.get("Outcome", "")).startswith("Applied"):
+            applied.add(item["Fact_ID"])
+    return applied
 
 
 def article_cards(session):
@@ -153,6 +164,7 @@ def article_cards(session):
     table = session.get("publications")
     if table is None or table.empty:
         return []
+    applied = applied_fact_ids(session)
     cards = []
     for article_id, group in table.groupby("Article_ID", sort=False):
         first = group.iloc[0]
@@ -170,7 +182,13 @@ def article_cards(session):
             "published": first["Publication_Date"], "epub": first.get("Epub_Date", ""),
             "retrieval": article.get("Retrieval_Status", first.get("Retrieval_Status", "")),
             "text": first["Text_Status"], "outcome": outcome, "year": year.group() if year else "Unknown",
-            "claude": "Yes" if article_id in session.get("analyzed", {}) else "No",
+            # A synthetic demonstration uses fixed answers: say so instead of claiming a Claude analysis.
+            "claude": (("No (offline demonstration)" if session.get("synthetic") else "Yes")
+                       if article_id in session.get("analyzed", {}) else "No"),
+            "changes": "Yes" if any(fact["Fact_ID"] in applied and fact["Article_ID"] == article_id
+                                    for fact in session.get("facts", [])) else "No",
+            # Read and assessed: retrieved with text. Only then may the page say "reviewed".
+            "text_checked": outcome in REVIEWED and bool(article.get("Passages")),
             **article_answers(session, session["articles"].get(article_id), outcome, usable),
             "direct": int((group["Relationship_Type"] == DIRECT).sum()),
             "study": int((group["Relationship_Type"] == STUDY).sum()),
@@ -266,7 +284,11 @@ def review_summary(session):
     stats = [(label, "Not determinable" if value is None else value) for label, value in stats]
     claude = claude_state(session, cards, bool(search_failures))
     return {"headline": headline(inspected, cards, samples, search_failures, applied or 0),
-            "why": why_lines(session, inspected, cards, claude, applied or 0), "stats": stats, "cards": cards,
+            "searched": f"{inspected} accession record{'' if inspected == 1 else 's'} searched.",
+            "claude_line": claude["why"] or ("Claude read the usable passages; every proposal below was checked "
+                                             "against the article." if claude["label"] == "Claude analysis completed"
+                                             else ""),
+            "why": why_lines(session, inspected, cards), "stats": stats, "cards": cards,
             "samples": samples, "failures": failures, "claude": claude,
             "stages": stage_statuses(cards, samples, claude, bool(search_failures)),
             "same_status": len({row["Status"] for row in samples}) == 1}
@@ -291,13 +313,11 @@ def claude_state(session, cards, search_failed):
     if pending:
         why = "Claude has not been run. It reads only the usable passages, after you approve the cost."
     elif search_failed or any(card["outcome"] in {FAILED, NOT_RETRIEVED} for card in cards):
-        why = "Claude was not used because the evidence check could not be completed."
+        why = "Claude was not called because the evidence check could not be completed."
     elif not cards:
-        why = "Claude was not used because no publication was found."
-    elif len(cards) == 1:
-        why = "Claude was not used because this publication cannot provide sample-specific collection information."
+        why = "Claude was not called because no publication was found."
     else:
-        why = "Claude was not used because these publications cannot provide sample-specific collection information."
+        why = "Claude was not called because no eligible sample-specific evidence was found."
     return {"label": "Claude not run", "why": why, "tone": "skipped"}
 
 
@@ -327,8 +347,11 @@ def stage_statuses(cards, samples, claude, search_failed):
     return stages
 
 
-def why_lines(session, inspected, cards, claude, applied):
-    """A short explanation under the conclusion; details stay in the expandable section."""
+def why_lines(session, inspected, cards):
+    """A short explanation under the conclusion; details stay in the expandable section.
+
+    The Claude sentence and the "changed" sentence are shown separately (claude_line, headline).
+    """
 
     lines = []
     isolates = distinct_isolates(session["samples"]) if inspected else None
@@ -337,52 +360,61 @@ def why_lines(session, inspected, cards, claude, applied):
                      f"{counted(isolates, 'distinct isolate').lower()}.")
     if cards:
         retrieved = sum(card["outcome"] not in {FAILED, NOT_RETRIEVED} for card in cards)
-        lines.append(f"{counted(retrieved, 'associated publication')} {'was' if retrieved == 1 else 'were'} retrieved.")
+        lines.append(f"{counted(retrieved, 'associated publication')} {'was' if retrieved == 1 else 'were'} retrieved."
+                     if retrieved else "No associated publication could be retrieved.")
     if len(cards) == 1 and cards[0]["year"] != "Unknown":
         dates = pd.to_datetime(session["samples"].get("Collection_Date"), errors="coerce").dropna()
         collected = (f"; the samples were collected in {dates.min():%B %Y}"
                      if len(dates) and dates.min().to_period("M") == dates.max().to_period("M") else "")
         lines.append(f"The publication is from {cards[0]['year']}{collected}.")
-    if cards and not any(card["usable_samples"] for card in cards):
+    incomplete = any(card["outcome"] in {FAILED, NOT_RETRIEVED} for card in cards)
+    if cards and not incomplete and not any(card["usable_samples"] for card in cards):
         lines.append("No usable direct sample-specific evidence was established.")
-    for card in cards[:1] if len(cards) == 1 else []:
-        lines.append(card["plain"])
-    if claude["why"]:
-        lines.append(claude["why"])
-    elif claude["label"] == "Claude analysis completed":
-        lines.append("Claude read the usable passages; every proposal below was checked against the article.")
-    lines.append(f"{counted(applied, 'change')} applied." if applied else "No metadata was changed.")
     return lines
 
 
 def headline(inspected, cards, samples, search_failures=(), applied=0):
-    """The concise conclusion, true to what was actually retrieved and assessed."""
+    """The concise conclusion, true to what was actually retrieved and assessed.
 
-    searched = f"{inspected} accession record{'' if inspected == 1 else 's'} searched."
+    "Reviewed" is said only of publications that were retrieved with text and assessed; a
+    publication that could not be retrieved is an incomplete review, never "no evidence".
+    """
+
     unchanged = f"{counted(applied, 'change')} applied." if applied else "No metadata was changed."
     if not cards and search_failures:
         return (f"The publication search could not be completed, so locations could not be checked "
                 f"({search_failures[0]}) This does not mean that no publication exists. {unchanged}")
     if not cards:
-        return f"{searched} No publication found. {unchanged}"
-    found = f"{counted(len(cards), 'publication')} found"
+        return f"No publication was found for the uploaded samples. {unchanged}"
+    one = len(cards) == 1
+    found = f"{counted(len(cards), 'publication')} {'was' if one else 'were'} found"
     incomplete = [card for card in cards if card["outcome"] in {FAILED, NOT_RETRIEVED}]
     if incomplete:
-        subject = ("it" if len(cards) == 1 else "all of them" if len(incomplete) == len(cards)
+        subject = ("it" if one else "all of them" if len(incomplete) == len(cards)
                    else counted(len(incomplete), "publication").lower())
-        return (f"{searched} {found}, but {subject} could not be retrieved, so location information could not "
+        return (f"{found}, but {subject} could not be retrieved, so location information could not "
                 "be checked. The evidence review is incomplete. This does not mean the literature has no "
                 f"evidence. {unchanged}")
     proposed = sum(row["Status"].startswith("Improvements") for row in samples)
     pending = [card for card in cards if card["outcome"] == PENDING]
     if proposed:
-        return (f"{searched} {found}. Verified collection details were proposed for "
+        return (f"{found}. Verified collection details were proposed for "
                 f"{counted(proposed, 'sample').lower()}. Nothing changes until you approve them."
                 + (f" {unchanged}" if applied else ""))
     if pending:
-        return (f"{searched} {found}. {counted(len(pending), 'publication')} may hold collection details for "
-                f"your samples; a Claude review is needed to confirm. {unchanged}")
-    return f"{searched} {found}. No verified collection locations could be assigned to these samples. {unchanged}"
+        subject = ("It" if one else "They") if len(pending) == len(cards) else counted(len(pending), "publication")
+        return (f"{found}. {subject} may hold collection details for your samples; a Claude review is needed "
+                f"to confirm. {unchanged}")
+    reviewed = all(card["text_checked"] for card in cards)
+    found_and_reviewed = found + (" and reviewed" if reviewed else "")
+    if all(card["outcome"] == PREDATES for card in cards):
+        return (f"{found_and_reviewed}. {'It predates' if one else 'They predate'} the uploaded samples and "
+                f"{'does' if one else 'do'} not provide verifiable collection locations for them. {unchanged}")
+    if reviewed:
+        return (f"{found_and_reviewed}. {'It does' if one else 'They do'} not provide verifiable collection "
+                f"locations for the uploaded samples. {unchanged}")
+    return (f"{found}. No verifiable collection locations could be established for the uploaded samples; "
+            f"the text of {'it' if one else 'some of them'} was not available to check. {unchanged}")
 
 
 def enrichment_summary(session, log=None):

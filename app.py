@@ -130,12 +130,26 @@ INPUT_LABELS = {
 MODES = {
     "auto": {"label": "Detect from my files", "files": "Upload any mix; the next step recognizes each file."},
     "individual": {"label": "Individual sequences (Sprint 2)",
-                   "files": "FASTA sequences + sample metadata."},
-    "pooled": {"label": "Pooled sequencing results (Sprint 3)",
-               "files": "A processed SNV table (results of upstream variant calling)."},
-    "combined": {"label": "Combined (Sprint 2 + Sprint 3)",
-                 "files": "Both of the above + one shared reference genome FASTA."},
+                   "files": "FASTA sequences + sample metadata.",
+                   "title": "Individual Sequences", "sprint": "Sprint 2",
+                   "summary": "Compare pathogen sequences using genetic similarity, collection dates, and geography.",
+                   "flow": ["Upload", "Align", "Compare", "Results"]},
+    "pooled": {"label": "Pooled sequencing results (Sprint 3 + 5)",
+               "files": "A processed SNV table (results of upstream variant calling).",
+               "title": "Pooled Sequencing", "sprint": "Sprint 3 + 5",
+               "summary": ("Analyze pathogen mutations, sequencing depth, allele frequencies, uncertainty, and "
+                           "temporal patterns."),
+               "flow": ["Upload", "Validate", "Analyze mutations", "Results"]},
+    "combined": {"label": "Combined (Sprint 2 + 3 + 5)",
+                 "files": "Both of the above + one shared reference genome FASTA.",
+                 "title": "Combined Analysis", "sprint": "Sprint 2 + 3 + 5",
+                 "summary": ("Analyze individual and pooled pathogen evidence together using compatible "
+                             "reference genomes."),
+                 "flow": ["Process both sources", "Compare compatible variants", "Results"]},
 }
+# Upload-field groups, in display order. A group is shown when the chosen mode uses any of its fields.
+UPLOAD_GROUPS = [("individual", "Individual sequences"), ("pooled", "Pooled sequencing results"),
+                 ("shared", "Reference genome and gene annotation")]
 MODE_NEEDS = {
     "individual": [("fasta", "individual sequences (FASTA)"), ("metadata", "sample metadata")],
     "pooled": [("snv", "processed pooled SNV table")],
@@ -148,13 +162,19 @@ MODE_NEEDS = {
 FASTA_ACCEPT = ".fasta,.fa,.fna,.gz"
 TABLE_ACCEPT = ".csv,.tsv,.txt,.xlsx,.gz"
 UPLOAD_FIELDS = [
-    {"role": "fasta", "label": "Individual sequences (FASTA)", "accept": FASTA_ACCEPT, "multiple": True,
+    {"role": "fasta", "group": "individual",
+     "question": "What is a FASTA file?",
+     "answer": "Contains pathogen nucleotide sequences used for genetic comparisons.",
+     "label": "Individual sequences (FASTA)", "accept": FASTA_ACCEPT, "multiple": True,
      "modes": {"individual": "required", "combined": "required"},
      "summary": "One record per sample",
      "help": "One FASTA record per sample; record names must match the Accession column of the metadata. "
              "Several FASTA files are combined. MAFFT aligns them on the server.",
      "example": "synthetic_individual_sequences.fasta"},
-    {"role": "metadata", "label": "Individual sample metadata (CSV, TSV, or XLSX)", "accept": TABLE_ACCEPT,
+    {"role": "metadata", "group": "individual",
+     "question": "What is sample metadata?",
+     "answer": "Information about samples, such as identifiers, collection dates, and locations.",
+     "label": "Individual sample metadata (CSV, TSV, or XLSX)", "accept": TABLE_ACCEPT,
      "multiple": False, "modes": {"individual": "required", "combined": "required"},
      "summary": "Required columns: Accession and Pathogen",
      "help": "Required columns: Accession (matching the FASTA names) and Pathogen. Optional: Collection_Date "
@@ -162,14 +182,20 @@ UPLOAD_FIELDS = [
              "estimate coordinates for place names), and Gene_Segment. Missing optional columns only switch "
              "off the analyses that need them.",
      "example": "synthetic_individual_metadata.csv"},
-    {"role": "reference", "label": "Reference genome (one-sequence FASTA)", "accept": FASTA_ACCEPT,
+    {"role": "reference", "group": "shared",
+     "question": "What is a reference genome?",
+     "answer": "A known genome used to verify positions and compare mutations.",
+     "label": "Reference genome (one-sequence FASTA)", "accept": FASTA_ACCEPT,
      "multiple": False, "modes": {"individual": "optional", "pooled": "optional", "combined": "required"},
      "summary": "Shared genome coordinates",
      "help": "Individual sequences: places them on numbered reference positions (reference-based variants). "
              "Pooled results: checks the reported reference bases and genome coverage. Combined: required, "
              "because both sources must use this same verified reference to be compared.",
      "example": "synthetic_reference.fasta"},
-    {"role": "annotation", "label": "Genome annotation (GenBank or GFF3, optional)",
+    {"role": "annotation", "group": "shared",
+     "question": "What is a gene annotation?",
+     "answer": "Identifies genes and coding regions so mutations can be associated with proteins.",
+     "label": "Genome annotation (GenBank or GFF3, optional)",
      "accept": ".gb,.gbk,.genbank,.gff,.gff3,.gz", "multiple": False,
      "modes": {"individual": "optional", "pooled": "optional", "combined": "optional"},
      "summary": "Genes and predicted amino-acid changes",
@@ -177,7 +203,10 @@ UPLOAD_FIELDS = [
              "GenBank or GFF3). It must name the same accession.version; a GenBank file also carries the sequence "
              "used to verify each reference base. Without it, every other analysis still runs.",
      "example": "NC_045512.2.gb"},
-    {"role": "snv", "label": "Processed pooled SNV results (table or VCF)",
+    {"role": "snv", "group": "pooled",
+     "question": "What is a processed SNV table?",
+     "answer": "Contains detected nucleotide changes and, when available, sequencing depth and allele frequencies.",
+     "label": "Processed pooled SNV results (table or VCF)",
      "accept": ".csv,.tsv,.txt,.xlsx,.vcf,.gz", "multiple": True,
      "modes": {"pooled": "required", "combined": "required"},
      "summary": "Variant calls already made from sequencing reads",
@@ -185,24 +214,38 @@ UPLOAD_FIELDS = [
              "standardized tables, iVar variant tables, SNV VCF files, and the Fontenele et al. (2021) "
              "supplementary workbook; several iVar or VCF files are combined. Raw FASTQ reads are not accepted.",
      "example": "synthetic_pooled_snvs.csv"},
-    {"role": "pooled_metadata", "label": "Pooled-sample metadata", "accept": TABLE_ACCEPT, "multiple": False,
+    {"role": "pooled_metadata", "group": "pooled",
+     "question": "What is pooled-sample metadata?",
+     "answer": "Information about each pooled sample, such as its collection date, site, and genome coverage.",
+     "label": "Pooled-sample metadata", "accept": TABLE_ACCEPT, "multiple": False,
      "modes": {"pooled": "optional", "combined": "optional"},
      "summary": "Dates, sites, coverage, mean depth",
      "help": "Sample_ID plus collection dates, sites, coordinates, genome coverage, or mean depth. Enables the "
              "paper's genome-coverage filter, the depth-versus-SNV regression, and dates or sites missing "
              "from the SNV table."},
-    {"role": "positions", "label": "Per-position depth or A/C/G/T counts", "accept": TABLE_ACCEPT,
+    {"role": "positions", "group": "pooled",
+     "question": "What are per-position counts?",
+     "answer": ("Read depth (and optionally A/C/G/T counts) at every genome position, so a variant that "
+                "is absent can be called \"not detected\" instead of \"unknown\"."),
+     "label": "Per-position depth or A/C/G/T counts", "accept": TABLE_ACCEPT,
      "multiple": False, "modes": {"pooled": "optional", "combined": "optional"},
      "summary": "Coverage-aware results and the paper's PCoA",
      "help": "Depth at every listed position lets unreported variants be called 'not detected at adequate "
              "depth' instead of 'unknown'. A/C/G/T counts also enable the paper's Yue–Clayton PCoA "
              "(population structure).",
      "example": "synthetic_pooled_base_counts.csv"},
-    {"role": "masked_sites", "label": "Masked problematic sites", "accept": TABLE_ACCEPT, "multiple": False,
+    {"role": "masked_sites", "group": "pooled",
+     "question": "What are masked sites?",
+     "answer": "Genome positions known to be unreliable, which quality control leaves out.",
+     "label": "Masked problematic sites", "accept": TABLE_ACCEPT, "multiple": False,
      "advanced": True, "modes": {"pooled": "optional", "combined": "optional"},
      "summary": "Positions excluded by quality control",
      "help": "Reference positions to exclude, as in the paper's masked-site quality check."},
-    {"role": "signatures", "label": "Documented variant profiles", "accept": TABLE_ACCEPT, "multiple": False,
+    {"role": "signatures", "group": "pooled",
+     "question": "What are variant profiles?",
+     "answer": ("Published sets of mutations; the results show how much of each set your data contain "
+                "(never a lineage assignment)."),
+     "label": "Documented variant profiles", "accept": TABLE_ACCEPT, "multiple": False,
      "advanced": True, "modes": {"pooled": "optional", "combined": "optional"},
      "summary": "Known variant sets for an overlap table",
      "help": "Lists of variants that define documented profiles; the results show their overlap with the "
@@ -1164,7 +1207,7 @@ def shared_page_values():
     if not EXAMPLE_FACTS:
         EXAMPLE_FACTS.update(integrated_example_facts())
     return {"glossary": GLOSSARY, "modes": MODES, "example_facts": EXAMPLE_FACTS or None,
-            "upload_fields": UPLOAD_FIELDS,
+            "upload_fields": UPLOAD_FIELDS, "upload_groups": UPLOAD_GROUPS,
             # Phase 4A review controls.
             "wide_layout": WIDE_LAYOUT, "base_count_layout": BASE_COUNT_LAYOUT,
             "frequency_scales": FREQUENCY_SCALES, "position_bases": POSITION_BASES,
@@ -1743,7 +1786,8 @@ def enrich_run():
     if derived is not None and error is None:
         page["enrichment_report"] = enrichment_report(session, derived, log, outcome, thresholds, page)
     elif error is None and session["publications"] is not None:
-        page["enrichment_note"] = review_summary(session)["headline"]
+        summary = review_summary(session)
+        page["enrichment_note"] = f"{summary['searched']} {summary['headline']}"
     page["analysis_plan"] = review["analyses"]
     return render_page(values, page)
 
@@ -1774,7 +1818,8 @@ def enrichment_report(session, derived, log, outcome, thresholds, page):
     changed_pairs = []
     if comparison is not None:
         changed_pairs = comparison[comparison["Change"] != "Unchanged"].fillna("").astype(str).to_dict("records")
-    session["applied_count"] = sum(item["Outcome"].startswith("Applied") for item in log)
+    session["applied_facts"] = [item["Fact_ID"] for item in log if item["Outcome"].startswith("Applied")]
+    session["applied_count"] = len(session["applied_facts"])
     return {"summary": contribution(session, derived, log, sections), "changes": changes,
             "per_sample": enrichment_summary(session, log),
             "resolution": gap_resolution(session, derived),

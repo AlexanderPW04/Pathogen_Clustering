@@ -101,7 +101,7 @@ class UploadEnrichmentTest(unittest.TestCase):
         self.assertRegex(home, r'name="enrich" id="enrich" >')  # unchecked by default
         page, token = self.review([upload(INTEGRATED, name) for name in ALL_INTEGRATED])
         self.assertIn(">Run analysis</button>", page)
-        self.assertNotIn("Find and check publications", page)
+        self.assertNotIn("Find and Check Publications", page)
         self.assertFalse(staged_item(token)["enrich"])
         result = self.post("/run", {"token": token})
         self.assertNotIn('id="enrichment-report"', result)
@@ -116,7 +116,7 @@ class UploadEnrichmentTest(unittest.TestCase):
         self.assertTrue(staged_item(token)["enrich"])
         self.assertIn("10 of 14 samples</strong> have collection details", page)
         self.assertIn("State-only location: 1", page)
-        self.assertIn("Find and check publications", page)
+        self.assertIn("Find and Check Publications", page)
         self.assertIn("Skip enrichment and run analysis", page)
         self.assertIn("Nothing has been sent anywhere yet", page)
 
@@ -249,8 +249,8 @@ class UploadEnrichmentTest(unittest.TestCase):
             page = self.post("/enrich/start", {"token": staged})
             token = token_of(page, 'id="literature"')
             found = self.client.post("/literature/find", data={"token": token}).get_data(as_text=True)
-        self.assertIn("No publication found", found)
-        self.assertIn("Continue with the original metadata", found)
+        self.assertIn("No publication was found", found)
+        self.assertIn("Continue to Genomic Analysis", found)
         result = self.post("/enrich/run", {"token": token, "skip": "1"})
         self.assertIn("Pairwise comparisons:", result)
 
@@ -264,7 +264,7 @@ class UploadEnrichmentTest(unittest.TestCase):
             token = token_of(page, 'id="literature"')
             found = self.client.post("/literature/find", data={"token": token}).get_data(as_text=True)
         self.assertIn("PubTator3 could not be reached.", found)
-        self.assertIn("Continue with the original metadata", found)
+        self.assertIn("Continue to Genomic Analysis", found)
         # With a link found but Claude disabled, analysis is refused and the skip remains.
         page, staged = self.review([upload(INTEGRATED, "synthetic_individual_sequences.fasta"),
                                     upload(INTEGRATED, "synthetic_individual_metadata.csv")], enrich="on")

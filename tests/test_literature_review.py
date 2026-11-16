@@ -34,8 +34,8 @@ from literature.sources import LiveSource  # noqa: E402
 from literature.workflow import find_literature, new_session, run_analysis  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
-REVIEWED_NO_CHANGE = ("10 accession records searched. One publication found. No verified collection locations could be "
-                      "assigned to these samples. No metadata was changed.")
+REVIEWED_NO_CHANGE = ("One publication was found and reviewed. It predates the uploaded samples and "
+                      "does not provide verifiable collection locations for them. No metadata was changed.")
 
 
 class Response:
@@ -246,7 +246,8 @@ class NcbiShapedReviewTest(unittest.TestCase):
         summary = review_summary(session)
         self.assertEqual(summary["cards"][0]["outcome"], REVIEWED_NONE)
         self.assertEqual(summary["samples"][0]["Status"], "Reviewed; no supported improvement")
-        self.assertIn("No verified collection locations could be assigned", summary["headline"])
+        self.assertIn("It does not provide verifiable collection locations for the uploaded samples",
+                      summary["headline"])
         self.assertEqual(summary["cards"][0]["claude"], "Yes")
 
 

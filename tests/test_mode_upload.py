@@ -126,7 +126,7 @@ class ModeUploadTest(unittest.TestCase):
     # Pooled (Sprint 3) ---------------------------------------------------------------
     def test_pooled_required_only_and_with_optional_files(self):
         page, token = self.review("pooled", file_snv=example("synthetic_pooled_snvs.csv"))
-        self.assertIn("Detected analysis:</strong> Pooled sequencing results (Sprint 3)", page)
+        self.assertIn("Detected analysis:</strong> Pooled sequencing results (Sprint 3 + 5)", page)
         result = self.run_reviewed(token)
         self.assertIn("Pooled samples:</strong> 9", result)
         self.assertIn("Exploratory alternative", result)  # no A/C/G/T counts: not the paper's PCoA
@@ -150,7 +150,7 @@ class ModeUploadTest(unittest.TestCase):
                                   file_reference=example("synthetic_reference.fasta"),
                                   file_snv=example("synthetic_pooled_snvs.csv"),
                                   file_positions=example("synthetic_pooled_base_counts.csv"))
-        self.assertIn("Detected analysis:</strong> Combined (Sprint 2 + Sprint 3)", page)
+        self.assertIn("Detected analysis:</strong> Combined (Sprint 2 + 3 + 5)", page)
         result = self.run_reviewed(token)
         self.assertIn("Variants observed in both sources:</strong> 2", result)
         self.assertIn('id="shared-variant-example"', result)

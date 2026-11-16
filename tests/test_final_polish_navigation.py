@@ -22,16 +22,30 @@ class NavigationTest(unittest.TestCase):
         self.client = app.test_client()
         self.addCleanup(STAGED.clear)
 
-    def test_home_puts_the_file_guide_and_upload_before_the_extras(self):
+    def test_home_puts_the_analysis_choice_and_upload_before_the_extras(self):
+        # Homepage + Sprint 4 UI pass (2026-11-16): the three analysis cards come first, then the
+        # files of the chosen analysis; examples and "How this works" follow the upload.
         page = self.client.get("/").get_data(as_text=True)
-        order = [page.index(text) for text in ['class="quick-guide"', 'id="files"', 'fieldset class="enrich-toggle"',
-                                               "Review files</button>", 'id="file-details"']]
+        order = [page.index(text) for text in ['class="mode-cards"', 'id="files"', 'fieldset class="enrich-toggle"',
+                                               "Review files</button>", 'id="file-details"', 'id="examples"',
+                                               'id="how-it-works"']]
         self.assertEqual(order, sorted(order))
-        guide = page[page.index('class="quick-guide"'):page.index('id="files"')]
-        for text in ["Which files do I need?", "you never need every type", "Individual sequences",
-                     "Pooled SNV data", "complete A/C/G/T nucleotide counts", "reference genome FASTA",
-                     "gene annotation (GenBank/GFF3)", "supplementary sample metadata"]:
-            self.assertIn(text, guide)
+        self.assertIn("Analyze individual pathogen sequences, pooled sequencing data, and optional "
+                      "publication-based metadata.", page)
+        cards = page[page.index('class="mode-cards"'):page.index('id="files"')]
+        for text in ["Individual Sequences", "Sprint 2", "Pooled Sequencing", "Sprint 3 + 5", "Combined Analysis",
+                     "Sprint 2 + 3 + 5", "Compare pathogen sequences using genetic similarity, collection dates, "
+                     "and geography.", "<li>Align</li>", "<li>Analyze mutations</li>",
+                     "<li>Compare compatible variants</li>", "Detect from my files"]:
+            self.assertIn(text, cards)
+        for question in ["What is a FASTA file?", "What is a processed SNV table?", "What is sample metadata?",
+                         "What is a reference genome?", "What is a gene annotation?"]:
+            self.assertIn(f"<summary>{question}</summary>", page)
+        # Combined mode groups the fields by source; Sprint 4 stays an optional step, not a fourth mode.
+        for group in ["Individual sequences</h3>", "Pooled sequencing results</h3>",
+                      "Reference genome and gene annotation</h3>"]:
+            self.assertIn(group, page)
+        self.assertEqual(page.count('name="intended_mode"'), 4)
         how = page[page.index('id="how-it-works"'):]
         self.assertTrue(how.split(">", 2)[1].strip().startswith("<details") and "<details>" in how[:200])
 

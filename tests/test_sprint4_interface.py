@@ -65,8 +65,9 @@ class AnswersTest(unittest.TestCase):
 
     def test_no_publication_found(self):
         session, summary = review_of(FakeSource({}, {}))
-        self.assertEqual(summary["headline"], "1 accession record searched. No publication found. No metadata was changed.")
-        self.assertEqual(summary["claude"]["why"], "Claude was not used because no publication was found.")
+        self.assertEqual(summary["searched"], "1 accession record searched.")
+        self.assertEqual(summary["headline"], "No publication was found for the uploaded samples. No metadata was changed.")
+        self.assertEqual(summary["claude"]["why"], "Claude was not called because no publication was found.")
         self.assertEqual(summary["samples"][0]["Status"], "No associated publication found")
 
     def test_article_with_no_location_information(self):
@@ -95,14 +96,18 @@ class AnswersTest(unittest.TestCase):
         card = self.one(summary)
         self.assertEqual(card["plain"], PREDATES_SENTENCE)
         self.assertEqual((card["year"], card["applies"], card["improvement"], card["claude"]), ("2022", "No", "No", "No"))
-        self.assertEqual(summary["headline"], "10 accession records searched. One publication found. No verified "
-                                              "collection locations could be assigned to these samples. No metadata "
-                                              "was changed.")
+        # The exact wording asked for: reviewed (retrieved with text and assessed), predates, nothing changed.
+        self.assertEqual(summary["searched"], "10 accession records searched.")
+        self.assertEqual(summary["headline"], "One publication was found and reviewed. It predates the uploaded "
+                                              "samples and does not provide verifiable collection locations for "
+                                              "them. No metadata was changed.")
+        self.assertEqual(summary["claude_line"], "Claude was not called because no eligible sample-specific "
+                                                 "evidence was found.")
+        self.assertTrue(card["text_checked"])
+        self.assertEqual(card["changes"], "No")
         for line in ["Ten accessions represent two distinct isolates.", "One associated publication was retrieved.",
                      "The publication is from 2022; the samples were collected in September 2026.",
-                     "No usable direct sample-specific evidence was established.",
-                     "Claude was not used because this publication cannot provide sample-specific collection "
-                     "information.", "No metadata was changed."]:
+                     "No usable direct sample-specific evidence was established."]:
             self.assertIn(line, summary["why"])
         self.assertIn(("Claude not run", "skipped"), summary["stages"])
         self.assertIn(("No changes supported", "done"), summary["stages"])
@@ -116,19 +121,24 @@ class AnswersTest(unittest.TestCase):
         _, summary = review_of(Failing({identifier: item}, {ACCESSION: [(identifier, "direct")]}))
         card = self.one(summary)
         self.assertEqual((card["location"], card["applies"], card["improvement"]),
-                         ("Could not check", "Uncertain", "Could not check"))
+                         ("Not checked", "Uncertain", "Not checked"))
+        self.assertFalse(card["text_checked"])
+        self.assertNotIn("reviewed", summary["headline"])
         self.assertIn("could not be retrieved", summary["headline"])
         self.assertNotIn("No verified collection locations", summary["headline"])
         self.assertIn(("Article retrieval failed", "failed"), summary["stages"])
-        self.assertEqual(summary["claude"]["why"], "Claude was not used because the evidence check could not be completed.")
+        self.assertEqual(summary["claude"]["why"], "Claude was not called because the evidence check could not be completed.")
 
     def test_several_publications_get_one_row_each(self):
         first = article(9400005, "Samples came from Ohio.")
         second = article(9400006, "Samples came from Texas.")
         _, summary = review_of(FakeSource(dict([first, second]), {ACCESSION: [(first[0], "study"), (second[0], "study")]}))
         self.assertEqual([card["article"] for card in summary["cards"]], [first[0], second[0]])
-        self.assertEqual(summary["claude"]["why"], "Claude was not used because these publications cannot provide "
-                                                   "sample-specific collection information.")
+        self.assertEqual(summary["claude"]["why"], "Claude was not called because no eligible sample-specific "
+                                                   "evidence was found.")
+        self.assertEqual(summary["headline"], "Two publications were found and reviewed. They do not provide "
+                                              "verifiable collection locations for the uploaded samples. No metadata "
+                                              "was changed.")
 
     def test_plain_sentences_avoid_technical_terms(self):
         sentence = plain_explanation(PREDATES, [], 0)
@@ -208,7 +218,7 @@ class WorkflowTest(unittest.TestCase):
 
     def test_one_click_reaches_the_conclusion_and_the_next_action(self):
         page, staged = self.staged()
-        self.assertIn("Find and check publications", page)
+        self.assertIn("Find and Check Publications", page)
         calls = []
         source = self.source()
         original = source.fetch
@@ -218,17 +228,22 @@ class WorkflowTest(unittest.TestCase):
             page = self.post("/enrich/start", {"token": staged, "enrich": "on", "enrich_shown": "1"})
             again = self.post("/enrich/start", {"token": staged, "enrich": "on", "enrich_shown": "1"})
         primary = text(primary_part(page))
-        self.assertIn("10 accession records searched. One publication found.", primary)
+        self.assertIn("10 accession records searched.", primary)
+        self.assertIn("One publication was found and reviewed. It predates the uploaded samples", primary)
+        self.assertIn("Claude was not called because no eligible sample-specific evidence was found.", primary)
         self.assertIn(PREDATES_SENTENCE, primary)
-        self.assertIn("Location information found?", primary)
+        for question in ["Geographic information found?", "Linked to uploaded samples?",
+                         "Metadata improvement supported?", "Claude analysis performed?", "Changes applied?"]:
+            self.assertIn(question, primary)
         self.assertIn("Claude not run", primary)
-        self.assertLess(primary.index("10 accession records searched"), primary.index("Location information found?"))
+        self.assertLess(primary.index("10 accession records searched"), primary.index("Geographic information found?"))
         self.assertNotIn("bioproject_pubmed", primary_part(page))
         self.assertNotIn("Link provenance", primary_part(page))
         self.assertIn("Link provenance", page)  # kept, in the details
         self.assertIn('class="action-bar"', page)
         self.assertLess(page.index('id="technical-details"'), page.index('class="action-bar"'))
-        self.assertIn("Continue with the original metadata", page)
+        self.assertIn("Continue to Genomic Analysis", page)
+        self.assertIn('form="back-to-review"', page)
         self.assertNotIn("Analyze Literature with Claude AI", page)
         count.assert_not_called()
         run.assert_not_called()
@@ -245,7 +260,8 @@ class WorkflowTest(unittest.TestCase):
             token = re.search(r'name="token" value="([^"]+)"', page[page.index('id="literature"'):]).group(1)
             result = self.post("/enrich/run", {"token": token, "skip": "1"})
         self.assertIn("Pairwise comparisons:</strong> 2", result)
-        self.assertIn("Sprint 4: 10 accession records searched. One publication found.", text(result).replace("  ", " "))
+        self.assertIn("Sprint 4: 10 accession records searched. One publication was found and reviewed.",
+                      text(result).replace("  ", " "))
         self.assertIn("No metadata was changed.", text(result))
 
     def proposals(self):

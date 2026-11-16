@@ -37,8 +37,8 @@ ACCESSIONS = [f"QB228{number:03d}" for number in range(92, 102)]
 OLD_STUDY = "PMID:9000001"
 NO_EVIDENCE = ("One study-associated publication was found, but it does not provide verifiable collection "
                "information for these samples. No metadata changes are proposed")
-REVIEWED_NO_CHANGE = ("10 accession records searched. One publication found. No verified collection locations could be "
-                      "assigned to these samples. No metadata was changed.")
+REVIEWED_NO_CHANGE = ("One publication was found and reviewed. It predates the uploaded samples and "
+                      "does not provide verifiable collection locations for them. No metadata was changed.")
 OFFLINE_AI = {"AI_ENRICHMENT_ENABLED": "true", "ANTHROPIC_API_KEY": "test-key-not-real",
               "ANTHROPIC_MODEL": "claude-opus-5-5", "AI_ACCESS_CODE": "", "GEONAMES_USERNAME": ""}
 
@@ -332,7 +332,8 @@ class RouteTest(unittest.TestCase):
             found = self.client.post("/literature/find", data={"token": token}).get_data(as_text=True)
             result = self.client.post("/enrich/run", data={"token": token, "skip": "1"}).get_data(as_text=True)
         self.assertIn(REVIEWED_NO_CHANGE, found)
-        self.assertIn("Continue with the original metadata", found)
+        self.assertIn("Continue to Genomic Analysis", found)
+        self.assertIn("Claude was not called because no eligible sample-specific evidence was found.", found)
         self.assertIn("Pairwise comparisons:</strong> 2", result)
         self.assertNotIn('id="enrichment-report"', result)  # nothing was applied
 
