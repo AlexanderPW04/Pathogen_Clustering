@@ -19,6 +19,7 @@ from base64 import b64encode
 from contextlib import redirect_stderr
 from io import BytesIO, StringIO
 from math import isfinite
+from os import getenv
 from pathlib import Path
 from secrets import token_urlsafe
 from shutil import copyfile, rmtree
@@ -227,7 +228,14 @@ OUT_OF_MEMORY = ("The uploaded dataset exceeds the available memory for this ser
                  "(see the README), or upload a smaller study.")
 RESULT_LOCK = Lock()
 RESULT_DOWNLOAD_SECONDS = 600
-RESULT_DOWNLOAD_LIMIT = 4
+# Final polish 4B: the result cache is bounded by memory (compressed bytes) and by a count, and it
+# evicts the least recently *used* result set first. A set created or downloaded in the last few
+# minutes is evicted only when the memory budget or the count requires it, so one visitor's new
+# analyses do not push out another visitor's results while they are being downloaded.
+RESULT_DOWNLOAD_LIMIT = 12
+RESULT_CACHE_BYTES = int(getenv("RESULT_CACHE_MB", "48")) * 1024 * 1024
+RESULT_PROTECT_SECONDS = 180
+RESULT_LAST_USED = {}
 
 # Guided uploads wait on disk (not in Git, not permanent) between the review
 # and run steps; each set is deleted after 30 minutes or when newer sets need room.
@@ -653,22 +661,56 @@ def packed(files):
     return {name: (zlib.compress(content, 6), mimetype) for name, (content, mimetype) in files.items()}
 
 
-def store_result_files(files):
-    """Keep a few recent result files in memory (compressed) for ten minutes; no database."""
+def stored_bytes(files):
+    return sum(len(content) for content, _ in files.values())
 
+
+def forget_result(download_id):
+    RESULT_DOWNLOADS.pop(download_id, None)
+    RESULT_LAST_USED.pop(download_id, None)
+
+
+def last_used(download_id):
+    return RESULT_LAST_USED.get(download_id, RESULT_DOWNLOADS[download_id][0])
+
+
+def make_room_for_results(incoming_bytes, now):
+    """Drop expired result sets, then others in a fixed order until a new set fits.
+
+    Call with RESULT_LOCK held. The order is: idle sets (not used for RESULT_PROTECT_SECONDS), then
+    recently created sets nobody has downloaded yet, then sets being downloaded right now; within each
+    group the least recently used goes first. Sets are dropped only while the memory budget or the
+    count still requires it.
+    """
+
+    for key in [key for key, item in RESULT_DOWNLOADS.items() if now - item[0] > RESULT_DOWNLOAD_SECONDS]:
+        forget_result(key)
+
+    def over():
+        total = sum(stored_bytes(item[1]) for item in RESULT_DOWNLOADS.values())
+        return len(RESULT_DOWNLOADS) >= RESULT_DOWNLOAD_LIMIT or total + incoming_bytes > RESULT_CACHE_BYTES
+
+    def eviction_rank(key):
+        recent = now - last_used(key) <= RESULT_PROTECT_SECONDS
+        downloading = recent and last_used(key) > RESULT_DOWNLOADS[key][0]
+        return (2 if downloading else 1 if recent else 0, last_used(key))
+
+    for key in sorted(RESULT_DOWNLOADS, key=eviction_rank):
+        if not over():
+            break
+        forget_result(key)
+
+
+def store_result_files(files):
+    """Keep recent result files in memory (compressed) for ten minutes; no database, no disk."""
+
+    stored = packed(files)
     with RESULT_LOCK:
         now = monotonic()
-        expired = [
-            key for key, item in RESULT_DOWNLOADS.items()
-            if now - item[0] > RESULT_DOWNLOAD_SECONDS
-        ]
-        for key in expired:
-            del RESULT_DOWNLOADS[key]
-        while len(RESULT_DOWNLOADS) >= RESULT_DOWNLOAD_LIMIT:
-            oldest = min(RESULT_DOWNLOADS, key=lambda key: RESULT_DOWNLOADS[key][0])
-            del RESULT_DOWNLOADS[oldest]
+        make_room_for_results(stored_bytes(stored), now)
         download_id = token_urlsafe(16)
-        RESULT_DOWNLOADS[download_id] = (now, packed(files))
+        RESULT_DOWNLOADS[download_id] = (now, stored)
+        RESULT_LAST_USED[download_id] = now
     return download_id
 
 
@@ -709,6 +751,7 @@ def build_report_once(download_id, filename):
         if item is None or monotonic() - item[0] > RESULT_DOWNLOAD_SECONDS or SUMMARY_NAME not in item[1]:
             return error_page(RESULTS_GONE, 404)
         stored = dict(item[1])
+        RESULT_LAST_USED[download_id] = monotonic()
     if not ANALYSIS_SLOT.acquire(blocking=False):
         return error_page("Another analysis is running on this server. Wait a minute, then click the link "
                           "again; the CSV files are available now.", 503)
@@ -727,9 +770,11 @@ def build_report_once(download_id, filename):
         release_memory()
     mimetype = REPORT_MIMETYPES[filename]
     if len(content) <= 8 * 1024 * 1024:
-        with RESULT_LOCK:
-            if download_id in RESULT_DOWNLOADS:
-                RESULT_DOWNLOADS[download_id][1][filename] = (zlib.compress(content, 6), mimetype)
+        compressed = zlib.compress(content, 6)
+        with RESULT_LOCK:  # kept for the next click only while the memory budget allows it
+            total = sum(stored_bytes(item[1]) for item in RESULT_DOWNLOADS.values())
+            if download_id in RESULT_DOWNLOADS and total + len(compressed) <= RESULT_CACHE_BYTES:
+                RESULT_DOWNLOADS[download_id][1][filename] = (compressed, mimetype)
     return send_file(BytesIO(content), mimetype=mimetype, as_attachment=True, download_name=filename)
 
 
@@ -749,6 +794,7 @@ def result_download(download_id, filename):
                 or filename not in item[1]):
             return error_page(RESULTS_GONE, 404)
         content, mimetype = item[1][filename]
+        RESULT_LAST_USED[download_id] = monotonic()  # being downloaded: evicted last
     return send_file(BytesIO(zlib.decompress(content)), mimetype=mimetype, as_attachment=True,
                      download_name=filename)
 

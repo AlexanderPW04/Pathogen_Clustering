@@ -197,3 +197,47 @@ staging (hosted report §7). No change was needed.
 
 **Tests.** `tests/test_final_polish_navigation.py` (3). The UI, web, literature, and Sprint 5 web
 modules all pass (77 tests).
+
+## Milestone 4: robustness — Done (2026-11-16)
+
+**4A: mapping profiles** (`genomics/mapping_profiles.validate_profile`, called by `read_profile`).
+- **Checked:**
+  - only known top-level and per-file keys;
+  - a supported format and version;
+  - 1–20 file entries, each a JSON object;
+  - roles from the review page (never "ignore" or paths);
+  - field names that exist for that role;
+  - plain-text values of at most 200 characters, and no empty column names;
+  - a valid creation date;
+  - `date_order` in `DATE_ORDERS`.
+- **Per-file options** must be exactly what the review form accepts: the same `read_file_options`
+  rules (header row 1–50, numbering 0/1, fraction/percent, base-count minimum 1–1000, known depth
+  definitions).
+- **Worksheets:** a profile naming a worksheet the workbook lacks does not fit.
+- **On failure,** the whole profile is refused with a specific message ("'header_row' is -5; it must
+  be a whole number from 1 to 50"); the review stays open and nothing is applied.
+- **Compatibility:** all 12 profiles saved earlier (local and staging, old code) still validate.
+
+**4B: result cache** (`app.make_room_for_results`, `store_result_files`, `result_download`).
+- **Bounds:** a memory budget of 48 MB compressed by default (`RESULT_CACHE_MB`), plus at most 12
+  result sets (was 4, count only).
+- **Eviction order:** expired sets first, then idle sets, then sets created recently but not yet
+  downloaded, and sets being downloaded last. Within each group the least recently used goes first.
+- **Use tracking:** each download refreshes a set's last use. A cached XLSX/PDF is kept only while the
+  budget allows it.
+- **Unchanged:** the 10-minute lifetime, the 128-bit random IDs (results stay separate), memory-only
+  storage (lost on restart, explained on the 404 page), and the 8 MB per-file rule.
+
+**4C: Schumann categorical storage — not implemented (documented).**
+- The observation matrix (533 → 50 MB as categories, identical CSV bytes) feeds at least 9 consumers.
+- Several of them group or join on those columns: `temporal_analysis.frequency_trends`,
+  `vaf_trends` merges, `figures` groupby, `mutation_profiles`.
+- With pandas 2.x, grouping by a categorical column defaults to `observed=False`, which creates every
+  category combination. That could change outputs and raise memory.
+- Proving equivalence would need every consumer audited, so it stays remaining work.
+  `MAX_OBSERVATION_CELLS` keeps refusing Berlin35 on the free plan with a clear message.
+
+**Tests.** `tests/test_final_polish_robustness.py` (8): every invalid option, key, role, field, and
+structure is refused; a web upload of a bad profile shows the reason; an active visitor keeps results
+while another runs many; the memory budget is never exceeded; expiry and separation hold; 30
+concurrent stores stay bounded.
