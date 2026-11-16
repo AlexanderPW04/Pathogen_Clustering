@@ -68,7 +68,8 @@ class NavigationTest(unittest.TestCase):
         self.assertIn('id="downloads"', page)
         # Jump targets inside Sprint 5 are panels, not sections: they need the same offset below the
         # sticky bar, or their heading lands under it (found on staging, 2026-11-16).
-        self.assertIn(".uncertainty-panel[id] { scroll-margin-top", page)
+        self.assertIn(".uncertainty-panel[id] { scroll-margin-top: calc(var(--jump-bar-height", page)
+        self.assertIn('setProperty("--jump-bar-height"', page)
         self.assertLess(page.index("Major findings"), page.index("3. Genomic variation</h2>"))
 
 
