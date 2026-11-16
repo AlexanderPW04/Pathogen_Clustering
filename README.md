@@ -9,8 +9,10 @@ population structure (PCoA), geographic context, cross-source variant
 overlap, and the original Sprint 2 sequence-relationship screening.
 
 The application can run on a personal computer or in the supplied Docker
-container. This README describes the code on the `sprint4-integration`
-branch as of November 2, 2026. A potential outbreak cluster, a shared variant,
+container. This README describes the code on the `sprint5-finalization`
+branch as of November 16, 2026 (Sprints 2–5: individual sequences, pooled
+sequencing with depth-aware uncertainty and mutation annotation, the combined
+analysis, and optional publication-based metadata). A potential outbreak cluster, a shared variant,
 or a variant-profile overlap is a screening result; none of them confirms
 transmission, an outbreak, or the lineage present in a mixed sample.
 
@@ -48,18 +50,21 @@ that matches your terminal.
 
 ### 1. Get the code
 
-With Git (the work is on the `sprint4-integration` branch):
+With Git (the finished Sprint 5 work is on the `sprint5-finalization` branch):
 
 ```console
 git clone https://github.com/AlexanderPW04/Pathogen_Clustering.git
 cd Pathogen_Clustering
-git checkout sprint4-integration
+git checkout sprint5-finalization
 ```
+
+If you cloned earlier, update instead: `git fetch origin`, then
+`git checkout sprint5-finalization` and `git pull`.
 
 Or download the project as a ZIP from GitHub, extract **all** of it, and open
 a terminal in the folder that contains `app.py` and `requirements.txt`.
 Keep the folders `genomics/`, `literature/`, `wastewater/`, `templates/`,
-`examples/`, and `tests/` next to the Python files.
+`examples/`, `tests/`, and `validation/` next to the Python files.
 
 ### 2. Install Python 3.11 and check it
 
@@ -297,13 +302,14 @@ On the main page, scroll to **System status and external services**:
 
 ### 9. Run the built-in examples (all synthetic, no AI call)
 
-On the main page:
+On the main page, scroll below the upload form to **No files yet? Try a
+synthetic example**:
 
-1. **Run Example Analysis (individual sequences only)**: Sprint 2 pipeline with MAFFT.
-2. **Run Integrated Example**: individual sequences, pooled SNVs, and a shared
-   reference on one coordinate system. Tick **Include Sprint 4 metadata
-   enrichment before the analysis** to walk through the enrichment steps with
-   invented articles and fixed answers.
+1. **Run Integrated Example** (recommended first): individual sequences,
+   pooled SNVs, and a shared reference on one coordinate system (needs MAFFT).
+   Tick **Include Sprint 4 metadata enrichment before the analysis** to walk
+   through the enrichment steps with invented articles and fixed answers.
+2. **Run Example Analysis (individual sequences only)**: Sprint 2 pipeline with MAFFT.
 3. **Run Literature Enrichment Example (offline, no AI call)**: the Sprint 4
    review, approval, and apply steps on their own.
 4. Open `http://127.0.0.1:5000/wastewater-data` and click **Run Synthetic
@@ -311,27 +317,41 @@ On the main page:
 
 ### 10. Analyze your own files
 
-1. On the main page choose an analysis mode: **Individual sequences** (FASTA +
-   metadata CSV/TSV/XLSX), **Pooled sequencing results** (processed SNV
-   table or VCF), or **Combined** (both plus one shared reference FASTA). Or
-   upload any mix with **Detect from my files**.
-2. Optional: tick **Use PubTator + Claude AI to find missing or more precise
-   sample information** to add Sprint 4 before the analysis.
-3. Click **Review files**. Check the detected file roles, the column mapping,
+1. **1 · Choose an analysis:** click one of the three cards:
+   **Individual Sequences** (Sprint 2: FASTA + metadata CSV/TSV/XLSX),
+   **Pooled Sequencing** (Sprint 3 + 5: a processed SNV table, VCF, or the
+   Fontenele mmc2.xlsx), or **Combined Analysis** (Sprint 2 + 3 + 5: both,
+   plus one shared reference FASTA). If you are unsure, keep the default
+   **Detect from my files**.
+2. **2 · Add your files:** only the fields for the chosen analysis are shown.
+   Each field has a "What is …?" help line. A reference genome FASTA and a
+   GenBank/GFF3 annotation are optional for pooled data (they enable
+   reference checks and predicted protein consequences).
+3. **3 · Optional (Sprint 4):** tick **Use PubTator + Claude AI to find missing
+   or more precise sample information** to check publications before the
+   analysis.
+4. Click **Review files**. Check the detected file roles, the column mapping,
    and the *Metadata readiness* table; fix any listed required item (for
    example, enter the pathogen if the metadata does not state it).
-4. Click **Run analysis**. With Sprint 4 on, follow its three steps instead:
-   1. **Find and check publications** (one click; free, no AI).
-   2. **Review findings**: the conclusion and a short table come first
-      (location found? applies to your samples? improvement possible? Claude
-      reviewed?). Only if usable evidence exists, approve a cost estimate to
-      run Claude, then approve or reject each proposal.
-   3. **Apply approved changes and run the analysis**, or **Continue with the
-      original metadata**. The button stays at the bottom of the screen.
-
-   Evidence, record links, and limitations are under *Technical details*.
-5. Download the result files from the results page. Uploaded files are deleted
-   after the analysis; downloads are kept in memory for about 10 minutes.
+5. Click **Run analysis**. With Sprint 4 on, the review page instead offers
+   **Find and Check Publications** (free, no AI) or **Skip enrichment and run
+   analysis**. After the search, the page shows
+   the conclusion first and one card per publication. Claude is offered only
+   when usable sample-specific evidence exists, and only after you approve a
+   cost estimate. Finish with **Continue to Genomic Analysis** (the button
+   stays at the bottom of the screen).
+6. **Read the results:** the page shows only what your data supported. It
+   starts with an **Overview** (analysis type, headline counts, main findings,
+   important limitations, and a short *Unavailable or limited analyses*
+   list), then a few sections chosen for the run (for example Genomic
+   Variation, Temporal and Geographic Patterns, Sequencing Quality and
+   Uncertainty, Advanced Analysis). Extra charts are under *Additional
+   figures*; long tables and technical details are collapsed.
+7. **Download** from the *Downloads and Provenance* section: the Excel
+   workbook, the PDF report (prepared on the first click), and every CSV and
+   PNG grouped by section. Uploaded files are deleted after the analysis;
+   downloads are kept in memory for about 10 minutes. Printing the page from
+   the browser gives a clean, shorter printout without the navigation.
 
 ### 11. Run the automated tests (optional)
 
@@ -341,15 +361,18 @@ With the environment active, in the project folder:
 python -m unittest discover -s tests
 ```
 
-The suite takes about 2–3 minutes and needs no internet, accounts, or keys:
-MAFFT, GeoNames, NCBI, PubTator, and Claude are all mocked. On November 7,
-2026 it ran **409 tests**:
-
-- with MAFFT on `PATH`: all pass except **2 skipped**;
-- without MAFFT: **3 skipped**.
-
-The skipped tests are optional real-data checks; see
+The suite takes about 10–12 minutes and needs no internet, accounts, or
+keys: MAFFT, GeoNames, NCBI, PubTator, and Claude are all mocked. On
+November 16, 2026 it ran **738 tests: OK, 16 skipped**. The skipped tests are
+optional checks that run only when real data files are named in environment
+variables (`FONTENELE_MMC2`, `CRITS_CHRISTOPH_DIR`, `SCHUMANN_DIR`,
+`ANNOTATION_MPOX_GENBANK`) or real MAFFT is on `PATH`; see
 [Tests and local verification](#tests-and-local-verification).
+
+If PowerShell shows the test output and the summary mixed together, save
+the summary separately:
+`python -m unittest discover -s tests 2> test_summary.txt`, then open
+`test_summary.txt` (the last lines say `OK` or list the failures).
 
 ### 12. Every later session, and updating the code
 
@@ -374,6 +397,27 @@ cd "/path/to/Pathogen_Clustering" && source .venv/bin/activate && python app.py
 After pulling a newer version (`git pull`), reinstall the requirements
 (`python -m pip install -r requirements.txt`). Then restart the server: code,
 template, and `.env` changes are only picked up by a fresh start.
+
+### 13. Optional: preview every page state without uploading anything
+
+A local preview server shows the homepage modes, every Sprint 4 state, and
+the results page for several kinds of data, using only synthetic files:
+
+```console
+python validation/local_ui_preview.py
+```
+
+Open **http://127.0.0.1:5058/preview** (a purple banner marks every preview
+page). Nothing is sent to NCBI, PubTator, GeoNames, or Claude, and nothing is
+billed. The results links run the real analysis on the bundled example files
+(individual only, individual with a reference, pooled only, combined, and
+missing-data variants); results that use individual sequences need MAFFT.
+To also preview the real Fontenele et al. (2021) result, download
+Supplementary Table 2 (`mmc2.xlsx`, never stored in Git) and set
+`FONTENELE_MMC2` to its path before starting the preview, for example in
+PowerShell: `$env:FONTENELE_MMC2 = "C:\path\to\mmc2.xlsx"`. Those two links
+take about a minute each. Stop the preview with `Ctrl+C`; it is for your own
+computer only and is not part of the hosted site.
 
 ## Pages and a first demonstration
 
@@ -537,21 +581,25 @@ unknown for day-level comparisons and listed in the notes.
 
 ### Dashboard sections
 
-Integrated sections come first, then source-specific ones. Every section has a
-purpose statement, summary statistics ("Not available" is shown instead of a
-misleading 0), figures with captions and PNG downloads, tables with CSV
-downloads, and an "Uncertainty and limitations" list.
+The results page shows only the sections the run actually supports
+(`genomics/result_availability.py` decides from the outputs, not from the
+chosen mode; `results_layout.py` arranges them). An analysis that could not
+run gets one line in the overview's *Unavailable or limited analyses* list
+instead of an empty section. Each section has main figures (with an *About
+this chart* note: what it shows, how to interpret it, its important
+limitation), *Additional figures*, collapsed detailed tables, and an
+"Uncertainty and limitations" list.
 
-| Section | Figures |
-|---|---|
-| 1. Overview | Metadata completeness by source; how the two sources were connected (reference checksum, mapping rule, label and Ref-base checks, date overlap); analyses run or skipped |
-| 2. Cross-source evidence | Category counts; variant-overlap matrix (variant × sample, individual and pooled side by side, distinguishing detection, non-detection with adequate depth, unknown coverage, and QC exclusion); reference positions by category; when each variant was seen in each source |
-| 3. Genomic variation | Variants along the reference (Fig 3 analogue): samples per position, alternative base by color, source by marker shape, multi-allele positions, published novelty flags, annotation bands |
-| 4. Temporal patterns | Sampling dates and sites for both sources at their real dates; frequency trajectories; first-versus-last frequency changes with day spans; missing and unknown observations per sample; sample-by-variant heatmap |
-| 5. Geographic context | Location precision by source (source-provided coordinates, GeoNames estimates, broad administrative areas, named sites, none) and a plain coordinate plot (not a map) |
-| 6. Sequencing quality | Coverage by sample; which QC checks could be applied (pass / fail / not verifiable); read-depth distributions; callable and uncallable positions in individual sequences; SNVs per sample (Fig 2A); depth versus SNVs (Fig 2B) |
-| 7. Population structure | PCoA colored by date with site (or state) markers and an eigenvalue panel; paper method or labeled exploratory method |
-| 8. Individual sequence relationships | The original Sprint 2 results, plus a genetic-distance distribution with genetic-versus-temporal distance and a relationship network (solid = all three cutoffs, dashed = geography unresolved; never "transmission") |
+| Section | Shown when | Main content |
+|---|---|---|
+| Overview | always | Analysis type and status, headline counts, main findings, important limitations, unavailable or limited analyses, *What each count means* |
+| Cross-Source Variant Evidence | both sources on one verified reference | Evidence categories, the step-by-step shared-variant example; overlap matrix, positions, and timeline as additional figures |
+| Individual Sequence Relationships | individual sequences compared with MAFFT | The Sprint 2 screening results, genetic-distance distribution, relationship network |
+| Genomic Variation | reference-position variants exist | Variants along the reference genome; mutation annotation and predicted protein consequences when an annotation was uploaded |
+| Temporal and Geographic Patterns | dates or locations exist | Mutation frequencies over time with uncertainty, sampling dates and sites; a geographic chart only when coordinates exist |
+| Sequencing Quality and Uncertainty | pooled data or a reference | Read depth at reported variants, VAF versus depth with Wilson intervals, overdispersion status (hypothetical rho scenarios collapsed); a coverage chart only when coverage was supplied |
+| Advanced Analysis | PCoA or exploratory grouping ran | Population structure (paper method or labeled exploratory method) and the collapsed experimental mutation-frequency profiles |
+| Downloads and Provenance | always | XLSX workbook, PDF report, CSV and PNG files grouped by section, input mapping and provenance, optional Sprint 4 link |
 
 ### Rules that keep the comparison honest
 
@@ -1122,9 +1170,9 @@ For the full suite in the development folder:
 python -m unittest discover -s tests -v
 ```
 
-The latest full run (November 7, 2026, Python 3.11.9, with real MAFFT v7 on
-`PATH`) ran **409 tests: all passed except 2 skipped** (the two optional
-real-data tests below; without MAFFT, 3 are skipped). NCBI E-utilities,
+The latest full run (November 16, 2026, Python 3.11, Windows) ran
+**738 tests: OK, 16 skipped** (the optional real-data tests below, plus the
+real-MAFFT test when MAFFT is not on `PATH`). NCBI E-utilities,
 PubTator3, GeoNames, and Claude are mocked, so no account, key, or internet
 connection is needed. The suite is self-contained:
 
@@ -1324,7 +1372,9 @@ classroom or appropriately de-identified data on this unauthenticated prototype.
 | `wastewater/processed_snv.py` | Processed-SNV importer: paper Table 2, iVar TSV, SNV VCF, standardized tables |
 | `genomics/` | Shared reference-based model, QC, analyses, matching, figures, orchestration (Sprint 2 + 3 integration) |
 | `genomics/file_formats.py`, `genomics/column_detection.py`, `genomics/input_inspection.py` | Guided upload: formats and VCF, flexible columns, file roles, dataset review |
-| `integrated_view.py` | Arranges integrated results into the eight dashboard sections |
+| `integrated_view.py` | Turns integrated results into dashboard sections (stats, figures, tables, limitations) |
+| `genomics/result_availability.py`, `results_layout.py` | Decide which result sections, figures, and downloads the run supports, and arrange them for the page and the PDF report |
+| `validation/local_ui_preview.py` | Local-only preview of every homepage, Sprint 4, and results state with synthetic files |
 | `literature/`, `literature_view.py` | Optional Sprint 4 AI literature and metadata enrichment (see `SPRINT4_AI_NLP_INTEGRATION_REPORT.md`) |
 | `validation/check_fontenele_2021.py` | Compares the import of the paper's real Supplementary Table 2 with its reported counts |
 | `ARTICLE_METHOD_VALIDATION.md` | Method-to-implementation table for Fontenele et al. (2021) |
@@ -1355,5 +1405,5 @@ brainstorming, code explanation, debugging assistance, and documentation review.
 Their suggestions were reviewed by the project team. They are not scientific
 evidence or substitutes for peer-reviewed genomic epidemiology guidance.
 
-- OpenAI. *ChatGPT*. <https://chatgpt.com/>. Accessed September 28, 2026.
-- Anthropic. *Claude*. <https://claude.ai/>. Accessed September 28, 2026.
+- OpenAI. *ChatGPT*. <https://chatgpt.com/>. Accessed November 16, 2026.
+- Anthropic. *Claude*. <https://claude.ai/>. Accessed November 16, 2026.
